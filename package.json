@@ -1,0 +1,26 @@
+{
+  "name": "presign-guard",
+  "version": "2.0.0",
+  "description": "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM transactions, approvals and Permit/Permit2/Seaport signatures, paid per call via x402",
+  "type": "module",
+  "main": "server.js",
+  "private": true,
+  "engines": { "node": ">=20.6" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --env-file=.env --watch server.js",
+    "test": "node --test test/*.test.mjs",
+    "client": "node --env-file-if-exists=.env scripts/agent-client.mjs"
+  },
+  "dependencies": {
+    "@coinbase/x402": "^2.1.0",
+    "@x402/core": "^2.27.0",
+    "@x402/evm": "^2.27.0",
+    "@x402/express": "^2.27.0",
+    "express": "^5.2.1",
+    "viem": "^2.56.8"
+  },
+  "devDependencies": {
+    "@x402/fetch": "^2.27.0"
+  }
+}

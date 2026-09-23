@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: presign-guard
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: X402_NETWORK
+        value: eip155:84532
+      - key: PAY_TO
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GOPLUS_ACCESS_TOKEN
+        sync: false
+      - key: CDP_API_KEY_ID
+        sync: false
+      - key: CDP_API_KEY_SECRET
+        sync: false
