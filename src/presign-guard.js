@@ -14,6 +14,7 @@
 // Verify in testing that your middleware version skips settlement on non-2xx responses.
 
 import express from "express";
+import { ROUTES, bazaarExtension, serviceMetadata } from "./discovery.js";
 import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api/v1";
@@ -30,6 +31,8 @@ const UINT160_UNLIMITED = 2n ** 159n;         // Permit2 allowance amounts are u
 // Canonical Permit2 deployment (same address on all supported chains)
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 const PERMIT2_ALLOWANCE_TYPES = new Set(["PermitSingle", "PermitBatch"]);
+// EIP-3009 (USDC): one fixed payment to one recipient. This is what x402 asks agents to sign.
+const TRANSFER_AUTHORIZATION_TYPES = new Set(["TransferWithAuthorization", "ReceiveWithAuthorization"]);
 const PERMIT2_TRANSFER_TYPES = new Set([
   "PermitTransferFrom", "PermitBatchTransferFrom",
   "PermitWitnessTransferFrom", "PermitBatchWitnessTransferFrom",
@@ -277,6 +280,21 @@ function parseSignature(raw, chainId) {
     return { ...base, kind: "permit2_transfer", grants, signatureDeadline: deadline };
   }
 
+  // EIP-3009 payment: moves exactly `value` to `to`, once, between validAfter and validBefore.
+  // Unlike a permit it grants no allowance, so a plain wallet as recipient is normal.
+  if (TRANSFER_AUTHORIZATION_TYPES.has(primaryType)) {
+    const token = requireVerifying();
+    const amount = toUint(message.value, "message.value");
+    const validBefore = toTimestamp(message.validBefore, "message.validBefore");
+    return {
+      ...base, kind: "transfer_authorization", signatureDeadline: validBefore,
+      grants: [{
+        token, spender: toAddress(message.to, "message.to"), amount,
+        unlimited: amount >= UNLIMITED_THRESHOLD, mode: "payment", expiresAt: validBefore,
+      }],
+    };
+  }
+
   // Seaport listing: the classic fake-listing phish sells your NFTs for nothing
   if (primaryType === "OrderComponents") {
     const offerer = toAddress(message.offerer, "message.offerer");
@@ -377,6 +395,14 @@ async function analyze(req) {
 
   for (const g of req.grants) {
     const token = { token: g.token };
+    if (g.mode === "payment") {
+      add("PAYMENT_AUTHORIZATION", "info", g.spender, { ...token, amount: g.amount.toString() });
+      if (g.unlimited) add("UNLIMITED_TRANSFER", "orange", g.spender, token);
+      if (g.expiresAt !== null && g.expiresAt - now > LONG_LIVED_SECONDS) {
+        add("LONG_LIVED_PERMISSION", "orange", g.spender, { ...token, expiresAt: g.expiresAt });
+      }
+      continue;
+    }
     if (g.allForAll) add("APPROVAL_FOR_ALL", "orange", g.spender, token);
     else if (g.unlimited) add(g.mode === "transfer" ? "UNLIMITED_TRANSFER" : "UNLIMITED_APPROVAL", "orange", g.spender, token);
 
@@ -435,7 +461,7 @@ async function analyze(req) {
       ...(req.selector && { selector: req.selector }),
       value: req.value.toString(),
     },
-    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2 and Seaport signatures. Not covered: eth_sign/personal_sign messages and transaction simulation.",
+    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures. Not covered: eth_sign/personal_sign messages and transaction simulation.",
     sources: ["goplus"],
     checkedAt: new Date().toISOString(),
   };
@@ -487,17 +513,18 @@ async function explain(result, lang) {
 
 export function x402Routes(payTo, network = "eip155:8453") {
   if (!payTo) throw new Error("PAY_TO address is required");
+  const route = (path, description) => ({
+    accepts: [{ scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo }],
+    description,
+    mimeType: "application/json",
+    ...serviceMetadata,
+    extensions: bazaarExtension(),
+  });
   return {
-    "POST /v1/check": {
-      accepts: [{ scheme: "exact", price: "$0.01", network, payTo }],
-      description: "Pre-sign risk verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/Seaport signatures",
-      mimeType: "application/json",
-    },
-    "POST /v1/check/explain": {
-      accepts: [{ scheme: "exact", price: "$0.03", network, payTo }],
-      description: "Pre-sign risk verdict plus a plain-language explanation in Dutch or English",
-      mimeType: "application/json",
-    },
+    "POST /v1/check": route("/v1/check",
+      "Pre-sign risk verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures"),
+    "POST /v1/check/explain": route("/v1/check/explain",
+      "Pre-sign risk verdict plus a plain-language explanation in Dutch or English"),
   };
 }
 

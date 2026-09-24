@@ -4,12 +4,19 @@ import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
+import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
 const MAINNET = NETWORK === "eip155:8453";
+const PUBLIC_URL = (process.env.PUBLIC_URL ?? "https://presign-guard.onrender.com").replace(/\/$/, "");
 
-if (!process.env.PAY_TO) throw new Error("PAY_TO is required");
+// Trimmed: a stray space or newline pasted into the dashboard makes every 402 unpayable.
+const PAY_TO = process.env.PAY_TO?.trim();
+if (!PAY_TO) throw new Error("PAY_TO is required");
+if (!/^0x[0-9a-fA-F]{40}$/.test(PAY_TO)) {
+  throw new Error(`PAY_TO must be an EVM address: 0x followed by 40 hex characters (got ${PAY_TO.length} characters)`);
+}
 if (MAINNET && !(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET)) {
   throw new Error("Mainnet needs CDP_API_KEY_ID and CDP_API_KEY_SECRET for the CDP facilitator");
 }
@@ -30,10 +37,14 @@ app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK }));
 app.get("/", (_req, res) => res.json({
   service: "presign-guard",
   docs: "https://github.com/Fizzl13/presign-guard",
-  paid: Object.keys(x402Routes(process.env.PAY_TO, NETWORK)),
+  paid: Object.keys(x402Routes(PAY_TO, NETWORK)),
+  openapi: `${PUBLIC_URL}/openapi.json`,
 }));
+app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK)));
+app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 
-app.use(paymentMiddleware(x402Routes(process.env.PAY_TO, NETWORK), resourceServer));
+app.use(mirrorChallengeIntoBody);
+app.use(paymentMiddleware(x402Routes(PAY_TO, NETWORK), resourceServer));
 app.use(createCheckRouter());
 
 app.listen(PORT, () => console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`));

@@ -173,6 +173,30 @@ test("Seaport listing that pays the offerer nothing is red", async () => {
   assert.ok(codes(r).includes("ORDER_PAYS_YOU_NOTHING"));
 });
 
+const payment = (to, value, validBefore = String(Math.floor(Date.now() / 1000) + 300)) =>
+  sig("TransferWithAuthorization", { from: USER, to, value, validAfter: "0", validBefore, nonce: "0x" + "00".repeat(32) },
+    { name: "USD Coin", version: "2", verifyingContract: TOKEN });
+
+test("x402 payment (EIP-3009) to a plain wallet is green", async () => {
+  const r = await check(payment(EOA, "20000"));
+  assert.equal(r.body.verdict, "green");
+  assert.equal(r.body.subject.kind, "transfer_authorization");
+  assert.equal(r.body.subject.grants[0].mode, "payment");
+  assert.ok(codes(r).includes("PAYMENT_AUTHORIZATION"));
+  assert.ok(!codes(r).includes("SIGNATURE_GRANT_TO_EOA"));
+});
+
+test("x402 payment to a flagged recipient is red", async () => {
+  const r = await check(payment(PHISH, "20000"));
+  assert.equal(r.body.verdict, "red");
+});
+
+test("payment authorization valid for months is orange", async () => {
+  const r = await check(payment(EOA, "20000", FAR));
+  assert.equal(r.body.verdict, "orange");
+  assert.ok(codes(r).includes("LONG_LIVED_PERMISSION"));
+});
+
 test("unrecognized typed data is orange, not green", async () => {
   const r = await check(sig("SomethingNew", { foo: "bar" }, { verifyingContract: GOOD }));
   assert.equal(r.body.verdict, "orange");

@@ -5,7 +5,9 @@
   "type": "module",
   "main": "server.js",
   "private": true,
-  "engines": { "node": ">=20.6" },
+  "engines": {
+    "node": ">=20.6"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --env-file=.env --watch server.js",
@@ -17,6 +19,7 @@
     "@x402/core": "^2.27.0",
     "@x402/evm": "^2.27.0",
     "@x402/express": "^2.27.0",
+    "@x402/extensions": "^2.27.0",
     "express": "^5.2.1",
     "viem": "^2.56.8"
   },

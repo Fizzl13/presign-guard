@@ -11,8 +11,10 @@ Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /health` | free | Liveness |
+| `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
+| `GET /.well-known/x402` | free | x402 discovery manifest |
 
-Payment is x402 v2 with the `exact` scheme, in USDC on Base. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+Payment is x402 v2 with the `exact` scheme, in USDC on Base. The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
 
 ## Request types
 
@@ -29,7 +31,9 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base. **You are never cha
 
 Supported chains: 1, 10, 56, 137, 8453, 42161.
 
-Recognised signatures: EIP-2612 `Permit`, DAI-style permit, Permit2 (`PermitSingle`, `PermitBatch`, `PermitTransferFrom`, batch and witness variants), and Seaport `OrderComponents`. Anything else comes back at least orange (`UNRECOGNIZED_SIGNATURE`).
+Recognised signatures: EIP-2612 `Permit`, DAI-style permit, Permit2 (`PermitSingle`, `PermitBatch`, `PermitTransferFrom`, batch and witness variants), EIP-3009 `TransferWithAuthorization` / `ReceiveWithAuthorization` (what x402 asks an agent to sign to pay), and Seaport `OrderComponents`.
+
+An x402 payment moves one fixed amount to one recipient and grants no allowance, so paying a plain wallet is green (`PAYMENT_AUTHORIZATION`, info). It turns red if the recipient is flagged, and orange if the amount is effectively unlimited or the authorization stays valid for more than a month. Anything else comes back at least orange (`UNRECOGNIZED_SIGNATURE`).
 
 ## Response
 
@@ -56,7 +60,7 @@ The verdict is the most severe reason: any `red` makes it red, otherwise any `or
 |---|---|
 | red | `PHISHING_ACTIVITIES`, `STEALING_ATTACK`, `SANCTIONED` and other GoPlus address flags, `CREATOR_OF_MALICIOUS_CONTRACTS`, `MALICIOUS_CONTRACT_BEHAVIOR`, `ON_DOUBT_LIST`, `UNLIMITED_APPROVAL_TO_EOA`, `SIGNATURE_GRANT_TO_EOA`, `ORDER_PAYS_YOU_NOTHING` |
 | orange | `UNLIMITED_APPROVAL`, `UNLIMITED_TRANSFER`, `APPROVAL_FOR_ALL`, `APPROVAL_TO_EOA`, `SIGNATURE_TRANSFER`, `LONG_LIVED_PERMISSION`, `NONCANONICAL_PERMIT2`, `UNVERIFIED_CONTRACT`, `RECENTLY_DEPLOYED`, `MARKETPLACE_ORDER`, `UNRECOGNIZED_SIGNATURE`, `BLACKLIST_DOUBT`, `MIXER` |
-| info | `REVOKES_APPROVAL`, `OFFCHAIN_SIGNATURE`, `SIGNATURE_EXPIRED`, `UPGRADEABLE_PROXY`, `ON_TRUST_LIST`, `UNDECODED_CALL` |
+| info | `PAYMENT_AUTHORIZATION`, `REVOKES_APPROVAL`, `OFFCHAIN_SIGNATURE`, `SIGNATURE_EXPIRED`, `UPGRADEABLE_PROXY`, `ON_TRUST_LIST`, `UNDECODED_CALL` |
 
 ### Not covered
 
@@ -67,7 +71,7 @@ The verdict is the most severe reason: any `red` makes it red, otherwise any `or
 ```bash
 cp .env.example .env   # fill in PAY_TO and ANTHROPIC_API_KEY
 npm install
-npm test               # 27 tests, network mocked
+npm test               # 32 tests, network mocked
 npm run dev
 ```
 
@@ -83,7 +87,9 @@ The script makes a valid call, which should return 200 with a settlement receipt
 
 ## Deploy to Render
 
-`render.yaml` deploys on Base Sepolia by default. For mainnet, set `X402_NETWORK=eip155:8453` and add `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (Coinbase CDP facilitator).
+`render.yaml` deploys on Base Sepolia by default. For mainnet, set `X402_NETWORK=eip155:8453` and add `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (Coinbase CDP facilitator). After the first paid call settles through CDP, the routes are listed in the CDP Bazaar.
+
+`PAY_TO` must be an EVM address (`0x` + 40 hex characters). Surrounding spaces are trimmed; anything else stops the server at startup with a clear error, so a typo can't publish an unpayable 402.
 
 ## Data sources
 
