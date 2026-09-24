@@ -401,9 +401,9 @@ async function analyze(req) {
   // Revoked spenders are not looked up: revoking a bad address is safe.
   const subjects = new Set([req.target, ...req.grants.map((g) => g.spender)].filter(Boolean));
 
-  // Addresses that would receive an allowance or transfer right: GoPlus calls an
-  // EIP-7702 wallet a contract (it has code), so check the code ourselves.
-  const spenders = new Set(req.grants.filter((g) => g.mode !== "payment").map((g) => g.spender));
+  // Addresses that would receive an allowance, transfer right or payment: GoPlus
+  // calls an EIP-7702 wallet a contract (it has code), so check the code ourselves.
+  const spenders = new Set(req.grants.map((g) => g.spender));
 
   const lookups = await Promise.all([...subjects].map(async (address) => {
     const [a, c] = await Promise.all([
