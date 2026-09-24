@@ -1,0 +1,92 @@
+name: Explainer video
+
+# Produces the presign-guard explainer video: a neural voice (Kokoro, open
+# weights) reads media/explainer/script.json, a real browser records the
+# homepage timed to the voice, ffmpeg mixes both into an MP4 with captions.
+# The verdicts on screen come from the same check code run locally without the
+# paywall (media/explainer/engine.mjs), on live GoPlus data; nobody pays.
+# Download the result from the run's "explainer-video" artifact.
+on:
+  push:
+    branches: ['claude/**']
+    paths: ['media/explainer/**', '.github/workflows/explainer-video.yml']
+  workflow_dispatch:
+    inputs:
+      voice:
+        description: "Kokoro voice (e.g. af_heart, af_bella, am_michael, am_fenrir, bf_emma, bm_george)"
+        required: false
+        default: "af_heart"
+      speed:
+        description: "Speaking speed (1.0 = normal)"
+        required: false
+        default: "1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: media/explainer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        working-directory: .
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Voice (Kokoro)
+        run: |
+          pip install -q kokoro-onnx soundfile numpy
+          curl -fsSL -o kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+          curl -fsSL -o voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+          python tts.py --engine kokoro --voice "${{ github.event.inputs.voice || 'af_heart' }}" --speed "${{ github.event.inputs.speed || '1.0' }}"
+      - name: Browser
+        run: |
+          npm i --no-save playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Wake the live service (for the price shown)
+        run: curl -s -o /dev/null --retry 6 --retry-delay 10 --retry-all-errors --max-time 90 https://presign-guard.onrender.com/health || true
+      - name: Record
+        run: |
+          node engine.mjs &
+          sleep 2
+          node record.js
+      - name: Mix and encode
+        run: |
+          command -v ffmpeg || (sudo apt-get update -q && sudo apt-get install -y -q ffmpeg)
+          python build.py
+      - name: Contact sheet (one frame per scene)
+        run: |
+          i=0; list=""
+          for t in $(python -c "import json;t=json.load(open('out/timeline.json'));print(' '.join(str(round(s['start']+s['duration']*0.75,1)) for s in t['segments']))"); do
+            ffmpeg -loglevel error -y -ss "$t" -i out/presign-guard-explainer.mp4 -frames:v 1 -update 1 -vf scale=640:-1 "out/f$i.jpg"; list="$list -i out/f$i.jpg"; i=$((i+1))
+          done
+          while [ "$i" -lt 12 ]; do list="$list -i out/f0.jpg"; i=$((i+1)); done
+          ffmpeg -loglevel error -y $list -filter_complex "xstack=inputs=12:layout=0_0|w0_0|w0+w1_0|0_h0|w0_h0|w0+w1_h0|0_h0+h3|w0_h0+h3|w0+w1_h0+h3|0_h0+h3+h6|w0_h0+h3+h6|w0+w1_h0+h3+h6" -update 1 out/contact.jpg
+      - name: Publish to the explainer-video branch
+        run: |
+          mkdir -p ../publish && cp out/presign-guard-explainer.mp4 out/presign-guard-explainer.srt out/poster.jpg out/contact.jpg ../publish/
+          cd ../publish
+          printf '# presign-guard explainer video\n\nProduced by explainer-video.yml. Voice: %s.\n' "${{ github.event.inputs.voice || 'af_heart' }}" > README.md
+          git init -q -b explainer-video
+          git add .
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "Explainer video $(date -u +%F)"
+          git push -qf "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" explainer-video
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: explainer-video
+          path: |
+            media/explainer/out/presign-guard-explainer.mp4
+            media/explainer/out/presign-guard-explainer.srt
+            media/explainer/out/poster.jpg
+            media/explainer/out/contact.jpg

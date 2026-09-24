@@ -1,0 +1,13 @@
+{
+  "title": "presign-guard: explainer",
+  "segments": [
+    { "id": "hook", "scene": "hero", "text": "AI agents now sign payments, approvals and permits on their own. One bad signature can empty a wallet." },
+    { "id": "what", "scene": "form", "text": "presign-guard checks it first. Send what your agent is about to sign, and get back green, orange or red, with the reasons." },
+    { "id": "unlimited", "scene": "unlimited", "text": "An unlimited token approval? Orange: ask a person before you sign." },
+    { "id": "permit", "scene": "permit", "text": "A permit that hands a plain wallet your tokens? Red. That is how most wallet drainers work." },
+    { "id": "payment", "scene": "payment", "text": "And a normal x402 payment? Green. It moves one fixed amount, once." },
+    { "id": "agents", "scene": "agents", "text": "Agents pay one cent per check with x402, in USDC on Base, and get the verdict in the same request." },
+    { "id": "safe", "scene": "safe", "text": "Errors are never charged. And if a data source is down, there is no verdict, never a guessed green." },
+    { "id": "end", "scene": "card", "card": { "title": "presign-guard", "sub": "Check it before you sign it.", "note": "presign-guard.onrender.com · in the CDP Bazaar" }, "text": "presign-guard. Check it before you sign it." }
+  ]
+}
