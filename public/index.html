@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>presign-guard: check before your agent signs</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" rx="28" fill="%23a78bfa"/%3E%3Cpath d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="%230d1117" stroke-width="16" stroke-linecap="round"/%3E%3Cpath d="M36 68 H72" stroke="%230d1117" stroke-width="16" stroke-linecap="round"/%3E%3Cg fill="%230d1117"%3E%3Ccircle cx="92" cy="72" r="8"/%3E%3Ccircle cx="100" cy="52" r="5"/%3E%3Ccircle cx="104" cy="38" r="3"/%3E%3C/g%3E%3C/svg%3E">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature. $0.01 per check in USDC via x402 on Base.">
 <style>
@@ -50,6 +51,7 @@
   a { color: var(--accent); }
   footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--soft); font-size: 13px; }
 </style>
+<style>.by-fizzl{margin:28px 0 0;font-size:12.5px;line-height:1}.by-fizzl a{display:inline-flex;align-items:center;gap:6px;color:inherit;opacity:.75;text-decoration:none}.by-fizzl a:hover,.by-fizzl a:focus-visible{opacity:1}.by-fizzl svg{height:20px;width:auto;display:block}.by-fizzl .b{fill:#a78bfa}@media (prefers-color-scheme: light){.by-fizzl .b{fill:#6d28d9}}</style>
 </head>
 <body>
 <div class="wrap">
@@ -95,6 +97,7 @@
   </div>
 
   <footer>Errors are never charged: a bad request or an outage cancels the payment and never returns a guessed verdict. Checked with <a href="https://x402-doctor.onrender.com">x402 Doctor</a>. Code on <a href="https://github.com/Fizzl13/presign-guard">GitHub</a>.</footer>
+  <p class="by-fizzl"><a href="https://github.com/Fizzl13" title="Fizzl: pay-per-call tools for AI agents">by <svg viewBox="-6 -14 236 126" role="img" aria-label="fizzl"><g fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"><path d="M44 12 A20 20 0 0 0 20 32 V100"/><path d="M6 48 H38"/><path d="M64 56 V100"/><path d="M88 52 H124 L88 100 H124"/><path d="M144 52 H180 L144 100 H180"/><path d="M200 8 V84 A16 16 0 0 0 216 100"/></g><g class="b"><circle cx="64" cy="26" r="9"/><circle cx="78" cy="10" r="5"/><circle cx="90" cy="-2" r="3"/></g></svg></a></p>
 </div>
 <script type="module">
   const $ = (id) => document.getElementById(id);
