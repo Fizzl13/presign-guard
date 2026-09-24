@@ -21,3 +21,7 @@ services:
         sync: false
       - key: CDP_API_KEY_SECRET
         sync: false
+      - key: USAGE_LOG_TOKEN
+        sync: false
+      - key: USAGE_LOG_REPO
+        value: Fizzl13/usage-log
