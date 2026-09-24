@@ -60,7 +60,7 @@ The verdict is the most severe reason: any `red` makes it red, otherwise any `or
 |---|---|
 | red | `PHISHING_ACTIVITIES`, `STEALING_ATTACK`, `SANCTIONED` and other GoPlus address flags, `CREATOR_OF_MALICIOUS_CONTRACTS`, `MALICIOUS_CONTRACT_BEHAVIOR`, `ON_DOUBT_LIST`, `UNLIMITED_APPROVAL_TO_EOA`, `SIGNATURE_GRANT_TO_EOA`, `ORDER_PAYS_YOU_NOTHING` |
 | orange | `UNLIMITED_APPROVAL`, `UNLIMITED_TRANSFER`, `APPROVAL_FOR_ALL`, `APPROVAL_TO_EOA`, `SIGNATURE_TRANSFER`, `LONG_LIVED_PERMISSION`, `NONCANONICAL_PERMIT2`, `UNVERIFIED_CONTRACT`, `RECENTLY_DEPLOYED`, `MARKETPLACE_ORDER`, `UNRECOGNIZED_SIGNATURE`, `BLACKLIST_DOUBT`, `MIXER` |
-| info | `PARTIAL_SOURCE_DATA` (GoPlus returned partial data for this address), `PAYMENT_AUTHORIZATION`, `REVOKES_APPROVAL`, `OFFCHAIN_SIGNATURE`, `SIGNATURE_EXPIRED`, `UPGRADEABLE_PROXY`, `ON_TRUST_LIST`, `UNDECODED_CALL` |
+| info | `EIP7702_DELEGATED_WALLET` (a plain wallet with EIP-7702 code, treated as a wallet), `PARTIAL_SOURCE_DATA` (GoPlus returned partial data for this address), `PAYMENT_AUTHORIZATION`, `REVOKES_APPROVAL`, `OFFCHAIN_SIGNATURE`, `SIGNATURE_EXPIRED`, `UPGRADEABLE_PROXY`, `ON_TRUST_LIST`, `UNDECODED_CALL` |
 
 ### Not covered
 
@@ -71,7 +71,7 @@ The verdict is the most severe reason: any `red` makes it red, otherwise any `or
 ```bash
 cp .env.example .env   # fill in PAY_TO and ANTHROPIC_API_KEY
 npm install
-npm test               # 33 tests, network mocked
+npm test               # 35 tests, network mocked
 npm run dev
 ```
 
@@ -93,4 +93,4 @@ The script makes a valid call, which should return 200 with a settlement receipt
 
 ## Data sources
 
-Risk data comes from the [GoPlus Security API](https://gopluslabs.io), and explanations from Claude (Anthropic).
+Risk data comes from the [GoPlus Security API](https://gopluslabs.io), plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).

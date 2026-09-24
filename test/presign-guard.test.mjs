@@ -14,6 +14,7 @@ const GOOD = "0x2222222222222222222222222222222222222222"; // verified contract
 const EOA = "0xbad0000000000000000000000000000000000001";  // plain wallet
 const PHISH = "0xbad0000000000000000000000000000000000002"; // flagged contract
 const USER = "0x1111111111111111111111111111111111111111";
+const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wallet: GoPlus says contract
 const PARTIAL = "0xbad0000000000000000000000000000000000003"; // GoPlus answers code 2, fields missing
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
@@ -23,6 +24,14 @@ const MAX160 = (2n ** 160n - 1n).toString();
 let goplusDown = false;
 let claudeDown = false;
 let goplusCalls = 0;
+let rpcDown = false;
+
+function mockRpc(opts) {
+  if (rpcDown) return new Response("down", { status: 502 });
+  const address = JSON.parse(opts.body).params[0].toLowerCase();
+  const result = address === DELEGATED ? "0xef0100" + "ab".repeat(20) : "0x6080604052";
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+}
 
 function mockGoplus(url) {
   goplusCalls++;
@@ -48,6 +57,7 @@ before(async () => {
     const u = String(url);
     if (u.includes("gopluslabs")) return mockGoplus(u);
     if (u.includes("api.anthropic.com")) return mockClaude();
+    if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) return mockRpc(opts);
     return realFetch(url, opts);
   };
   const app = express();
@@ -56,7 +66,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.close(); globalThis.fetch = realFetch; });
-beforeEach(() => { goplusDown = false; claudeDown = false; goplusCalls = 0; });
+beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; });
 
 async function check(body, path = "/v1/check") {
   const res = await realFetch(base + path, {
@@ -217,6 +227,21 @@ test("GoPlus partial data still gives a verdict, marked, and a missing is_contra
   assert.equal(r.body.verdict, "red");
   assert.ok(codes(r).includes("SIGNATURE_GRANT_TO_EOA"));
   assert.ok(codes(r).includes("PARTIAL_SOURCE_DATA"));
+});
+
+test("permit to an EIP-7702 wallet is red, not an unverified contract", async () => {
+  const r = await check(sig("Permit", { owner: USER, spender: DELEGATED, value: "5", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN }));
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("SIGNATURE_GRANT_TO_EOA"));
+  assert.ok(codes(r).includes("EIP7702_DELEGATED_WALLET"));
+  assert.ok(!codes(r).includes("UNVERIFIED_CONTRACT"));
+});
+
+test("chain RPC outage returns 503 and no verdict", async () => {
+  rpcDown = true;
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: "0x4444444444444444444444444444444444444444", amount: "1" });
+  assert.equal(r.status, 503);
+  assert.equal(r.body.verdict, null);
 });
 
 // ---------- validation and fail-closed ----------
