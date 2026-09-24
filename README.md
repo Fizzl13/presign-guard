@@ -71,7 +71,7 @@ The verdict is the most severe reason: any `red` makes it red, otherwise any `or
 ```bash
 cp .env.example .env   # fill in PAY_TO and ANTHROPIC_API_KEY
 npm install
-npm test               # 35 tests, network mocked
+npm test               # 36 tests, network mocked
 npm run dev
 ```
 

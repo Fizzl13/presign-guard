@@ -203,6 +203,13 @@ test("x402 payment to a flagged recipient is red", async () => {
   assert.equal(r.body.verdict, "red");
 });
 
+test("x402 payment to an EIP-7702 wallet is green, not an unverified contract", async () => {
+  const r = await check(payment(DELEGATED, "20000"));
+  assert.equal(r.body.verdict, "green");
+  assert.ok(codes(r).includes("EIP7702_DELEGATED_WALLET"));
+  assert.ok(!codes(r).includes("UNVERIFIED_CONTRACT"));
+});
+
 test("payment authorization valid for months is orange", async () => {
   const r = await check(payment(EOA, "20000", FAR));
   assert.equal(r.body.verdict, "orange");
