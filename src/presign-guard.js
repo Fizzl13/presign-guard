@@ -19,12 +19,24 @@ import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api/v1";
 const GOPLUS_TIMEOUT_MS = 4000;
+const RPC_TIMEOUT_MS = 4000;
 const CLAUDE_TIMEOUT_MS = 12000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 5000;
 const RECENT_DEPLOY_SECONDS = 30 * 86400;
 const LONG_LIVED_SECONDS = 31 * 86400; // Permit2 UIs commonly default to 30 days
 const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 8453, 42161]);
+// Public RPCs for eth_getCode; override per chain with RPC_URL_<chainId>.
+const RPC_URLS = {
+  1: "https://ethereum-rpc.publicnode.com",
+  10: "https://optimism-rpc.publicnode.com",
+  56: "https://bsc-rpc.publicnode.com",
+  137: "https://polygon-bor-rpc.publicnode.com",
+  8453: "https://mainnet.base.org",
+  42161: "https://arb1.arbitrum.io/rpc",
+};
+// EIP-7702: a plain wallet with delegated code. Its private key still controls it.
+const DELEGATION_CODE = /^0xef0100[0-9a-f]{40}$/i;
 const UNLIMITED_THRESHOLD = maxUint256 / 2n; // dapps use 2^256-1, 2^255, or close to it
 const UINT160_UNLIMITED = 2n ** 159n;         // Permit2 allowance amounts are uint160
 
@@ -89,24 +101,52 @@ async function goplus(path) {
   }
   if (!res.ok) throw new UpstreamError(`GoPlus HTTP ${res.status}`);
   const body = await res.json().catch(() => null);
-  if (!body || body.code !== 1 || !body.result) {
+  // code 2 = "partial data obtained": the result is usable but some fields may be missing.
+  // Missing fields raise no flags, except a missing is_contract, which counts as a plain wallet (stricter).
+  if (!body || (body.code !== 1 && body.code !== 2) || !body.result || typeof body.result !== "object") {
     throw new UpstreamError(`GoPlus error: ${body?.message ?? "unexpected response"}`);
   }
-  return body.result;
+  return { result: body.result, partial: body.code === 2 };
+}
+
+// ---------- chain RPC ----------
+
+function getCode(chainId, address) {
+  return cached(`code:${chainId}:${address}`, async () => {
+    let res;
+    try {
+      res = await fetch(process.env[`RPC_URL_${chainId}`] || RPC_URLS[chainId], {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getCode", params: [address, "latest"] }),
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new UpstreamError(`Chain RPC unreachable (${err.name})`);
+    }
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    if (typeof body?.result !== "string") throw new UpstreamError(`Chain RPC error${res.ok ? "" : ` (HTTP ${res.status})`}`);
+    return body.result;
+  });
 }
 
 // Some GoPlus endpoints key results by lowercase address, some return fields directly.
 const pickResult = (result, address) => result?.[address] ?? result;
 const flag = (v) => String(v) === "1";
 
+// Both return { data, partial }.
 function getAddressSecurity(chainId, address) {
-  return cached(`addr:${chainId}:${address}`, () =>
-    goplus(`/address_security/${address}?chain_id=${chainId}`));
+  return cached(`addr:${chainId}:${address}`, async () => {
+    const { result, partial } = await goplus(`/address_security/${address}?chain_id=${chainId}`);
+    return { data: result, partial };
+  });
 }
 
 function getContractSecurity(chainId, address) {
-  return cached(`contract:${chainId}:${address}`, async () =>
-    pickResult(await goplus(`/approval_security/${chainId}?contract_addresses=${address}`), address));
+  return cached(`contract:${chainId}:${address}`, async () => {
+    const { result, partial } = await goplus(`/approval_security/${chainId}?contract_addresses=${address}`);
+    return { data: pickResult(result, address), partial };
+  });
 }
 
 // ---------- input helpers ----------
@@ -361,25 +401,33 @@ async function analyze(req) {
   // Revoked spenders are not looked up: revoking a bad address is safe.
   const subjects = new Set([req.target, ...req.grants.map((g) => g.spender)].filter(Boolean));
 
+  // Addresses that would receive an allowance or transfer right: GoPlus calls an
+  // EIP-7702 wallet a contract (it has code), so check the code ourselves.
+  const spenders = new Set(req.grants.filter((g) => g.mode !== "payment").map((g) => g.spender));
+
   const lookups = await Promise.all([...subjects].map(async (address) => {
-    const [addrSec, contract] = await Promise.all([
+    const [a, c] = await Promise.all([
       getAddressSecurity(req.chainId, address),
       getContractSecurity(req.chainId, address),
     ]);
-    return [address, { addrSec, contract }];
+    const delegated = spenders.has(address) && flag(c.data?.is_contract) &&
+      DELEGATION_CODE.test(await getCode(req.chainId, address));
+    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated }];
   }));
   const results = new Map(lookups);
-  const isContract = (address) => flag(results.get(address)?.contract?.is_contract);
+  const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
-  for (const [address, { addrSec, contract }] of results) {
+  for (const [address, { addrSec, contract, partial, delegated }] of results) {
+    if (partial) add("PARTIAL_SOURCE_DATA", "info", address);
+    if (delegated) add("EIP7702_DELEGATED_WALLET", "info", address);
     for (const f of ADDRESS_RED_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "red", address);
     for (const f of ADDRESS_ORANGE_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "orange", address);
     if (Number(addrSec?.number_of_malicious_contracts_created) > 0) {
       add("CREATOR_OF_MALICIOUS_CONTRACTS", "red", address);
     }
 
-    if (flag(contract?.is_contract)) {
+    if (isContract(address)) {
       const malicious = Array.isArray(contract.malicious_behavior) ? contract.malicious_behavior : [];
       if (malicious.length) add("MALICIOUS_CONTRACT_BEHAVIOR", "red", address, malicious);
       if (flag(contract.doubt_list)) add("ON_DOUBT_LIST", "red", address);
@@ -462,7 +510,7 @@ async function analyze(req) {
       value: req.value.toString(),
     },
     scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures. Not covered: eth_sign/personal_sign messages and transaction simulation.",
-    sources: ["goplus"],
+    sources: ["goplus", "chain-rpc"],
     checkedAt: new Date().toISOString(),
   };
 }
