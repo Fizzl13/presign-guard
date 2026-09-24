@@ -1,4 +1,5 @@
 import express from "express";
+import { fileURLToPath } from "node:url";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -34,6 +35,8 @@ app.disable("x-powered-by");
 
 // Free routes first, so they never hit the paywall
 app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK }));
+const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
+app.get("/", (req, res, next) => (req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
 app.get("/", (_req, res) => res.json({
   service: "presign-guard",
   docs: "https://github.com/Fizzl13/presign-guard",

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>presign-guard: check before your agent signs</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature. $0.01 per check in USDC via x402 on Base.">
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #2a2f3a; --text: #f3f4f6; --soft: #9ca3af;
+    --green: #6ee7b7; --green-bg: #064e3b; --orange: #fdba74; --orange-bg: #7c2d12; --red: #fca5a5; --red-bg: #7f1d1d;
+    --accent: #a78bfa; --mono-bg: #0b0d11;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #f6f7f9; --panel: #ffffff; --line: #e5e7eb; --text: #111827; --soft: #6b7280;
+      --green: #047857; --green-bg: #d1fae5; --orange: #9a3412; --orange-bg: #ffedd5; --red: #b91c1c; --red-bg: #fee2e2;
+      --accent: #6d28d9; --mono-bg: #f3f4f6; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 16px 72px; }
+  .eyebrow { font: 500 13px/1 ui-monospace, 'SF Mono', Consolas, monospace; color: var(--soft); margin-bottom: 14px; }
+  h1 { font-size: clamp(28px, 6vw, 40px); line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.01em; }
+  .lead { color: var(--soft); font-size: 17px; margin: 0 0 32px; max-width: 60ch; }
+  h2 { font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--soft); margin: 40px 0 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .presets button { font: 600 14px/1 system-ui, sans-serif; border-radius: 999px; padding: 9px 14px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
+  .presets button.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+  textarea { width: 100%; min-height: 190px; resize: vertical; background: var(--mono-bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 13px/1.5 ui-monospace, 'SF Mono', Consolas, monospace; }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+  .pay { font: 600 15px/1 system-ui, sans-serif; color: var(--bg); background: var(--accent); border: 0; padding: 12px 18px; border-radius: 999px; cursor: pointer; }
+  .pay:disabled { opacity: 0.6; cursor: wait; }
+  select { font: 14px system-ui, sans-serif; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .note { color: var(--soft); font-size: 14px; margin-top: 12px; }
+  .status { margin-top: 14px; font-size: 15px; }
+  .status.error { color: var(--red); }
+  .result { margin-top: 16px; display: none; }
+  .badge { display: inline-block; font-weight: 700; font-size: 18px; text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 14px; border-radius: 999px; }
+  .green { color: var(--green); background: var(--green-bg); }
+  .orange { color: var(--orange); background: var(--orange-bg); }
+  .red { color: var(--red); background: var(--red-bg); }
+  .reasons { margin: 12px 0 0; padding-left: 20px; } .reasons li { margin: 4px 0; }
+  .reasons code, .grid code { font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-size: 0.9em; }
+  .explain { margin-top: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .grid .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .grid .card p { margin: 0; color: var(--soft); font-size: 14.5px; overflow-wrap: anywhere; }
+  a { color: var(--accent); }
+  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--soft); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">x402 · Base · for AI agents</div>
+  <h1>Check it before your agent signs it.</h1>
+  <p class="lead">Send presign-guard the transaction, approval or signature your agent is about to sign. You get back green, orange or red, with the reasons, in under a second. $0.01 per check in USDC via x402. No account, no API key.</p>
+
+  <h2>Try it</h2>
+  <div class="card">
+    <div class="presets" id="presets">
+      <button type="button" data-preset="unlimited" class="active">Unlimited approval</button>
+      <button type="button" data-preset="payment">x402 payment</button>
+      <button type="button" data-preset="permit">Permit to a wallet</button>
+    </div>
+    <textarea id="body" spellcheck="false" aria-label="Request body"></textarea>
+    <div class="actions">
+      <select id="route" aria-label="What to buy">
+        <option value="/v1/check">Verdict: $0.01</option>
+        <option value="/v1/check/explain">Verdict + explanation: $0.03</option>
+      </select>
+      <button type="button" class="pay" id="pay">Check with MetaMask</button>
+    </div>
+    <p class="note">You pay in USDC on Base. Your wallet shows a signature for exactly this amount, to our payout wallet <code id="payTo">0x6B0F…5F25</code>. MetaMask's security check may call that wallet "untrusted" because it is a regular wallet rather than a contract; that is normal for x402 payments, and the signature can only move this one amount, once.</p>
+    <div class="status" id="status" aria-live="polite"></div>
+    <div class="result" id="result">
+      <span class="badge" id="verdict"></span>
+      <ul class="reasons" id="reasons"></ul>
+      <p class="explain" id="explain"></p>
+    </div>
+  </div>
+
+  <h2>How agents use it</h2>
+  <div class="grid">
+    <div class="card"><h3>HTTP + x402</h3><p><code>POST /v1/check</code> answers 402 with the price; the agent pays and gets the verdict in the same request.</p></div>
+    <div class="card"><h3>What it reads</h3><p>Approvals, raw transactions, and EIP-712 signatures: Permit, Permit2, Seaport and x402 payments (EIP-3009).</p></div>
+    <div class="card"><h3>Discovery</h3><p><a href="/openapi.json">OpenAPI</a>, <a href="/.well-known/x402">/.well-known/x402</a> and the CDP Bazaar.</p></div>
+  </div>
+
+  <footer>Errors are never charged: a bad request or an outage cancels the payment and never returns a guessed verdict. Checked with <a href="https://x402-doctor.onrender.com">x402 Doctor</a>. Code on <a href="https://github.com/Fizzl13/presign-guard">GitHub</a>.</footer>
+</div>
+<script type="module">
+  const $ = (id) => document.getElementById(id);
+  const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+  const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
+  const SOMEONE = '0x6B0F4651eD42893ab58139938175E4a69f175F25';
+  const inFiveMinutes = () => String(Math.floor(Date.now() / 1000) + 300);
+  const PRESETS = {
+    unlimited: () => ({ type: 'approval', chainId: 8453, token: USDC, spender: PERMIT2, amount: (2n ** 256n - 1n).toString() }),
+    payment: () => ({
+      type: 'signature', chainId: 8453,
+      typedData: {
+        primaryType: 'TransferWithAuthorization',
+        domain: { name: 'USD Coin', version: '2', chainId: 8453, verifyingContract: USDC },
+        message: { from: '0x1111111111111111111111111111111111111111', to: SOMEONE, value: '20000', validAfter: '0', validBefore: inFiveMinutes(), nonce: '0x' + '00'.repeat(32) },
+      },
+    }),
+    permit: () => ({
+      type: 'signature', chainId: 8453,
+      typedData: {
+        primaryType: 'Permit',
+        domain: { name: 'USD Coin', version: '2', chainId: 8453, verifyingContract: USDC },
+        message: { owner: '0x1111111111111111111111111111111111111111', spender: SOMEONE, value: '1000000000', nonce: 0, deadline: inFiveMinutes() },
+      },
+    }),
+  };
+  const show = (name) => { $('body').value = JSON.stringify(PRESETS[name](), null, 2); };
+  for (const b of document.querySelectorAll('#presets button')) {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#presets button').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      show(b.dataset.preset);
+    });
+  }
+  show('unlimited');
+
+  const status = (text, error = false) => { $('status').textContent = text; $('status').className = error ? 'status error' : 'status'; };
+  const usd = (units) => `$${(Number(units) / 1e6).toFixed(2)}`;
+  const BASE = 'eip155:8453';
+
+  async function requirement(route, body) {
+    const res = await fetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+    if (res.status !== 402) return null;
+    const data = await res.json().catch(() => ({}));
+    return (data.accepts || []).find((a) => a.network === BASE) || null;
+  }
+
+  function friendly(err, price) {
+    const raw = err instanceof Error ? err.message : String(err || '');
+    if (/user (rejected|denied)|rejected the request|cancel/i.test(raw)) return 'You cancelled the signature. Nothing was paid.';
+    if (/execution reverted|insufficient|exceeds balance|invalid_payload|invalid_exact_evm_payload/i.test(raw)) {
+      return `The payment was declined before any money moved. Most likely this wallet has less than ${price} in USDC on Base.`;
+    }
+    return raw || 'Something went wrong. Nothing was paid.';
+  }
+
+  async function run() {
+    let body;
+    try { body = JSON.stringify(JSON.parse($('body').value)); } catch { return status('The request is not valid JSON.', true); }
+    if (!window.ethereum) return status('No browser wallet found. Install MetaMask and reload the page.', true);
+    const route = $('route').value;
+    $('pay').disabled = true;
+    $('result').style.display = 'none';
+    let price = 'the price';
+    try {
+      status('Reading the price…');
+      const need = await requirement(route, body);
+      if (!need) throw new Error('This service is not asking for a payment on Base right now.');
+      price = usd(need.amount);
+      $('payTo').textContent = `${need.payTo.slice(0, 6)}…${need.payTo.slice(-4)}`;
+
+      status('Connecting your wallet…');
+      const [{ createWalletClient, custom }, { base }, { wrapFetchWithPayment, x402Client }, { ExactEvmScheme }] = await Promise.all([
+        import('https://esm.sh/viem@2.31.7'),
+        import('https://esm.sh/viem@2.31.7/chains'),
+        import('https://esm.sh/@x402/fetch@2.26.0'),
+        import('https://esm.sh/@x402/evm@2.26.0'),
+      ]);
+      const [account] = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      if (!account) throw new Error('No wallet account selected.');
+      await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x2105' }] });
+
+      const data = '0x70a08231' + account.toLowerCase().slice(2).padStart(64, '0');
+      const balance = BigInt(await window.ethereum.request({ method: 'eth_call', params: [{ to: need.asset, data }, 'latest'] }));
+      if (balance < BigInt(need.amount)) throw new Error(`This costs ${price} in USDC on Base, and this wallet has ${usd(balance)}. Nothing was paid.`);
+
+      const wallet = createWalletClient({ account, chain: base, transport: custom(window.ethereum) });
+      const client = new x402Client();
+      client.register('eip155:*', new ExactEvmScheme({ address: account, signTypedData: (td) => wallet.signTypedData(td) }));
+      const payFetch = wrapFetchWithPayment(fetch, client);
+
+      status(`Sign the ${price} payment in your wallet…`);
+      const res = await payFetch(route, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(out.message || out.error || `HTTP ${res.status}`);
+
+      status(`Paid ${price}. Verdict:`);
+      $('verdict').textContent = out.verdict;
+      $('verdict').className = `badge ${out.verdict}`;
+      $('reasons').replaceChildren(...out.reasons.map((r) => {
+        const li = document.createElement('li');
+        const code = document.createElement('code');
+        code.textContent = r.code;
+        li.append(`${r.severity}: `, code);
+        return li;
+      }));
+      $('explain').textContent = out.explanation?.text || '';
+      $('result').style.display = 'block';
+    } catch (err) {
+      status(friendly(err, price), true);
+    } finally {
+      $('pay').disabled = false;
+    }
+  }
+  $('pay').addEventListener('click', run);
+</script>
+</body>
+</html>
