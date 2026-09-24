@@ -14,6 +14,7 @@ const GOOD = "0x2222222222222222222222222222222222222222"; // verified contract
 const EOA = "0xbad0000000000000000000000000000000000001";  // plain wallet
 const PHISH = "0xbad0000000000000000000000000000000000002"; // flagged contract
 const USER = "0x1111111111111111111111111111111111111111";
+const PARTIAL = "0xbad0000000000000000000000000000000000003"; // GoPlus answers code 2, fields missing
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
 const MAX160 = (2n ** 160n - 1n).toString();
@@ -27,6 +28,7 @@ function mockGoplus(url) {
   goplusCalls++;
   if (goplusDown) return new Response("oops", { status: 502 });
   const u = String(url);
+  if (u.includes(PARTIAL)) return new Response(JSON.stringify({ code: 2, message: "partial data obtained", result: {} }));
   const isEoa = u.includes(EOA);
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
@@ -207,6 +209,14 @@ test("typedData may be sent as a JSON string", async () => {
   const body = sig("Permit", { owner: USER, spender: GOOD, value: "1", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN });
   body.typedData = JSON.stringify(body.typedData);
   assert.equal((await check(body)).status, 200);
+});
+
+test("GoPlus partial data still gives a verdict, marked, and a missing is_contract counts as a plain wallet", async () => {
+  const r = await check(sig("Permit", { owner: USER, spender: PARTIAL, value: "5", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN }));
+  assert.equal(r.status, 200);
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("SIGNATURE_GRANT_TO_EOA"));
+  assert.ok(codes(r).includes("PARTIAL_SOURCE_DATA"));
 });
 
 // ---------- validation and fail-closed ----------

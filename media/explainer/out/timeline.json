@@ -1,0 +1,45 @@
+{
+  "total": 54.237,
+  "segments": [
+    {
+      "id": "hook",
+      "start": 0.874,
+      "duration": 6.923
+    },
+    {
+      "id": "what",
+      "start": 8.256,
+      "duration": 8.461
+    },
+    {
+      "id": "unlimited",
+      "start": 17.207,
+      "duration": 4.231
+    },
+    {
+      "id": "permit",
+      "start": 21.894,
+      "duration": 6.538
+    },
+    {
+      "id": "payment",
+      "start": 28.889,
+      "duration": 4.615
+    },
+    {
+      "id": "agents",
+      "start": 33.967,
+      "duration": 7.692
+    },
+    {
+      "id": "safe",
+      "start": 42.119,
+      "duration": 7.308
+    },
+    {
+      "id": "end",
+      "start": 49.889,
+      "duration": 2.692
+    }
+  ]
+}

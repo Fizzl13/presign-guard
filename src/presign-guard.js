@@ -89,24 +89,31 @@ async function goplus(path) {
   }
   if (!res.ok) throw new UpstreamError(`GoPlus HTTP ${res.status}`);
   const body = await res.json().catch(() => null);
-  if (!body || body.code !== 1 || !body.result) {
+  // code 2 = "partial data obtained": the result is usable but some fields may be missing.
+  // Missing fields raise no flags, except a missing is_contract, which counts as a plain wallet (stricter).
+  if (!body || (body.code !== 1 && body.code !== 2) || !body.result || typeof body.result !== "object") {
     throw new UpstreamError(`GoPlus error: ${body?.message ?? "unexpected response"}`);
   }
-  return body.result;
+  return { result: body.result, partial: body.code === 2 };
 }
 
 // Some GoPlus endpoints key results by lowercase address, some return fields directly.
 const pickResult = (result, address) => result?.[address] ?? result;
 const flag = (v) => String(v) === "1";
 
+// Both return { data, partial }.
 function getAddressSecurity(chainId, address) {
-  return cached(`addr:${chainId}:${address}`, () =>
-    goplus(`/address_security/${address}?chain_id=${chainId}`));
+  return cached(`addr:${chainId}:${address}`, async () => {
+    const { result, partial } = await goplus(`/address_security/${address}?chain_id=${chainId}`);
+    return { data: result, partial };
+  });
 }
 
 function getContractSecurity(chainId, address) {
-  return cached(`contract:${chainId}:${address}`, async () =>
-    pickResult(await goplus(`/approval_security/${chainId}?contract_addresses=${address}`), address));
+  return cached(`contract:${chainId}:${address}`, async () => {
+    const { result, partial } = await goplus(`/approval_security/${chainId}?contract_addresses=${address}`);
+    return { data: pickResult(result, address), partial };
+  });
 }
 
 // ---------- input helpers ----------
@@ -362,17 +369,18 @@ async function analyze(req) {
   const subjects = new Set([req.target, ...req.grants.map((g) => g.spender)].filter(Boolean));
 
   const lookups = await Promise.all([...subjects].map(async (address) => {
-    const [addrSec, contract] = await Promise.all([
+    const [a, c] = await Promise.all([
       getAddressSecurity(req.chainId, address),
       getContractSecurity(req.chainId, address),
     ]);
-    return [address, { addrSec, contract }];
+    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial }];
   }));
   const results = new Map(lookups);
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract);
   const now = Math.floor(Date.now() / 1000);
 
-  for (const [address, { addrSec, contract }] of results) {
+  for (const [address, { addrSec, contract, partial }] of results) {
+    if (partial) add("PARTIAL_SOURCE_DATA", "info", address);
     for (const f of ADDRESS_RED_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "red", address);
     for (const f of ADDRESS_ORANGE_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "orange", address);
     if (Number(addrSec?.number_of_malicious_contracts_created) > 0) {
