@@ -43,6 +43,7 @@ app.get("/", (_req, res) => res.json({
   paid: Object.keys(x402Routes(PAY_TO, NETWORK)),
   openapi: `${PUBLIC_URL}/openapi.json`,
 }));
+app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
 app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK)));
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 

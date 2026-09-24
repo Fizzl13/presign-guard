@@ -2,6 +2,10 @@
 
 A pre-sign risk check for AI agents. Before an agent signs a transaction, approval, or EIP-712 signature, it pays a few cents per call over [x402](https://x402.org) and gets back a **green / orange / red** verdict with machine-readable reason codes. Optionally, it also gets a plain-language explanation in Dutch or English.
 
+**Watch the 1-minute explainer:** [presign-guard.onrender.com/media/explainer.mp4](https://presign-guard.onrender.com/media/explainer.mp4)
+
+[![presign-guard explainer video](public/media/explainer.jpg)](https://presign-guard.onrender.com/media/explainer.mp4)
+
 Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL AI](https://fizzl.eu).
 
 ## Endpoints
