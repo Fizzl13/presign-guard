@@ -1,0 +1,32 @@
+1
+00:00:00,847 --> 00:00:07,588
+AI agents now sign payments, approvals and permits on their own. One bad signature can empty a wallet.
+
+2
+00:00:08,040 --> 00:00:15,869
+presign-guard checks it first. Send what your agent is about to sign, and get back green, orange or red, with the reasons.
+
+3
+00:00:16,335 --> 00:00:20,644
+An unlimited token approval? Orange: ask a person before you sign.
+
+4
+00:00:21,099 --> 00:00:26,454
+A permit that hands a plain wallet your tokens? Red. That is how most wallet drainers work.
+
+5
+00:00:26,912 --> 00:00:31,883
+And a normal x402 payment? Green. It moves one fixed amount, once.
+
+6
+00:00:32,340 --> 00:00:39,508
+Agents pay one cent per check with x402, in USDC on Base, and get the verdict in the same request.
+
+7
+00:00:39,963 --> 00:00:45,830
+Errors are never charged. And if a data source is down, there is no verdict, never a guessed green.
+
+8
+00:00:46,286 --> 00:00:48,782
+presign-guard. Check it before you sign it.
+

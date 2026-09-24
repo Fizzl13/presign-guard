@@ -43,6 +43,7 @@
   .reasons { margin: 12px 0 0; padding-left: 20px; } .reasons li { margin: 4px 0; }
   .reasons code, .grid code { font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-size: 0.9em; }
   .explain { margin-top: 12px; }
+  .video { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); background: #000; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
   .grid .card h3 { margin: 0 0 6px; font-size: 16px; }
   .grid .card p { margin: 0; color: var(--soft); font-size: 14.5px; overflow-wrap: anywhere; }
@@ -79,6 +80,12 @@
       <p class="explain" id="explain"></p>
     </div>
   </div>
+
+  <h2>See it in a minute</h2>
+  <video class="video" controls playsinline preload="none" poster="/media/explainer.jpg" width="1920" height="1080">
+    <source src="/media/explainer.mp4" type="video/mp4">
+    <a href="/media/explainer.mp4">Watch the explainer video</a>
+  </video>
 
   <h2>How agents use it</h2>
   <div class="grid">
