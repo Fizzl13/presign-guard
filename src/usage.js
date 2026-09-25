@@ -14,7 +14,27 @@ function typedDataOf(body) {
   return td && typeof td === "object" ? td : null;
 }
 
+// An MCP tool call: which tool, the input summary, the verdict and the payment.
+function describeMcpCall(req, body) {
+  const call = usageLog.mcpToolCall(req.body);
+  if (!call) return null; // initialize, tools/list
+  const reply = (Array.isArray(body) ? body : [body]).find((r) => r && r.result) || {};
+  const text = reply.result && reply.result.content && reply.result.content[0] && reply.result.content[0].text;
+  if (reply.result && reply.result.isError && /payment|402/i.test(String(text))) return null; // the price, not a call
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch { /* plain text */ }
+  const a = call.args || {};
+  return {
+    route: call.tool,
+    via: "mcp",
+    input: { type: a.type, chainId: a.chainId, target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
+    result: { verdict: parsed && parsed.verdict, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
+    payment: usageLog.mcpPayment(req.body, body),
+  };
+}
+
 export function describePresignCall(req, _res, body) {
+  if (req.method === "POST" && req.path === "/mcp") return describeMcpCall(req, body);
   if (req.method !== "POST" || !ROUTES[req.path]) return null;
   const input = req.body || {};
   const td = typedDataOf(input);

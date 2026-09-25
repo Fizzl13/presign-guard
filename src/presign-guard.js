@@ -403,7 +403,7 @@ function parseSignature(raw, chainId) {
 
 // ---------- request parsing ----------
 
-function parseRequest(body) {
+export function parseRequest(body) {
   if (!body || typeof body !== "object") throw new ValidationError("JSON body required");
 
   const chainId = Number(body.chainId);
@@ -439,7 +439,7 @@ function parseRequest(body) {
 
 // ---------- analysis ----------
 
-async function analyze(req) {
+export async function analyze(req) {
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";
@@ -574,7 +574,7 @@ async function analyze(req) {
 
 // ---------- plain-language explanation ----------
 
-async function explain(result, lang) {
+export async function explain(result, lang) {
   if (!process.env.ANTHROPIC_API_KEY) throw new UpstreamError("Explanation service not configured");
 
   const system = [
