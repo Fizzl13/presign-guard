@@ -27,14 +27,34 @@ function describeMcpCall(req, body) {
   return {
     route: call.tool,
     via: "mcp",
-    input: { type: a.type, chainId: a.chainId, target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
-    result: { verdict: parsed && parsed.verdict, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
+    input: a.address
+      ? { chain: a.chain, target: a.address }
+      : { type: a.type, chainId: a.chainId, target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
+    result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
     payment: usageLog.mcpPayment(req.body, body),
+  };
+}
+
+// GET /v1/token: which token, the verdict and grade.
+function describeTokenCall(req, body) {
+  const q = req.query || {};
+  const b = body || {};
+  return {
+    route: "token",
+    via: req.get && req.get("sec-fetch-site") === "same-origin" ? "web" : "api",
+    input: { chain: q.chain, target: q.address },
+    result: {
+      verdict: b.verdict === null ? "none" : b.verdict,
+      grade: b.grade,
+      reasons: Array.isArray(b.reasons) ? b.reasons.filter((r) => r.severity !== "info").map((r) => r.code).join(", ") || undefined : undefined,
+      error: b.error,
+    },
   };
 }
 
 export function describePresignCall(req, _res, body) {
   if (req.method === "POST" && req.path === "/mcp") return describeMcpCall(req, body);
+  if (req.method === "GET" && req.path === "/v1/token") return describeTokenCall(req, body);
   if (req.method !== "POST" || !ROUTES[req.path]) return null;
   const input = req.body || {};
   const td = typedDataOf(input);

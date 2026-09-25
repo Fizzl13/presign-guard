@@ -14,7 +14,7 @@
 // Verify in testing that your middleware version skips settlement on non-2xx responses.
 
 import express from "express";
-import { ROUTES, bazaarExtension, serviceMetadata } from "./discovery.js";
+import { ROUTES, TOKEN_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata } from "./discovery.js";
 import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api/v1";
@@ -100,11 +100,11 @@ class UpstreamError extends Error {
 // ---------- cache (successes only; per instance, resets on restart) ----------
 
 const cache = new Map();
-async function cached(key, fn) {
+async function cached(key, fn, ttlMs = CACHE_TTL_MS) {
   const hit = cache.get(key);
   if (hit && hit.expires > Date.now()) return hit.value;
   const value = await fn();
-  cache.set(key, { value, expires: Date.now() + CACHE_TTL_MS });
+  cache.set(key, { value, expires: Date.now() + ttlMs });
   if (cache.size > CACHE_MAX_ENTRIES) cache.delete(cache.keys().next().value);
   return value;
 }
@@ -197,6 +197,9 @@ function tokenReasons(token, t, add) {
   for (const [field, code] of Object.entries(TOKEN_INFO_FLAGS)) if (flag(t[field])) add(code, "info", token);
   if (flag(t.trust_list)) add("TOKEN_ON_TRUST_LIST", "info", token);
 }
+
+// Shared with the token verdict (token-verdict.js).
+export { ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons };
 
 // ---------- input helpers ----------
 
@@ -616,7 +619,8 @@ export async function explain(result, lang) {
 
 // ---------- routes ----------
 
-export function x402Routes(payTo, network = "eip155:8453") {
+// solana: optional { network, payTo }; the token verdict can then also be paid in USDC on Solana.
+export function x402Routes(payTo, network = "eip155:8453", solana = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
   const route = (path, description) => ({
     accepts: [{ scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo }],
@@ -625,11 +629,22 @@ export function x402Routes(payTo, network = "eip155:8453") {
     ...serviceMetadata,
     extensions: bazaarExtension(),
   });
+  const tokenPrice = `$${TOKEN_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
       "Pre-sign risk verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures"),
     "POST /v1/check/explain": route("/v1/check/explain",
       "Pre-sign risk verdict plus a plain-language explanation in Dutch or English"),
+    [`GET ${TOKEN_ROUTE.path}`]: {
+      accepts: [
+        { scheme: "exact", price: tokenPrice, network, payTo },
+        ...(solana?.payTo ? [{ scheme: "exact", price: tokenPrice, network: solana.network, payTo: solana.payTo }] : []),
+      ],
+      description: "Token verdict (green/orange/red, grade SAFE/CAUTION/RISKY/AVOID, reason codes, one-line summary, market data) for a Solana or EVM token: mint/freeze authority, honeypot, tax, LP lock, liquidity, age, holder concentration",
+      mimeType: "application/json",
+      ...tokenServiceMetadata,
+      extensions: tokenBazaarExtension(),
+    },
   };
 }
 

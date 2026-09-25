@@ -14,12 +14,13 @@ Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL
 |---|---|---|
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
+| `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
 | `GET /health` | free | Liveness |
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
 | `GET /.well-known/x402` | free | x402 discovery manifest |
 
-Payment is x402 v2 with the `exact` scheme, in USDC on Base. The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict also on Solana). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
 
 ## MCP
 
@@ -30,8 +31,37 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base. The 402 carries Baz
 | `presign_quick_check` | free, 10 calls/hour | The verdict only (green, orange or red) |
 | `presign_check` | $0.01 USDC via x402 | The full verdict and reason codes, as `POST /v1/check` |
 | `presign_check_explain` | $0.03 USDC via x402 | The same plus a plain-language explanation, as `POST /v1/check/explain` |
+| `token_quick_verdict` | free, shares the 10 calls/hour | The token verdict and grade only |
+| `token_verdict` | $0.01 USDC via x402 | The full token verdict, as `GET /v1/token` |
 
-The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base, to the same payout wallet as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
+The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
+
+## Token verdict
+
+`GET /v1/token?chain=solana&address=<mint>` (or `chain=base|ethereum|arbitrum|optimism|polygon|bsc` with a `0x` token contract) answers one question before an agent buys, holds or accepts a token: is the token itself a trap?
+
+```json
+{
+  "verdict": "orange",
+  "grade": "RISKY",
+  "one_liner": "RISKY: 1% transfer fee; $21k liquidity; 1 h old (+2 more)",
+  "reasons": [{ "code": "TRANSFER_FEE", "severity": "orange", "details": { "feePct": 1 } }, "…"],
+  "token": { "chain": "solana", "address": "…", "name": "…", "symbol": "…" },
+  "market": { "priceUsd": 0.0004, "liquidityUsd": 21000, "marketCapUsd": 400000, "volume24hUsd": 90000, "firstPairAt": "…", "ageSeconds": 3600, "url": "https://dexscreener.com/…" },
+  "sources": ["goplus", "dexscreener", "rugcheck"],
+  "checkedAt": "…"
+}
+```
+
+Grades: `SAFE` (green), `CAUTION` (one orange reason), `RISKY` (two or more), `AVOID` (red). The one-liner states facts only.
+
+| Severity | Codes |
+|---|---|
+| red | `RUGGED`, `NON_TRANSFERABLE`, `MALICIOUS_AUTHORITY`; EVM: `TOKEN_HONEYPOT`, `TOKEN_AIRDROP_SCAM`, `TOKEN_IMPERSONATION` |
+| orange | `MINT_AUTHORITY_ACTIVE`, `FREEZE_AUTHORITY_ACTIVE`, `BALANCE_MUTABLE`, `CLOSABLE`, `TRANSFER_HOOK`, `TRANSFER_FEE`, `HIGH_TRANSFER_FEE` (≥10%), `TRANSFER_FEE_UPGRADABLE`, `LP_NOT_LOCKED` (<50% locked, token younger than 30 days), `LOW_LIQUIDITY` (<$50k), `NO_DEX_MARKET`, `NEW_TOKEN` (<24 h), `TOP_HOLDERS_CONCENTRATED` (top holder >20% or top 10 >50%, pools and locked accounts excluded; on EVM only wallets count, not contracts); EVM: the GoPlus token codes of `/v1/check` (`TOKEN_HIGH_TAX`, `TOKEN_UNVERIFIED`, …) and `TOKEN_CANNOT_BUY` |
+| info | `MUTABLE_METADATA`, `NO_SOCIALS`, `TOKEN_ON_TRUST_LIST`, `NO_SECURITY_DATA`, `RUGCHECK_DANGER`, `RUGCHECK_UNAVAILABLE`, `LP_NOT_LOCKED` on older tokens, on trust-list tokens (USDC, USDT, WETH): the issuer's powers, `LP_NOT_LOCKED`, `LOW_LIQUIDITY` and `NO_DEX_MARKET` (DexScreener undercounts quote assets) |
+
+On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, freeze, change balances) are info: the issuer keeps them on purpose. Missing data never makes a token red. If GoPlus or DexScreener is down there is no verdict (503, not charged); if RugCheck is down the verdict comes without it and says so.
 
 ## Request types
 
@@ -106,8 +136,10 @@ The script makes a valid call, which should return 200 with a settlement receipt
 
 The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8453`, which needs `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (Coinbase CDP facilitator; the service refuses to start on mainnet without them). After the first paid call settles through CDP, the routes are listed in the CDP Bazaar. To test without real money, set `X402_NETWORK=eip155:84532` (Base Sepolia, public x402.org facilitator); without `X402_NETWORK` the code also defaults to Base Sepolia.
 
+`PAY_TO_SOLANA` (optional) is a Solana address for USDC payments on Solana, offered for the token verdict only; those payments settle through the PayAI facilitator (`SOLANA_FACILITATOR_URL` to override). Without it, the token verdict is paid on Base only.
+
 `PAY_TO` must be an EVM address (`0x` + 40 hex characters). Surrounding spaces are trimmed; anything else stops the server at startup with a clear error, so a typo can't publish an unpayable 402.
 
 ## Data sources
 
-Risk data comes from the [GoPlus Security API](https://gopluslabs.io), plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).
+Risk data comes from the [GoPlus Security API](https://gopluslabs.io); the token verdict adds [RugCheck](https://rugcheck.xyz) (Solana) and [DexScreener](https://dexscreener.com) (market data). Plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).
