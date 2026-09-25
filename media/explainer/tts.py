@@ -54,7 +54,8 @@ def main():
 
     import numpy as np
 
-    with open(os.path.join(HERE, "script.json")) as f:
+    # SCRIPT picks the video: script.json (explainer) or token.json (token verdict).
+    with open(os.path.join(HERE, os.environ.get("SCRIPT", "script.json"))) as f:
         segments = json.load(f)["segments"]
     audio_dir = os.path.join(args.out, "audio")
     os.makedirs(audio_dir, exist_ok=True)
