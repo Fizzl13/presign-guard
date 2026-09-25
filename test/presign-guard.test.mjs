@@ -16,6 +16,10 @@ const PHISH = "0xbad0000000000000000000000000000000000002"; // flagged contract
 const USER = "0x1111111111111111111111111111111111111111";
 const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wallet: GoPlus says contract
 const PARTIAL = "0xbad0000000000000000000000000000000000003"; // GoPlus answers code 2, fields missing
+const HONEY = "0x7777000000000000000000000000000000000001";   // honeypot token
+const FAKE_USDC = "0x7777000000000000000000000000000000000002"; // impersonates USDC
+const TAXED = "0x7777000000000000000000000000000000000003";   // 12% buy / 15% sell tax
+const MINTABLE = "0x7777000000000000000000000000000000000004"; // mintable, otherwise normal (like DEGEN)
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
 const MAX160 = (2n ** 160n - 1n).toString();
@@ -33,10 +37,24 @@ function mockRpc(opts) {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
 }
 
+// GoPlus token_security, keyed by lowercase address like the real API; unknown tokens have no record.
+const TOKEN_DATA = {
+  [TOKEN]: { token_symbol: "USDC", is_open_source: "1", is_proxy: "1", trust_list: "1", buy_tax: "0", sell_tax: "0" },
+  [HONEY]: { token_symbol: "HONEY", is_open_source: "1", is_honeypot: "1", sell_tax: "1" },
+  [FAKE_USDC]: { token_symbol: "USDC", is_open_source: "1", fake_token: { true_token_address: TOKEN, value: 1 } },
+  [TAXED]: { token_symbol: "TAX", is_open_source: "1", buy_tax: "0.12", sell_tax: "0.15" },
+  [MINTABLE]: { token_symbol: "DEGEN", is_open_source: "1", is_mintable: "1", buy_tax: "0", sell_tax: "0" },
+};
+
 function mockGoplus(url) {
   goplusCalls++;
   if (goplusDown) return new Response("oops", { status: 502 });
   const u = String(url);
+  if (u.includes("/token_security/")) {
+    const address = new URL(u).searchParams.get("contract_addresses").toLowerCase();
+    const result = TOKEN_DATA[address] ? { [address]: TOKEN_DATA[address] } : {};
+    return new Response(JSON.stringify({ code: 1, message: "OK", result }));
+  }
   if (u.includes(PARTIAL)) return new Response(JSON.stringify({ code: 2, message: "partial data obtained", result: {} }));
   const isEoa = u.includes(EOA);
   const isPhish = u.includes(PHISH);
@@ -293,6 +311,55 @@ test("/explain returns the explanation in the requested language", async () => {
   assert.equal(r.status, 200);
   assert.equal(r.body.explanation.lang, "nl");
   assert.ok(r.body.explanation.text.length > 0);
+});
+
+// ---------- token security ----------
+
+test("USDC-like token: issuer controls are reported as info, the verdict stays green", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000" });
+  assert.equal(r.body.verdict, "green");
+  assert.ok(codes(r).includes("TOKEN_ON_TRUST_LIST"));
+  assert.ok(codes(r).includes("TOKEN_UPGRADEABLE"));
+  assert.equal(r.body.reasons.find((x) => x.code === "TOKEN_UPGRADEABLE").severity, "info");
+});
+
+test("approving a honeypot token is red, even for an exact amount to a verified contract", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: HONEY, spender: GOOD, amount: "1000000" });
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("TOKEN_HONEYPOT"));
+  assert.equal(r.body.reasons.find((x) => x.code === "TOKEN_HONEYPOT").subject, HONEY);
+});
+
+test("an x402 payment in a fake USDC is red and names the real token", async () => {
+  const fake = sig("TransferWithAuthorization", { from: USER, to: EOA, value: "20000", validAfter: "0", validBefore: String(Math.floor(Date.now() / 1000) + 300), nonce: "0x" + "00".repeat(32) },
+    { name: "USD Coin", version: "2", verifyingContract: FAKE_USDC });
+  const r = await check(fake);
+  assert.equal(r.body.verdict, "red");
+  const reason = r.body.reasons.find((x) => x.code === "TOKEN_IMPERSONATION");
+  assert.equal(reason.details.realToken, TOKEN);
+  // The real USDC payment stays green.
+  assert.equal((await check(payment(EOA, "20000"))).body.verdict, "green");
+});
+
+test("a 10%+ buy or sell tax is orange; a mintable token alone is only info", async () => {
+  const taxed = await check({ type: "approval", chainId: 8453, token: TAXED, spender: GOOD, amount: "1000000" });
+  assert.equal(taxed.body.verdict, "orange");
+  assert.deepEqual(taxed.body.reasons.find((x) => x.code === "TOKEN_HIGH_TAX").details, { buyTax: 0.12, sellTax: 0.15 });
+  const mint = await check({ type: "approval", chainId: 8453, token: MINTABLE, spender: GOOD, amount: "1000000" });
+  assert.equal(mint.body.verdict, "green");
+  assert.equal(mint.body.reasons.find((x) => x.code === "TOKEN_MINTABLE").severity, "info");
+});
+
+test("a token GoPlus does not know is reported, not guessed", async () => {
+  const unknown = "0x7777000000000000000000000000000000000099";
+  const r = await check({ type: "approval", chainId: 8453, token: unknown, spender: GOOD, amount: "1000000" });
+  assert.equal(r.body.verdict, "green");
+  assert.ok(codes(r).includes("TOKEN_NO_SECURITY_DATA"));
+});
+
+test("revoking needs no token lookup", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: HONEY, spender: PHISH, amount: "0" });
+  assert.ok(!codes(r).includes("TOKEN_HONEYPOT"));
 });
 
 test("repeated checks are served from cache", async () => {
