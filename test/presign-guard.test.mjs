@@ -20,6 +20,7 @@ const HONEY = "0x7777000000000000000000000000000000000001";   // honeypot token
 const FAKE_USDC = "0x7777000000000000000000000000000000000002"; // impersonates USDC
 const TAXED = "0x7777000000000000000000000000000000000003";   // 12% buy / 15% sell tax
 const MINTABLE = "0x7777000000000000000000000000000000000004"; // mintable, otherwise normal (like DEGEN)
+const SANCTIONED = "0x098b716b8aaf21512996dc57eb0615e2383e2f96"; // Lazarus (Ronin hack), OFAC SDN
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
 const MAX160 = (2n ** 160n - 1n).toString();
@@ -29,6 +30,30 @@ let goplusDown = false;
 let claudeDown = false;
 let goplusCalls = 0;
 let rpcDown = false;
+let pg1Down = false;
+let pg1Calls = 0;
+
+// PG1 MCP: check_wallet_sanctions and check_domain_age, shaped like the live responses.
+const DOMAINS = {
+  "uniswap.org": { available: true, domain: "uniswap.org", registration_date: "2018-11-26T05:33:07Z", age_days: 2860 },
+  "claim-usdc-drop.xyz": { available: true, domain: "claim-usdc-drop.xyz", registration_date: "2026-09-22T10:00:00Z", age_days: 3 },
+  "fizzl.eu": { available: false, domain: "fizzl.eu", reason: "No RDAP server registered for the '.eu' TLD in the IANA bootstrap file." },
+};
+async function mockPg1(opts) {
+  pg1Calls++;
+  if (pg1Down) return new Response("down", { status: 503 });
+  const { params } = JSON.parse(opts.body);
+  let out;
+  if (params.name === "check_wallet_sanctions") {
+    const listed = params.arguments.address.toLowerCase() === SANCTIONED;
+    out = { address: params.arguments.address, listed, list_last_synced: "2026-09-25T20:10:41Z",
+      matches: listed ? [{ sdn_name: "LAZARUS GROUP", currency: "ETH", programs: ["DPRK3"], sdn_uid: "27307" }] : [] };
+  } else {
+    const d = params.arguments.domain;
+    out = DOMAINS[d] ?? { available: false, domain: d, reason: `RDAP server responded with 404 for '${d}'.` };
+  }
+  return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify(out) }] } }));
+}
 
 function mockRpc(opts) {
   if (rpcDown) return new Response("down", { status: 502 });
@@ -75,6 +100,7 @@ before(async () => {
     const u = String(url);
     if (u.includes("gopluslabs")) return mockGoplus(u);
     if (u.includes("api.anthropic.com")) return mockClaude();
+    if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
     if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) return mockRpc(opts);
     return realFetch(url, opts);
   };
@@ -84,7 +110,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.close(); globalThis.fetch = realFetch; });
-beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; });
+beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; });
 
 async function check(body, path = "/v1/check") {
   const res = await realFetch(base + path, {
@@ -368,4 +394,69 @@ test("repeated checks are served from cache", async () => {
   const first = goplusCalls;
   await check({ type: "approval", chainId: 8453, token: TOKEN, spender, amount: "1" });
   assert.equal(goplusCalls, first);
+});
+
+// ---------- PG1: OFAC sanctions and domain age ----------
+
+test("a sanctioned spender is red, with the SDN entry; PG1 is credited", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: SANCTIONED, amount: "1000000" });
+  assert.equal(r.body.verdict, "red");
+  const hit = r.body.reasons.find((x) => x.code === "SANCTIONED_ADDRESS");
+  assert.equal(hit.subject, SANCTIONED);
+  assert.deepEqual(hit.details.matches, [{ name: "LAZARUS GROUP", programs: ["DPRK3"] }]);
+  assert.equal(hit.details.list, "OFAC SDN");
+  assert.ok(r.body.sources.includes("pg1"));
+});
+
+test("a sanctioned payment recipient in an x402 signature is red", async () => {
+  const typedData = {
+    primaryType: "TransferWithAuthorization",
+    domain: { name: "USD Coin", version: "2", chainId: 8453, verifyingContract: TOKEN },
+    message: { from: USER, to: SANCTIONED, value: "10000", validAfter: "0", validBefore: FAR, nonce: "0x" + "00".repeat(32) },
+  };
+  const r = await check({ type: "signature", chainId: 8453, typedData });
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("SANCTIONED_ADDRESS"));
+});
+
+test("PG1 down: the check still answers, the gap is info, not charged as an error", async () => {
+  pg1Down = true;
+  const FRESH = "0x5eeded0000000000000000000000000000000001"; // not screened before (results are cached)
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: FRESH, amount: "1000000", origin: "uniswap.org" });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.verdict, "green");
+  assert.ok(codes(r).includes("SANCTIONS_SCREEN_UNAVAILABLE"));
+  assert.ok(codes(r).includes("DOMAIN_AGE_UNAVAILABLE"));
+});
+
+test("origin: a 3-day-old domain is orange; an old one is context", async () => {
+  const fresh = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "https://claim-usdc-drop.xyz/connect?ref=1" });
+  assert.equal(fresh.body.verdict, "orange");
+  const hit = fresh.body.reasons.find((x) => x.code === "NEW_DOMAIN");
+  assert.deepEqual([hit.subject, hit.details.ageDays], ["claim-usdc-drop.xyz", 3]);
+  assert.equal(fresh.body.subject.origin, "claim-usdc-drop.xyz");
+  const old = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "uniswap.org" });
+  assert.equal(old.body.verdict, "green");
+  assert.ok(codes(old).includes("DOMAIN_AGE"));
+});
+
+test("origin: an unregistered domain is orange; a TLD without RDAP is unknown, not a warning", async () => {
+  const gone = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "no-such-site-3k2.com" });
+  assert.equal(gone.body.verdict, "orange");
+  assert.ok(codes(gone).includes("DOMAIN_NOT_REGISTERED"));
+  const eu = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "fizzl.eu" });
+  assert.equal(eu.body.verdict, "green");
+  assert.ok(codes(eu).includes("DOMAIN_AGE_UNKNOWN"));
+});
+
+test("origin: localhost and IPs are not looked up; junk is a 400 before any lookup", async () => {
+  const local = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "http://localhost:3000" });
+  assert.equal(local.status, 200);
+  assert.equal(local.body.subject.origin, undefined);
+  assert.ok(!codes(local).some((c) => c.startsWith("DOMAIN")));
+  pg1Calls = 0;
+  goplusCalls = 0;
+  const bad = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1", origin: "not a url" });
+  assert.equal(bad.status, 400);
+  assert.equal(pg1Calls + goplusCalls, 0);
 });

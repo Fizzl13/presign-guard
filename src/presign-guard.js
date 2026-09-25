@@ -16,6 +16,7 @@
 import express from "express";
 import { ROUTES, TOKEN_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata } from "./discovery.js";
 import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem";
+import { screenSanctions, domainAge, originHost, NEW_DOMAIN_DAYS } from "./pg1.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api/v1";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -406,7 +407,20 @@ function parseSignature(raw, chainId) {
 
 // ---------- request parsing ----------
 
+// Optional for every type: origin, the site asking for the signature or transaction
+// (a URL or hostname). Its domain age is checked; local and IP origins are not.
 export function parseRequest(body) {
+  const req = parseSubject(body);
+  if (body.origin !== undefined && body.origin !== null && body.origin !== "") {
+    if (typeof body.origin !== "string" || body.origin.length > 2048) throw new ValidationError("origin must be a URL or hostname");
+    const host = originHost(body.origin);
+    if (host === undefined) throw new ValidationError("origin must be a URL or hostname");
+    if (host) req.origin = host;
+  }
+  return req;
+}
+
+function parseSubject(body) {
   if (!body || typeof body !== "object") throw new ValidationError("JSON body required");
 
   const chainId = Number(body.chainId);
@@ -457,6 +471,12 @@ export async function analyze(req) {
   // calls an EIP-7702 wallet a contract (it has code), so check the code ourselves.
   const spenders = new Set(req.grants.map((g) => g.spender));
 
+  // PG1 (OFAC SDN and RDAP) runs alongside GoPlus; null = PG1 unavailable, never an error.
+  const pg1 = Promise.all([
+    Promise.all([...subjects].map(async (address) => [address, await screenSanctions(address)])),
+    req.origin ? domainAge(req.origin) : Promise.resolve(undefined),
+  ]);
+
   const lookups = await Promise.all([...subjects].map(async (address) => {
     const [a, c] = await Promise.all([
       getAddressSecurity(req.chainId, address),
@@ -496,6 +516,28 @@ export async function analyze(req) {
       const deployed = Number(contract.deployed_time);
       if (deployed && now - deployed < RECENT_DEPLOY_SECONDS) add("RECENTLY_DEPLOYED", "orange", address);
       if (flag(contract.trust_list)) add("ON_TRUST_LIST", "info", address);
+    }
+  }
+
+  const [sanctions, domain] = await pg1;
+  let pg1Used = false;
+  for (const [address, sc] of sanctions) {
+    if (!sc) { add("SANCTIONS_SCREEN_UNAVAILABLE", "info", address); continue; }
+    pg1Used = true;
+    if (sc.listed) {
+      add("SANCTIONED_ADDRESS", "red", address, {
+        list: "OFAC SDN", matches: sc.matches.map((m) => ({ name: m.sdnName, programs: m.programs })), listSynced: sc.listSynced,
+      });
+    }
+  }
+  if (req.origin) {
+    if (!domain) add("DOMAIN_AGE_UNAVAILABLE", "info", req.origin);
+    else {
+      pg1Used = true;
+      if (domain.found && domain.ageDays < NEW_DOMAIN_DAYS) add("NEW_DOMAIN", "orange", domain.domain, { ageDays: domain.ageDays, registered: domain.registered });
+      else if (!domain.found && domain.unregistered) add("DOMAIN_NOT_REGISTERED", "orange", domain.domain);
+      else if (!domain.found) add("DOMAIN_AGE_UNKNOWN", "info", domain.domain);
+      else add("DOMAIN_AGE", "info", domain.domain, { ageDays: domain.ageDays });
     }
   }
 
@@ -567,10 +609,11 @@ export async function analyze(req) {
       ...(req.revoke && { revokes: req.revokedSpender ?? null }),
       ...(req.signatureDeadline != null && { signatureDeadline: req.signatureDeadline }),
       ...(req.selector && { selector: req.selector }),
+      ...(req.origin && { origin: req.origin }),
       value: req.value.toString(),
     },
-    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved. Not covered: eth_sign/personal_sign messages and transaction simulation.",
-    sources: ["goplus", "chain-rpc"],
+    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). Not covered: eth_sign/personal_sign messages and transaction simulation.",
+    sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : [])],
     checkedAt: new Date().toISOString(),
   };
 }

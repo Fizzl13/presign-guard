@@ -87,6 +87,9 @@ before(async () => {
   globalThis.fetch = async (url, opts) => {
     const u = String(url);
     if (u.includes("gopluslabs")) return mockGoplus(u);
+    if (u.includes("pg1-ai-agent.vercel.app")) {
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify({ listed: false, matches: [] }) }] } }));
+    }
     if (u.includes("api.dexscreener.com")) {
       state.dex++;
       return new Response(JSON.stringify([{ dexId: "aerodrome", url: "https://dexscreener.com/base/0xpool", pairCreatedAt: Date.now() - 400 * 86400e3,

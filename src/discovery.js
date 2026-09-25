@@ -93,6 +93,7 @@ export const INPUT_SCHEMA = {
     data: { type: "string", description: "transaction: 0x-prefixed calldata" },
     value: { type: "string", description: "transaction: native value in wei" },
     typedData: { type: ["object", "string"], description: "signature: the eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)" },
+    origin: { type: "string", description: "optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange" },
     lang: { type: "string", enum: ["en", "nl"], description: "explain only: language of the explanation (default en)" },
   },
   required: ["type", "chainId"],
@@ -210,8 +211,8 @@ export function openApi(origin, network, tokenNetworks = [network]) {
     info: {
       title: "presign-guard",
       version: "2.2.0",
-      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient and the token itself (honeypot, impersonation, high tax). Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it.",
-      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data.",
+      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it.",
+      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data.",
     },
     servers: [{ url: origin }],
     paths,

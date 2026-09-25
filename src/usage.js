@@ -69,6 +69,7 @@ export function describePresignCall(req, _res, body) {
       target: input.to || input.token || (td && td.domain && td.domain.verifyingContract) || undefined,
       spender: input.spender || (td && td.message && (td.message.spender || td.message.to)) || undefined,
       selector: typeof input.data === "string" && input.data.length >= 10 ? input.data.slice(0, 10) : undefined,
+      origin: typeof input.origin === "string" ? input.origin.slice(0, 120) : undefined,
       lang: input.lang,
     },
     result: {
