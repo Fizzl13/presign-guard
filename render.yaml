@@ -2,7 +2,7 @@ services:
   - type: web
     name: presign-guard
     runtime: node
-    plan: free
+    plan: starter # always on: the CDP Bazaar curation tier needs >= 99% availability; Free sleeps after 15 min
     buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /health
