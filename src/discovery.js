@@ -127,7 +127,7 @@ export function openApi(origin, network) {
     info: {
       title: "presign-guard",
       version: "2.1.0",
-      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature.",
+      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient and the token itself (honeypot, impersonation, high tax).",
       "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl).",
     },
     servers: [{ url: origin }],
