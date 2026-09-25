@@ -40,6 +40,7 @@ const CHECK_INPUT = {
   data: z.string().optional().describe("transaction: 0x-prefixed calldata"),
   value: z.string().optional().describe("transaction: native value in wei"),
   typedData: z.union([z.record(z.any()), z.string()]).optional().describe("signature: the exact eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)"),
+  origin: z.string().optional().describe("optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange"),
 };
 const EXPLAIN_INPUT = { ...CHECK_INPUT, lang: z.enum(["en", "nl"]).optional().describe("Language of the explanation (default en)") };
 
@@ -97,7 +98,7 @@ const PAID_TOOLS = [
     discovery: CHECK_DISCOVERY,
     summary: "Green/orange/red verdict with reason codes before an agent signs an EVM transaction, token approval or EIP-712 signature.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
+      `Paid (${price} USDC via x402 on Base): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
     run: (request) => analyze(request),
   },
   {
