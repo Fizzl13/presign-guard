@@ -65,6 +65,29 @@ const ADDRESS_RED_FLAGS = [
 ];
 const ADDRESS_ORANGE_FLAGS = ["blacklist_doubt", "mixer"];
 
+// GoPlus token_security fields for the token being approved, permitted or paid.
+// Red: the token itself is a trap. Orange: the owner can take or freeze your tokens
+// in ways a normal token cannot. Info: common issuer controls (USDC has several),
+// reported for context without changing the verdict.
+const TOKEN_RED_FLAGS = { is_honeypot: "TOKEN_HONEYPOT", is_airdrop_scam: "TOKEN_AIRDROP_SCAM" };
+const TOKEN_ORANGE_FLAGS = {
+  owner_change_balance: "TOKEN_OWNER_CAN_CHANGE_BALANCES",
+  can_take_back_ownership: "TOKEN_OWNERSHIP_RECLAIMABLE",
+  hidden_owner: "TOKEN_HIDDEN_OWNER",
+  selfdestruct: "TOKEN_SELFDESTRUCT",
+  cannot_sell_all: "TOKEN_CANNOT_SELL_ALL",
+  honeypot_with_same_creator: "TOKEN_CREATOR_MADE_HONEYPOTS",
+};
+const TOKEN_INFO_FLAGS = {
+  is_mintable: "TOKEN_MINTABLE",
+  transfer_pausable: "TOKEN_PAUSABLE",
+  is_blacklisted: "TOKEN_BLACKLIST",
+  is_proxy: "TOKEN_UPGRADEABLE",
+  slippage_modifiable: "TOKEN_TAX_MODIFIABLE",
+  trading_cooldown: "TOKEN_TRADING_COOLDOWN",
+};
+const HIGH_TOKEN_TAX = 0.1; // 10% buy or sell tax
+
 // ---------- errors ----------
 
 class ValidationError extends Error {
@@ -147,6 +170,32 @@ function getContractSecurity(chainId, address) {
     const { result, partial } = await goplus(`/approval_security/${chainId}?contract_addresses=${address}`);
     return { data: pickResult(result, address), partial };
   });
+}
+
+// Token risk for an ERC-20 (null data when GoPlus has no record, e.g. an NFT collection).
+function getTokenSecurity(chainId, token) {
+  return cached(`token:${chainId}:${token}`, async () => {
+    const { result, partial } = await goplus(`/token_security/${chainId}?contract_addresses=${token}`);
+    const data = result?.[token];
+    return { data: data && typeof data === "object" && Object.keys(data).length ? data : null, partial };
+  });
+}
+
+function tokenReasons(token, t, add) {
+  if (!t) { add("TOKEN_NO_SECURITY_DATA", "info", token); return; }
+  for (const [field, code] of Object.entries(TOKEN_RED_FLAGS)) if (flag(t[field])) add(code, "red", token);
+  const fake = t.fake_token;
+  if (fake && typeof fake === "object" && flag(fake.value)) {
+    add("TOKEN_IMPERSONATION", "red", token, fake.true_token_address ? { realToken: String(fake.true_token_address).toLowerCase() } : undefined);
+  }
+  for (const [field, code] of Object.entries(TOKEN_ORANGE_FLAGS)) if (flag(t[field])) add(code, "orange", token);
+  if (t.is_open_source !== undefined && !flag(t.is_open_source)) add("TOKEN_UNVERIFIED", "orange", token);
+  const buyTax = Number(t.buy_tax) || 0;
+  const sellTax = Number(t.sell_tax) || 0;
+  if (Math.max(buyTax, sellTax) >= HIGH_TOKEN_TAX) add("TOKEN_HIGH_TAX", "orange", token, { buyTax, sellTax });
+  else if (buyTax > 0 || sellTax > 0) add("TOKEN_TAX", "info", token, { buyTax, sellTax });
+  for (const [field, code] of Object.entries(TOKEN_INFO_FLAGS)) if (flag(t[field])) add(code, "info", token);
+  if (flag(t.trust_list)) add("TOKEN_ON_TRUST_LIST", "info", token);
 }
 
 // ---------- input helpers ----------
@@ -415,6 +464,14 @@ async function analyze(req) {
     return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated }];
   }));
   const results = new Map(lookups);
+
+  // The tokens being approved, permitted or paid (not NFT approve-for-all).
+  const tokens = [...new Set(req.grants.filter((g) => !g.allForAll && g.token).map((g) => g.token))];
+  const tokenLookups = await Promise.all(tokens.map(async (token) => [token, await getTokenSecurity(req.chainId, token)]));
+  for (const [token, { data, partial }] of tokenLookups) {
+    if (partial) add("PARTIAL_SOURCE_DATA", "info", token);
+    tokenReasons(token, data, add);
+  }
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
@@ -509,7 +566,7 @@ async function analyze(req) {
       ...(req.selector && { selector: req.selector }),
       value: req.value.toString(),
     },
-    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures. Not covered: eth_sign/personal_sign messages and transaction simulation.",
+    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved. Not covered: eth_sign/personal_sign messages and transaction simulation.",
     sources: ["goplus", "chain-rpc"],
     checkedAt: new Date().toISOString(),
   };
