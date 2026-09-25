@@ -315,7 +315,10 @@ const PHRASES = {
 export function oneLiner({ grade, reasons, market }) {
   const serious = reasons.filter((r) => r.severity !== "info");
   const phrases = serious.map((r) => PHRASES[r.code]?.(r.details ?? {}) ?? r.code.toLowerCase().replace(/_/g, " "));
-  if (!phrases.length) {
+  if (!phrases.length && reasons.some((r) => r.code === "TOKEN_ON_TRUST_LIST")) {
+    // DexScreener's liquidity and age undercount quote assets (USDT showed $863): leave them out.
+    phrases.push("no red flags, on the GoPlus trust list");
+  } else if (!phrases.length) {
     const facts = market ? [`${usd(market.liquidityUsd)} liquidity`, market.ageSeconds !== null && `${age(market.ageSeconds)} old`].filter(Boolean) : [];
     phrases.push(["no red flags", ...facts].join(", "));
   }

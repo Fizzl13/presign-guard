@@ -151,6 +151,7 @@ test("Solana, trusted issuer (USDC): mint and freeze authority are context, not 
   const r = await tokenVerdict({ chain: "solana", address: USDC_SOL }, NOW);
   assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
   assert.deepEqual(codes(r, "info"), ["FREEZE_AUTHORITY_ACTIVE", "MINT_AUTHORITY_ACTIVE", "TOKEN_ON_TRUST_LIST"]);
+  assert.equal(r.one_liner, "SAFE: no red flags, on the GoPlus trust list");
 });
 
 test("unknown token: no data is orange, never red", async () => {
