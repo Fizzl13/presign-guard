@@ -1,0 +1,28 @@
+1
+00:00:00,022 --> 00:00:05,270
+Before your agent buys a token, or accepts one as payment, it should know what it is holding.
+
+2
+00:00:06,556 --> 00:00:14,961
+presign-guard now checks the token itself. One call, any Solana or EVM token: a grade, the reasons, and the market.
+
+3
+00:00:15,438 --> 00:00:19,406
+Bonk? Safe. No red flags, deep liquidity, and years of trading.
+
+4
+00:00:19,868 --> 00:00:25,671
+A token launched today? Risky. Hours old, thin liquidity, and every reason is listed.
+
+5
+00:00:26,132 --> 00:00:32,575
+USDC? Safe too. Its issuer can freeze and mint on purpose, so that is context, not a warning.
+
+6
+00:00:33,034 --> 00:00:41,930
+Agents pay one cent per check with x402, in USDC on Base or Solana. Or ask the free quick verdict over MCP.
+
+7
+00:00:42,388 --> 00:00:45,417
+presign-guard. Check the token before you touch it.
+

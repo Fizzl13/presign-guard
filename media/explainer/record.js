@@ -21,7 +21,7 @@ const W = 1920;
 const H = 1080;
 const ZOOM = 2.0;
 
-const script = JSON.parse(fs.readFileSync(path.join(HERE, "script.json"), "utf8"));
+const script = JSON.parse(fs.readFileSync(path.join(HERE, process.env.SCRIPT || "script.json"), "utf8"));
 const durations = JSON.parse(fs.readFileSync(path.join(OUT, "durations.json"), "utf8"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -55,6 +55,101 @@ function terminalHtml(label, lines) {
   </style></head><body><div class="t"><div class="bar"><i></i><i></i><i></i></div><div class="label">${esc(label)}</div><pre>${lines
     .map((l, i) => `<div class="l ${l.cls || ''}" id="l${i}">${esc(l.text)}</div>`)
     .join('')}</pre></div></body></html>`;
+}
+
+// ---------- token video ----------
+
+const BONK = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263";
+const USDC_SOL = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+const LITECAT = "qikeUfbJaWPHy7sTTYfQuBuafzmUBZAH7SjCbjZCyFA";
+const usd = (v) => (v == null ? "–" : v >= 1e9 ? `$${(v / 1e9).toFixed(1)}B` : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : v >= 1e3 ? `$${Math.round(v / 1e3)}k` : `$${Math.round(v)}`);
+const age = (s) => (s == null ? "–" : s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : s < 86400 ? `${Math.round(s / 3600)} h` : s < 365 * 86400 ? `${Math.round(s / 86400)} days` : `${(s / (365 * 86400)).toFixed(1)} years`);
+
+async function tokenVerdictLocal(address) {
+  const res = await fetch(`${SITE}/v1/token?chain=solana&address=${address}`);
+  const out = await res.json();
+  if (!res.ok) throw new Error(`token ${address}: HTTP ${res.status} ${JSON.stringify(out)}`);
+  return out;
+}
+
+const orangeCodes = (r) => r.reasons.filter((x) => x.severity === "orange").map((x) => x.code);
+
+// A token the narration can call "launched today, risky: hours old, thin liquidity":
+// LITECAT if it still fits, else the newest Solana tokens on DexScreener.
+async function pickRisky() {
+  const fits = (r) => r.grade === "RISKY" && ["NEW_TOKEN", "LOW_LIQUIDITY"].every((c) => orangeCodes(r).includes(c));
+  const candidates = [LITECAT];
+  if (process.env.MOCK_LIVE === "1") candidates.push("Risky11111111111111111111111111111111111111");
+  else try {
+    const latest = await (await fetch("https://api.dexscreener.com/token-profiles/latest/v1")).json();
+    for (const t of latest) if (t.chainId === "solana" && t.tokenAddress) candidates.push(t.tokenAddress);
+  } catch { /* LITECAT only */ }
+  for (const address of candidates.slice(0, 25)) {
+    const r = await tokenVerdictLocal(address).catch(() => null);
+    if (r && fits(r)) return r;
+  }
+  throw new Error("no fresh, thin Solana token found that grades RISKY");
+}
+
+async function tokenData() {
+  const safe = await tokenVerdictLocal(BONK);
+  if (safe.grade !== "SAFE") throw new Error(`Bonk: expected SAFE, got ${safe.grade} (${orangeCodes(safe)})`);
+  const trusted = await tokenVerdictLocal(USDC_SOL);
+  const info = trusted.reasons.filter((x) => x.severity === "info").map((x) => x.code);
+  if (trusted.grade !== "SAFE" || !["FREEZE_AUTHORITY_ACTIVE", "MINT_AUTHORITY_ACTIVE", "TOKEN_ON_TRUST_LIST"].every((c) => info.includes(c))) {
+    throw new Error(`USDC: expected SAFE with freeze/mint as context, got ${trusted.grade} ${info}`);
+  }
+  const risky = await pickRisky();
+  for (const r of [safe, risky, trusted]) console.log(`${r.token.symbol}: ${r.grade} | ${r.one_liner}`);
+  return { safe, risky, trusted };
+}
+
+const BADGE = { SAFE: "var(--bull)", CAUTION: "var(--warn)", RISKY: "#fdba74", AVOID: "var(--red)" };
+const SEV = { red: "var(--red)", orange: "#fdba74", info: "var(--soft)" };
+
+function verdictHtml(r) {
+  const m = r.market || {};
+  const serious = r.reasons.filter((x) => x.severity !== "info");
+  // Info the narration mentions first; the rest only if there is room.
+  const FIRST = ["MINT_AUTHORITY_ACTIVE", "FREEZE_AUTHORITY_ACTIVE", "TOKEN_ON_TRUST_LIST"];
+  const rank = (x) => (FIRST.includes(x.code) ? FIRST.indexOf(x.code) : FIRST.length);
+  const info = r.reasons.filter((x) => x.severity === "info").sort((a, b) => rank(a) - rank(b)).slice(0, 4 - Math.min(serious.length, 3));
+  // DexScreener undercounts quote assets (USDC), so a trust-list token shows no market figures.
+  const trusted = r.reasons.some((x) => x.code === "TOKEN_ON_TRUST_LIST");
+  const reasons = [...serious.slice(0, 5), ...info];
+  const stats = [["Price", m.priceUsd == null ? "–" : `$${Number(m.priceUsd).toPrecision(3)}`], ["Liquidity", usd(m.liquidityUsd)], ["Market cap", usd(m.marketCapUsd)], ["24h volume", usd(m.volume24hUsd)], ["Age", age(m.ageSeconds)]];
+  return `<!doctype html><html><head><style>${THEME}
+    body { display:flex; align-items:center; justify-content:center; }
+    .v { width: 1500px; background: var(--panel); border:1px solid var(--line); border-radius: 22px; padding: 44px 56px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+    .req { font: 26px ui-monospace, 'DejaVu Sans Mono', monospace; color: var(--soft); margin-bottom: 30px; }
+    .top { display:flex; align-items:center; gap: 28px; }
+    h1 { font-size: 64px; margin: 0; } .chain { color: var(--soft); font-size: 30px; }
+    .badge { margin-left:auto; font-size: 44px; font-weight: 800; padding: 10px 30px; border-radius: 14px; color:#0f1115; background:${BADGE[r.grade]}; }
+    .one { font-size: 36px; margin: 26px 0 26px; color: var(--text); }
+    ul { list-style:none; padding:0; margin:0 0 30px; font: 28px/1.7 ui-monospace, 'DejaVu Sans Mono', monospace; }
+    li b { display:inline-block; width: 110px; font-weight: 600; }
+    .stats { display:grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+    .s { background: var(--bg); border:1px solid var(--line); border-radius: 12px; padding: 16px 20px; }
+    .s span { display:block; color: var(--soft); font-size: 22px; } .s strong { font-size: 34px; }
+    .r { opacity: 0; transform: translateY(10px); transition: all .4s; } .r.on { opacity: 1; transform: none; }
+  </style></head><body><div class="v">
+    <div class="req r">GET /v1/token?chain=solana&amp;address=${esc(r.token.address.slice(0, 6))}…${esc(r.token.address.slice(-4))}</div>
+    <div class="top r"><h1>${esc(r.token.symbol || "?")}</h1><span class="chain">${esc(r.token.name || "")} · Solana</span><span class="badge">${esc(r.grade)}</span></div>
+    <div class="one r">${esc(r.one_liner)}</div>
+    <ul class="r">${reasons.map((x) => `<li><b style="color:${SEV[x.severity]}">${esc(x.severity)}</b>${esc(x.code)}</li>`).join("")}</ul>
+    ${trusted ? "" : `<div class="stats r">${stats.map(([k, v]) => `<div class="s"><span>${k}</span><strong>${esc(v)}</strong></div>`).join("")}</div>`}
+  </div></body></html>`;
+}
+
+// The price an agent sees for the token verdict, from the live 402 challenge.
+async function liveTokenPrice() {
+  if (process.env.MOCK_LIVE === "1") return "$0.01 USDC on Base or Solana";
+  const res = await fetch(`${LIVE}/v1/token?chain=solana&address=${BONK}`);
+  if (res.status !== 402) throw new Error(`expected 402 from ${LIVE}/v1/token, got ${res.status}`);
+  const challenge = JSON.parse(Buffer.from(res.headers.get("payment-required"), "base64").toString("utf8"));
+  const nets = challenge.accepts.map((a) => (a.network.startsWith("solana:") ? "Solana" : a.network === "eip155:8453" ? "Base" : null)).filter(Boolean);
+  if (!nets.includes("Base") || !nets.includes("Solana")) throw new Error(`live token route offers ${nets}, expected Base and Solana`);
+  return `$${(Number(challenge.accepts[0].amount) / 1e6).toFixed(2)} USDC on Base or Solana`;
 }
 
 // Captions: a bar at the bottom of every page, re-created after navigation.
@@ -133,7 +228,9 @@ async function showPreset(page, preset, ms) {
 }
 
 async function main() {
-  const price = await livePrice();
+  const tokenVideo = script.segments.some((seg) => seg.scene.startsWith("token"));
+  const price = tokenVideo ? await liveTokenPrice() : await livePrice();
+  const tokens = tokenVideo ? await tokenData() : null;
   const agentLines = [
     { cls: "", text: "$ POST presign-guard.onrender.com/v1/check   { what the agent is about to sign }" },
     { cls: "in", text: `\u2190 402 Payment Required: ${price}` },
@@ -164,7 +261,49 @@ async function main() {
     await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
   };
 
+  const tokenAgentLines = tokens && [
+    { cls: "", text: `$ GET presign-guard.onrender.com/v1/token?chain=solana&address=${BONK.slice(0, 6)}…` },
+    { cls: "in", text: `\u2190 402 Payment Required: ${price}` },
+    { cls: "dim", text: "\u2192 agent pays and retries" },
+    { cls: "ok", text: `\u2190 200 OK  { "verdict": "${tokens.safe.verdict}", "grade": "${tokens.safe.grade}",` },
+    { cls: "ok", text: `           "one_liner": "${tokens.safe.one_liner}" }` },
+    { cls: "dim", text: " " },
+    { cls: "", text: "MCP  token_quick_verdict { chain: \"solana\", address: … }" },
+    { cls: "ok", text: `\u2190 { "verdict": "${tokens.safe.verdict}", "grade": "${tokens.safe.grade}" }   free, 10 calls an hour` },
+  ];
+  // Pages are loaded in a prepare step, before the caption is drawn; the scene only reveals.
+  const reveal = async (selector, ms, share) => {
+    const steps = await page.evaluate((sel) => document.querySelectorAll(sel).length, selector);
+    for (let i = 0; i < steps; i++) {
+      await page.evaluate(({ sel, i }) => document.querySelectorAll(sel)[i].classList.add("on"), { sel: selector, i });
+      await sleep(Math.max(200, (ms * share) / steps));
+    }
+  };
+
   const scenes = {
+    async "prepare:tokenHome"() {
+      await page.goto(SITE, { waitUntil: "networkidle", timeout: 90000 });
+      await zoomPage(page);
+      await sleep(300);
+    },
+    async tokenHome(seg, ms) {
+      await center(page, "#token-card");
+      await sleep(ms * 0.35);
+      await glow(page, "#token-card");
+    },
+    async "prepare:tokenSafe"() { await page.setContent(verdictHtml(tokens.safe), { waitUntil: "load" }); },
+    async "prepare:tokenRisky"() { await page.setContent(verdictHtml(tokens.risky), { waitUntil: "load" }); },
+    async "prepare:tokenTrusted"() { await page.setContent(verdictHtml(tokens.trusted), { waitUntil: "load" }); },
+    async tokenSafe(seg, ms) { await reveal(".r", ms, 0.6); },
+    async tokenRisky(seg, ms) { await reveal(".r", ms, 0.6); },
+    async tokenTrusted(seg, ms) { await reveal(".r", ms, 0.6); },
+    async "prepare:tokenAgents"() {
+      await page.setContent(terminalHtml("An AI agent checking a token before it buys", tokenAgentLines), { waitUntil: "load" });
+    },
+    async tokenAgents(seg, ms) {
+      await reveal(".l", ms, 0.8);
+      await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
+    },
     async card(seg) {
       await page.setContent(cardHtml(seg.card), { waitUntil: "load" });
     },

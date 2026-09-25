@@ -89,11 +89,17 @@
     <a href="/media/explainer.mp4">Watch the explainer video</a>
   </video>
 
+  <h2>New: the token verdict in 45 seconds</h2>
+  <video class="video" controls playsinline preload="none" poster="/media/token.jpg" width="1920" height="1080">
+    <source src="/media/token.mp4" type="video/mp4">
+    <a href="/media/token.mp4">Watch the token verdict video</a>
+  </video>
+
   <h2>How agents use it</h2>
   <div class="grid">
     <div class="card"><h3>HTTP + x402</h3><p><code>POST /v1/check</code> answers 402 with the price; the agent pays and gets the verdict in the same request.</p></div>
     <div class="card"><h3>What it reads</h3><p>Approvals, raw transactions, and EIP-712 signatures: Permit, Permit2, Seaport and x402 payments (EIP-3009). It checks who gets access and the token itself: honeypots, fake look-alikes and high taxes.</p></div>
-    <div class="card"><h3>Token verdict</h3><p><code>GET /v1/token?chain=solana&amp;address=…</code>, $0.01 on Base or Solana: before buying or accepting a token, a grade (SAFE to AVOID), reasons like active mint or freeze authority, unlocked LP, thin liquidity or a few big holders, and market data. Solana, Base, Ethereum and more.</p></div>
+    <div class="card" id="token-card"><h3>Token verdict</h3><p><code>GET /v1/token?chain=solana&amp;address=…</code>, $0.01 on Base or Solana: before buying or accepting a token, a grade (SAFE to AVOID), reasons like active mint or freeze authority, unlocked LP, thin liquidity or a few big holders, and market data. Solana, Base, Ethereum and more.</p></div>
     <div class="card"><h3>Discovery</h3><p><a href="/openapi.json">OpenAPI</a>, <a href="/.well-known/x402">/.well-known/x402</a> and the CDP Bazaar.</p></div>
   </div>
 
