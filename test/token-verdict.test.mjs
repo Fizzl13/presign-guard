@@ -20,6 +20,7 @@ const DOWN_SOL = "Down111111111111111111111111111111111111111";
 const DEGEN = "0x4ed4e862860bed51a9570b96d89af5e1b0efefed";
 const HONEY = "0x1111111111111111111111111111111111111111";
 const NOMARKET = "0x2222222222222222222222222222222222222222";
+const WETH = "0x4200000000000000000000000000000000000006";
 
 const off = { status: "0" };
 const on = { status: "1" };
@@ -62,13 +63,15 @@ const FIXTURES = {
     [DEGEN]: [pair(DEGEN, { liq: 3e6, createdDaysAgo: 900, symbol: "DEGEN" })],
     [HONEY]: [pair(HONEY, { liq: 80000, createdDaysAgo: 0.5 })],
     [NOMARKET]: [],
+    [WETH]: [pair(WETH, { liq: 20000, createdDaysAgo: 800, symbol: "WETH" })],
   },
   goplusEvm: {
     [DEGEN]: { is_open_source: "1", is_honeypot: "0", buy_tax: "0", sell_tax: "0", holder_count: "900000",
-      holders: [{ address: "0xpool", percent: "0.3", is_locked: 0 }, { address: "0xa", percent: "0.05", is_locked: 0 }],
+      holders: [{ address: "0xpool", percent: "0.3", is_locked: 0 }, { address: "0xstaking", percent: "0.4", is_contract: 1 }, { address: "0xa", percent: "0.05", is_locked: 0 }],
       dex: [{ pair: "0xpool", liquidity: "3000000" }] },
     [HONEY]: { is_open_source: "1", is_honeypot: "1", buy_tax: "0", sell_tax: "1" },
     [NOMARKET]: { is_open_source: "0" },
+    [WETH]: { is_open_source: "1", trust_list: "1", holders: [{ address: "0xw", percent: "0.25", is_contract: 0 }] },
   },
 };
 
@@ -165,10 +168,16 @@ test("RugCheck down: still a verdict, with the gap reported", async () => {
   assert.ok(!r.sources.includes("rugcheck"));
 });
 
-test("Base, established token (DEGEN): the pool is not counted as a whale", async () => {
+test("Base, established token (DEGEN): pools and contracts are not counted as whales", async () => {
   const r = await tokenVerdict({ chain: "base", address: DEGEN }, NOW);
   assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
   assert.ok(!codes(r).includes("TOP_HOLDERS_CONCENTRATED"));
+});
+
+test("Base, trusted token: thin DexScreener liquidity is context, a big wallet still counts", async () => {
+  const r = await tokenVerdict({ chain: "base", address: WETH }, NOW);
+  assert.deepEqual(codes(r, "orange"), ["TOP_HOLDERS_CONCENTRATED"]);
+  assert.ok(codes(r, "info").includes("LOW_LIQUIDITY"));
 });
 
 test("Base, honeypot: red, AVOID, and the GoPlus token rules from /v1/check apply", async () => {

@@ -164,9 +164,11 @@ function reasonCollector() {
   return { reasons, add };
 }
 
-function marketReasons(market, add, { lpLockedPct } = {}) {
-  if (!market) { add("NO_DEX_MARKET", "orange"); return; }
-  if (market.liquidityUsd < LOW_LIQUIDITY_USD) add("LOW_LIQUIDITY", "orange", { liquidityUsd: market.liquidityUsd });
+// trusted: on the GoPlus trust list. DexScreener mostly returns the pairs where a token
+// is the base token, so the liquidity of a quote asset (USDC, WETH) looks far too low.
+function marketReasons(market, add, { lpLockedPct, trusted = false } = {}) {
+  if (!market) { add("NO_DEX_MARKET", trusted ? "info" : "orange"); return; }
+  if (market.liquidityUsd < LOW_LIQUIDITY_USD) add("LOW_LIQUIDITY", trusted ? "info" : "orange", { liquidityUsd: market.liquidityUsd });
   if (market.ageSeconds !== null && market.ageSeconds < NEW_TOKEN_SECONDS) add("NEW_TOKEN", "orange", { ageSeconds: market.ageSeconds });
   if (lpLockedPct !== null && lpLockedPct !== undefined && lpLockedPct < LP_LOCKED_MIN_PCT) {
     // Concentrated-liquidity pools have no LP token to lock, so only a young token is flagged.
@@ -215,7 +217,7 @@ function solanaReasons({ sec, rug, market }, add) {
   }
 
   const lpLockedPct = rug && !rug.error ? lpLocked(rug) : null;
-  marketReasons(market, add, { lpLockedPct });
+  marketReasons(market, add, { lpLockedPct, trusted });
   holderReasons(solanaHolders(sec, rug), add);
 
   if (rug?.error) add("RUGCHECK_UNAVAILABLE", "info", { message: rug.error });
@@ -260,13 +262,15 @@ function evmReasons({ sec, market }, add) {
   const lpLockedPct = lp.length
     ? lp.filter((h) => flag(h.is_locked) || BURN.has(String(h.address).toLowerCase())).reduce((s, h) => s + (num(h.percent) ?? 0) * 100, 0)
     : null;
-  marketReasons(market, add, { lpLockedPct });
+  marketReasons(market, add, { lpLockedPct, trusted: flag(sec?.trust_list) });
+  // Wallets only: the big contract holders of an EVM token are pools, lockers,
+  // staking, vesting and bridges (veAERO holds half of AERO).
   if (Array.isArray(sec?.holders)) {
     const lpAddresses = new Set(lp.map((h) => String(h.address).toLowerCase()));
     const pairs = new Set((sec.dex ?? []).map((d) => String(d.pair).toLowerCase()));
     holderReasons(concentration(sec.holders.map((h) => {
       const address = String(h.address).toLowerCase();
-      return { address, pct: num(h.percent) * 100, excluded: flag(h.is_locked) || pairs.has(address) || lpAddresses.has(address) };
+      return { address, pct: num(h.percent) * 100, excluded: flag(h.is_locked) || flag(h.is_contract) || pairs.has(address) || lpAddresses.has(address) };
     })), add);
   }
 }

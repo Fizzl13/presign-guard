@@ -22,7 +22,7 @@ jobs:
           curl -sf --max-time 60 https://presign-guard.onrender.com/mcp \
             -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | tee tools.json
-          grep -q presign_quick_check tools.json
+          grep -q token_quick_verdict tools.json
       - name: Install mcp-publisher
         run: |
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher

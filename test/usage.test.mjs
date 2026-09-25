@@ -32,3 +32,14 @@ test("usage log: a check is logged with what was sent and the verdict", async ()
 test("usage log: other routes are not logged", () => {
   assert.equal(describePresignCall({ method: "GET", path: "/health" }, {}, {}), null);
 });
+
+test("usage log: a token verdict is logged with the chain, token, verdict and grade", () => {
+  const req = { method: "GET", path: "/v1/token", query: { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" }, get: () => undefined };
+  const body = { verdict: "orange", grade: "CAUTION", reasons: [{ code: "NEW_TOKEN", severity: "orange" }, { code: "NO_SOCIALS", severity: "info" }] };
+  assert.deepEqual(describePresignCall(req, {}, body), {
+    route: "token",
+    via: "api",
+    input: { chain: "solana", target: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" },
+    result: { verdict: "orange", grade: "CAUTION", reasons: "NEW_TOKEN", error: undefined },
+  });
+});
