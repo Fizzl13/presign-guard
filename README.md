@@ -6,6 +6,8 @@ A pre-sign risk check for AI agents. Before an agent signs a transaction, approv
 
 [![presign-guard explainer video](public/media/explainer.jpg)](https://presign-guard.onrender.com/media/explainer.mp4)
 
+**New: the token verdict in 45 seconds:** [presign-guard.onrender.com/media/token.mp4](https://presign-guard.onrender.com/media/token.mp4)
+
 Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL AI](https://fizzl.eu).
 
 ## Endpoints
@@ -37,6 +39,8 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict a
 The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Token verdict
+
+[![Token verdict video](public/media/token.jpg)](https://presign-guard.onrender.com/media/token.mp4)
 
 `GET /v1/token?chain=solana&address=<mint>` (or `chain=base|ethereum|arbitrum|optimism|polygon|bsc` with a `0x` token contract) answers one question before an agent buys, holds or accepts a token: is the token itself a trap?
 

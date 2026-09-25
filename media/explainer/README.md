@@ -12,6 +12,12 @@ A ~55-second narrated walkthrough of presign-guard.
 - `build.py`: mixes the voice onto the recording (loudness -16 LUFS), writes the MP4,
   captions (SRT) and a poster frame.
 
+`token.json` is a ~45-second update about the token verdict (`GET /v1/token`): real
+verdicts on live data (Bonk SAFE, a token launched today RISKY, USDC SAFE with its issuer
+powers as context), checked against the narration before recording. Pick it as the
+workflow's script (the default); it publishes to the `token-video` branch as
+`presign-guard-token.mp4`. Locally: `SCRIPT=token.json` for tts.py, record.js and build.py.
+
 Run it with the **Explainer video** workflow (Actions tab). The result is published to the
 `explainer-video` branch and attached to the run.
 
