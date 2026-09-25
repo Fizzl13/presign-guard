@@ -14,11 +14,24 @@ Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL
 |---|---|---|
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
+| `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
 | `GET /health` | free | Liveness |
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
 | `GET /.well-known/x402` | free | x402 discovery manifest |
 
 Payment is x402 v2 with the `exact` scheme, in USDC on Base. The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+
+## MCP
+
+`https://presign-guard.onrender.com/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
+
+| Tool | Price | Returns |
+|---|---|---|
+| `presign_quick_check` | free, 10 calls/hour | The verdict only (green, orange or red) |
+| `presign_check` | $0.01 USDC via x402 | The full verdict and reason codes, as `POST /v1/check` |
+| `presign_check_explain` | $0.03 USDC via x402 | The same plus a plain-language explanation, as `POST /v1/check/explain` |
+
+The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base, to the same payout wallet as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Request types
 

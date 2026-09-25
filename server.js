@@ -7,6 +7,7 @@ import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, describePresignCall } from "./src/usage.js";
+import { createMcpRouter } from "./src/mcp.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -42,6 +43,7 @@ app.get("/", (_req, res) => res.json({
   service: "presign-guard",
   docs: "https://github.com/Fizzl13/presign-guard",
   paid: Object.keys(x402Routes(PAY_TO, NETWORK)),
+  mcp: `${PUBLIC_URL}/mcp`,
   openapi: `${PUBLIC_URL}/openapi.json`,
 }));
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
@@ -52,6 +54,9 @@ app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 // x402-doctor.onrender.com/admin/usage. Does nothing without USAGE_LOG_TOKEN.
 // req.body is filled in by the check router before the call is logged.
 app.use(createUsageLog({ service: "presign" }).middleware(describePresignCall));
+
+// MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO }));
 
 app.use(mirrorChallengeIntoBody);
 app.use(paymentMiddleware(x402Routes(PAY_TO, NETWORK), resourceServer));

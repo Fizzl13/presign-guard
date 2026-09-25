@@ -18,9 +18,9 @@ export const ROUTES = {
   },
 };
 
-const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_TOKEN, spender: EXAMPLE_SPENDER, amount: "1000000" };
+export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_TOKEN, spender: EXAMPLE_SPENDER, amount: "1000000" };
 
-const INPUT_SCHEMA = {
+export const INPUT_SCHEMA = {
   type: "object",
   properties: {
     type: { type: "string", enum: ["approval", "transaction", "signature"], description: "What the agent is about to sign" },
