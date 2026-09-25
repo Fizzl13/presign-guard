@@ -91,7 +91,7 @@ The script makes a valid call, which should return 200 with a settlement receipt
 
 ## Deploy to Render
 
-`render.yaml` deploys on Base Sepolia by default. For mainnet, set `X402_NETWORK=eip155:8453` and add `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (Coinbase CDP facilitator). After the first paid call settles through CDP, the routes are listed in the CDP Bazaar.
+The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8453`, which needs `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (Coinbase CDP facilitator; the service refuses to start on mainnet without them). After the first paid call settles through CDP, the routes are listed in the CDP Bazaar. To test without real money, set `X402_NETWORK=eip155:84532` (Base Sepolia, public x402.org facilitator); without `X402_NETWORK` the code also defaults to Base Sepolia.
 
 `PAY_TO` must be an EVM address (`0x` + 40 hex characters). Surrounding spaces are trimmed; anything else stops the server at startup with a clear error, so a typo can't publish an unpayable 402.
 
