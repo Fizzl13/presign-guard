@@ -200,7 +200,7 @@ test("token_verdict: a real signed Base payment returns the verdict with market 
   assert.ok(!result.isError, JSON.stringify(result.content));
   const data = JSON.parse(result.content[0].text);
   assert.deepEqual([data.verdict, data.grade, data.market.symbol, data.market.liquidityUsd], ["green", "SAFE", "USDC", 25e6]);
-  assert.match(data.one_liner, /^SAFE: no red flags, \$25\.0M liquidity/);
+  assert.equal(data.one_liner, "SAFE: no red flags, on the GoPlus trust list");
   assert.deepEqual([state.verify, state.settle], [1, 1]);
   await client.close();
 });
