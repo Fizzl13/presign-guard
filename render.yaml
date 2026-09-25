@@ -10,7 +10,7 @@ services:
       - key: NODE_VERSION
         value: "22"
       - key: X402_NETWORK
-        value: eip155:84532
+        value: eip155:8453 # Base mainnet (needs CDP_API_KEY_ID/SECRET); eip155:84532 = Base Sepolia for testing
       - key: PAY_TO
         sync: false
       - key: ANTHROPIC_API_KEY
