@@ -5,7 +5,7 @@
 <title>presign-guard: check before your agent signs</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" rx="28" fill="%23a78bfa"/%3E%3Cpath d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="%230d1117" stroke-width="16" stroke-linecap="round"/%3E%3Cpath d="M36 68 H72" stroke="%230d1117" stroke-width="16" stroke-linecap="round"/%3E%3Cg fill="%230d1117"%3E%3Ccircle cx="92" cy="72" r="8"/%3E%3Ccircle cx="100" cy="52" r="5"/%3E%3Ccircle cx="104" cy="38" r="3"/%3E%3C/g%3E%3C/svg%3E">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature. $0.01 per check in USDC via x402 on Base.">
+<meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature, including the token itself. $0.01 per check in USDC via x402 on Base.">
 <style>
   :root {
     --bg: #0f1115; --panel: #171a21; --line: #2a2f3a; --text: #f3f4f6; --soft: #9ca3af;
@@ -92,7 +92,7 @@
   <h2>How agents use it</h2>
   <div class="grid">
     <div class="card"><h3>HTTP + x402</h3><p><code>POST /v1/check</code> answers 402 with the price; the agent pays and gets the verdict in the same request.</p></div>
-    <div class="card"><h3>What it reads</h3><p>Approvals, raw transactions, and EIP-712 signatures: Permit, Permit2, Seaport and x402 payments (EIP-3009).</p></div>
+    <div class="card"><h3>What it reads</h3><p>Approvals, raw transactions, and EIP-712 signatures: Permit, Permit2, Seaport and x402 payments (EIP-3009). It checks who gets access and the token itself: honeypots, fake look-alikes and high taxes.</p></div>
     <div class="card"><h3>Discovery</h3><p><a href="/openapi.json">OpenAPI</a>, <a href="/.well-known/x402">/.well-known/x402</a> and the CDP Bazaar.</p></div>
   </div>
 
