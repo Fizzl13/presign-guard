@@ -44,6 +44,11 @@ app.get("/", (_req, res) => res.json({
   docs: "https://github.com/Fizzl13/presign-guard",
   paid: Object.keys(x402Routes(PAY_TO, NETWORK)),
   mcp: `${PUBLIC_URL}/mcp`,
+  // Directory listings, also here: crawlers that ask for */* get this JSON, not the page.
+  listings: {
+    smithery: "https://smithery.ai/servers/frits-zwager/presign-guard",
+    agentic_market: "https://agentic.market/services/presign-guard-onrender-com",
+  },
   openapi: `${PUBLIC_URL}/openapi.json`,
 }));
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
