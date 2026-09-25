@@ -59,9 +59,9 @@ Grades: `SAFE` (green), `CAUTION` (one orange reason), `RISKY` (two or more), `A
 |---|---|
 | red | `RUGGED`, `NON_TRANSFERABLE`, `MALICIOUS_AUTHORITY`; EVM: `TOKEN_HONEYPOT`, `TOKEN_AIRDROP_SCAM`, `TOKEN_IMPERSONATION` |
 | orange | `MINT_AUTHORITY_ACTIVE`, `FREEZE_AUTHORITY_ACTIVE`, `BALANCE_MUTABLE`, `CLOSABLE`, `TRANSFER_HOOK`, `TRANSFER_FEE`, `HIGH_TRANSFER_FEE` (≥10%), `TRANSFER_FEE_UPGRADABLE`, `LP_NOT_LOCKED` (<50% locked, token younger than 30 days), `LOW_LIQUIDITY` (<$50k), `NO_DEX_MARKET`, `NEW_TOKEN` (<24 h), `TOP_HOLDERS_CONCENTRATED` (top holder >20% or top 10 >50%, pools and locked accounts excluded; on EVM only wallets count, not contracts); EVM: the GoPlus token codes of `/v1/check` (`TOKEN_HIGH_TAX`, `TOKEN_UNVERIFIED`, …) and `TOKEN_CANNOT_BUY` |
-| info | `MUTABLE_METADATA`, `NO_SOCIALS`, `TOKEN_ON_TRUST_LIST`, `NO_SECURITY_DATA`, `RUGCHECK_DANGER`, `RUGCHECK_UNAVAILABLE`, `LP_NOT_LOCKED` on older tokens, `LOW_LIQUIDITY` and `NO_DEX_MARKET` on trust-list tokens (DexScreener undercounts quote assets like USDC and WETH) |
+| info | `MUTABLE_METADATA`, `NO_SOCIALS`, `TOKEN_ON_TRUST_LIST`, `NO_SECURITY_DATA`, `RUGCHECK_DANGER`, `RUGCHECK_UNAVAILABLE`, `LP_NOT_LOCKED` on older tokens, on trust-list tokens (USDC, USDT, WETH): the issuer's powers, `LP_NOT_LOCKED`, `LOW_LIQUIDITY` and `NO_DEX_MARKET` (DexScreener undercounts quote assets) |
 
-On a token on the GoPlus trust list (USDC, USDT), mint and freeze authority are info: the issuer keeps them on purpose. Missing data never makes a token red. If GoPlus or DexScreener is down there is no verdict (503, not charged); if RugCheck is down the verdict comes without it and says so.
+On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, freeze, change balances) are info: the issuer keeps them on purpose. Missing data never makes a token red. If GoPlus or DexScreener is down there is no verdict (503, not charged); if RugCheck is down the verdict comes without it and says so.
 
 ## Request types
 

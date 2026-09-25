@@ -63,7 +63,7 @@ const FIXTURES = {
     [DEGEN]: [pair(DEGEN, { liq: 3e6, createdDaysAgo: 900, symbol: "DEGEN" })],
     [HONEY]: [pair(HONEY, { liq: 80000, createdDaysAgo: 0.5 })],
     [NOMARKET]: [],
-    [WETH]: [pair(WETH, { liq: 20000, createdDaysAgo: 800, symbol: "WETH" })],
+    [WETH]: [pair(WETH, { liq: 20000, createdDaysAgo: 5, symbol: "WETH" })],
   },
   goplusEvm: {
     [DEGEN]: { is_open_source: "1", is_honeypot: "0", buy_tax: "0", sell_tax: "0", holder_count: "900000",
@@ -71,7 +71,8 @@ const FIXTURES = {
       dex: [{ pair: "0xpool", liquidity: "3000000" }] },
     [HONEY]: { is_open_source: "1", is_honeypot: "1", buy_tax: "0", sell_tax: "1" },
     [NOMARKET]: { is_open_source: "0" },
-    [WETH]: { is_open_source: "1", trust_list: "1", holders: [{ address: "0xw", percent: "0.25", is_contract: 0 }] },
+    [WETH]: { is_open_source: "1", trust_list: "1", owner_change_balance: "1", holders: [{ address: "0xw", percent: "0.25", is_contract: 0 }],
+      lp_holders: [{ address: "0xlp", percent: "1", is_locked: 0 }] },
   },
 };
 
@@ -174,10 +175,10 @@ test("Base, established token (DEGEN): pools and contracts are not counted as wh
   assert.ok(!codes(r).includes("TOP_HOLDERS_CONCENTRATED"));
 });
 
-test("Base, trusted token: thin DexScreener liquidity is context, a big wallet still counts", async () => {
+test("Base, trusted token: issuer powers, thin DexScreener liquidity and LP lock are context; a big wallet still counts", async () => {
   const r = await tokenVerdict({ chain: "base", address: WETH }, NOW);
   assert.deepEqual(codes(r, "orange"), ["TOP_HOLDERS_CONCENTRATED"]);
-  assert.ok(codes(r, "info").includes("LOW_LIQUIDITY"));
+  for (const code of ["LOW_LIQUIDITY", "LP_NOT_LOCKED", "TOKEN_OWNER_CAN_CHANGE_BALANCES"]) assert.ok(codes(r, "info").includes(code), code);
 });
 
 test("Base, honeypot: red, AVOID, and the GoPlus token rules from /v1/check apply", async () => {

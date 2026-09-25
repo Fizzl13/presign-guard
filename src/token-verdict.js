@@ -173,7 +173,7 @@ function marketReasons(market, add, { lpLockedPct, trusted = false } = {}) {
   if (lpLockedPct !== null && lpLockedPct !== undefined && lpLockedPct < LP_LOCKED_MIN_PCT) {
     // Concentrated-liquidity pools have no LP token to lock, so only a young token is flagged.
     const young = market.ageSeconds === null || market.ageSeconds < YOUNG_TOKEN_SECONDS;
-    add("LP_NOT_LOCKED", young ? "orange" : "info", { lpLockedPct: pct1(lpLockedPct) });
+    add("LP_NOT_LOCKED", young && !trusted ? "orange" : "info", { lpLockedPct: pct1(lpLockedPct) });
   }
   if (!market.socials) add("NO_SOCIALS", "info");
 }
@@ -255,14 +255,16 @@ function solanaHolders(sec, rug) {
 }
 
 function evmReasons({ sec, market }, add) {
-  // The same GoPlus rules as the token part of /v1/check, without a subject.
-  tokenReasons(null, sec, (code, severity, _subject, details) => add(code, severity, details));
+  // The same GoPlus rules as the token part of /v1/check, without a subject. On a
+  // trust-list token (USDT, USDC) the issuer's powers are context, as on Solana.
+  const trusted = flag(sec?.trust_list);
+  tokenReasons(null, sec, (code, severity, _subject, details) => add(code, trusted && severity === "orange" ? "info" : severity, details));
   if (flag(sec?.cannot_buy)) add("TOKEN_CANNOT_BUY", "orange");
   const lp = Array.isArray(sec?.lp_holders) ? sec.lp_holders : [];
   const lpLockedPct = lp.length
     ? lp.filter((h) => flag(h.is_locked) || BURN.has(String(h.address).toLowerCase())).reduce((s, h) => s + (num(h.percent) ?? 0) * 100, 0)
     : null;
-  marketReasons(market, add, { lpLockedPct, trusted: flag(sec?.trust_list) });
+  marketReasons(market, add, { lpLockedPct, trusted });
   // Wallets only: the big contract holders of an EVM token are pools, lockers,
   // staking, vesting and bridges (veAERO holds half of AERO).
   if (Array.isArray(sec?.holders)) {
