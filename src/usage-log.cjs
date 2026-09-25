@@ -68,6 +68,18 @@ function paymentOf(req, res) {
   };
 }
 
+// Who is calling, in a few words and without personal data: "browser" for a
+// web browser, otherwise the first product token of the User-Agent (e.g.
+// "SmitheryBot/1.0", "python-requests/2.32", "node"). No IP addresses.
+function agentOf(userAgent) {
+  const ua = String(userAgent || '').trim();
+  if (!ua) return 'none';
+  const bot = /([A-Za-z0-9._-]*(?:bot|crawler|spider|scan|monitor)[A-Za-z0-9._-]*)(?:\/[\w.-]+)?/i.exec(ua);
+  if (bot) return clip(bot[0], 60);
+  if (/^Mozilla\//.test(ua) && /(Chrome|Safari|Firefox|Edg)\//.test(ua)) return 'browser';
+  return clip(ua.split(/[\s;(]/)[0] || ua, 60);
+}
+
 function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch, now = () => new Date(), log = console } = {}) {
   const token = env.USAGE_LOG_TOKEN;
   const repo = env.USAGE_LOG_REPO || DEFAULT_REPO;
@@ -146,7 +158,8 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
 
   // Express middleware. describe(req, res, body) returns { route, input, result, via, payment? }
   // for calls worth logging, or null to skip (static files, health, probes).
-  // 402 challenges and other failed payments are not calls and are skipped.
+  // A 402 is logged as a quote (the caller saw the price), with payment_failed
+  // when the request did carry a payment that was refused.
   function middleware(describe) {
     return (req, res, next) => {
       if (req.method === 'OPTIONS' || req.method === 'HEAD') return next();
@@ -172,7 +185,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
       res.write = (chunk, ...rest) => { keep(chunk, rest[0]); return write(chunk, ...rest); };
       res.end = (chunk, ...rest) => { keep(chunk, rest[0]); return end(chunk, ...rest); };
       res.on('finish', () => {
-        if (res.statusCode === 402) return;
+        const quote = res.statusCode === 402;
         if (body === undefined && chunks.length) {
           try {
             body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -188,7 +201,8 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
         }
         if (!described) return;
         // describe() may supply the payment itself (MCP carries it in _meta).
-        const payment = described.payment !== undefined ? described.payment : paymentOf(req, res);
+        const payment = quote ? null : described.payment !== undefined ? described.payment : paymentOf(req, res);
+        const offered = Boolean(req.headers['payment-signature'] || req.headers['x-payment']);
         record({
           route: described.route,
           via: described.via || 'http',
@@ -196,8 +210,10 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
           ms: Date.now() - started,
           paid: Boolean(payment),
           ...(payment || {}),
+          ...(quote ? { quote: true, ...(offered ? { payment_failed: true } : {}) } : {}),
+          agent: agentOf(req.headers['user-agent']),
           input: described.input,
-          result: described.result,
+          result: quote ? undefined : described.result,
         });
       });
       next();
@@ -232,4 +248,4 @@ function mcpPayment(requestBody, responseBody) {
   };
 }
 
-module.exports = { createUsageLog, paymentOf, mcpToolCall, mcpPayment, clip };
+module.exports = { createUsageLog, paymentOf, mcpToolCall, mcpPayment, clip, agentOf };
