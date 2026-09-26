@@ -27,6 +27,18 @@ test("usage log: a check is logged with what was sent and the verdict", async ()
   assert.deepEqual(event.input, { type: "signature", chainId: 8453, primaryType: "Permit", target: "0xToken", spender: "0xSpender" });
   assert.deepEqual(event.result, { verdict: "red", reasons: "SIGNATURE_GRANT_TO_EOA" });
   assert.equal(event.paid, false);
+  assert.match(event.visitor, /^[0-9a-f]{12}$/, "a short visitor code");
+  assert.ok(!JSON.stringify(event).includes("127.0.0.1"), "never the IP itself");
+});
+
+test("visitor code: stable per IP and secret, different per secret, none without one", async () => {
+  const { default: usageLog } = await import("../src/usage-log.cjs");
+  const { visitorOf } = usageLog;
+  assert.equal(visitorOf("203.0.113.7", "s1"), visitorOf("203.0.113.7", "s1"));
+  assert.equal(visitorOf("::ffff:203.0.113.7", "s1"), visitorOf("203.0.113.7", "s1"), "IPv4-mapped IPv6 is the same visitor");
+  assert.notEqual(visitorOf("203.0.113.7", "s1"), visitorOf("203.0.113.8", "s1"));
+  assert.notEqual(visitorOf("203.0.113.7", "s1"), visitorOf("203.0.113.7", "s2"));
+  assert.equal(visitorOf("203.0.113.7", undefined), undefined);
 });
 
 test("usage log: other routes are not logged", () => {
