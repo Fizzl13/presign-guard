@@ -689,7 +689,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
-      "Pre-sign risk verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures"),
+      "Is this transaction, approval or signature safe to sign? Pre-sign verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures: flagged or sanctioned spenders, unlimited allowances, plain-wallet spenders and risky tokens"),
     "POST /v1/check/explain": route("/v1/check/explain",
       "Pre-sign risk verdict plus a plain-language explanation in Dutch or English"),
     [`GET ${TOKEN_ROUTE.path}`]: {
