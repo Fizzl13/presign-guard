@@ -4,10 +4,13 @@
 // The same file is copied into each Fizzl service. It needs two settings:
 //   USAGE_LOG_TOKEN  fine-grained GitHub token, Contents read/write on the log repo only
 //   USAGE_LOG_REPO   owner/name of the log repo (default Fizzl13/usage-log)
+//   USAGE_LOG_SALT   optional secret for the visitor code (default: the token)
 // Without a token it does nothing. Writing never delays or breaks a request:
 // events are queued and flushed in the background, one commit per flush.
 
 'use strict';
+
+const crypto = require('node:crypto');
 
 const DEFAULT_REPO = 'Fizzl13/usage-log';
 const API = 'https://api.github.com';
@@ -80,9 +83,19 @@ function agentOf(userAgent) {
   return clip(ua.split(/[\s;(]/)[0] || ua, 60);
 }
 
+// A short, stable code per caller IP, so repeat visitors can be told apart
+// without keeping their address: HMAC-SHA256 with a secret, cut to 12 hex
+// characters. Without the secret the code can't be turned back into an IP.
+function visitorOf(ip, secret) {
+  if (!ip || !secret) return undefined;
+  const address = String(ip).replace(/^::ffff:/, '');
+  return crypto.createHmac('sha256', secret).update(address).digest('hex').slice(0, 12);
+}
+
 function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch, now = () => new Date(), log = console } = {}) {
   const token = env.USAGE_LOG_TOKEN;
   const repo = env.USAGE_LOG_REPO || DEFAULT_REPO;
+  const visitorSecret = env.USAGE_LOG_SALT || token;
   const queue = [];
   let flushing = null;
   let warned = false;
@@ -215,6 +228,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
           ...(payment || {}),
           ...(quote ? { quote: true, ...(offered ? { payment_failed: true } : {}) } : {}),
           agent: agentOf(req.headers['user-agent']),
+          visitor: visitorOf(req.ip || (req.socket && req.socket.remoteAddress), visitorSecret),
           input: described.input,
           result: quote ? undefined : described.result,
         });
@@ -251,4 +265,4 @@ function mcpPayment(requestBody, responseBody) {
   };
 }
 
-module.exports = { createUsageLog, paymentOf, mcpToolCall, mcpPayment, clip, agentOf };
+module.exports = { createUsageLog, paymentOf, mcpToolCall, mcpPayment, clip, agentOf, visitorOf };
