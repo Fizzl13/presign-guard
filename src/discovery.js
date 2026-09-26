@@ -9,12 +9,12 @@ export const ROUTES = {
   "/v1/check": {
     price: "0.01",
     operationId: "check",
-    summary: "Is this transaction, approval or signature safe to sign?",
+    summary: "Check if a transaction, approval or signature is safe to sign",
   },
   "/v1/check/explain": {
     price: "0.03",
     operationId: "checkAndExplain",
-    summary: "Same verdict plus a plain-language explanation (en or nl)",
+    summary: "Explain a pre-sign verdict in plain language (English, Dutch)",
   },
 };
 
@@ -23,7 +23,7 @@ export const TOKEN_ROUTE = {
   path: "/v1/token",
   price: "0.01",
   operationId: "tokenVerdict",
-  summary: "Is this token safe to buy, hold or accept? Solana and EVM",
+  summary: "Check if a token is safe to buy, hold or accept (Solana, EVM)",
 };
 
 export const TOKEN_INPUT_EXAMPLE = { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" }; // BONK
@@ -84,7 +84,7 @@ export const APPROVALS_ROUTE = {
   path: "/v1/approvals",
   price: "0.02",
   operationId: "walletApprovals",
-  summary: "Which open token approvals on this wallet should I revoke?",
+  summary: "Find which open token approvals on a wallet to revoke",
 };
 
 export const APPROVALS_INPUT_EXAMPLE = { chain: "ethereum", address: "0x28c6c06298d514db089934071355e5743bf21d60" };

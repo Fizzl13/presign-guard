@@ -40,10 +40,13 @@ test("openapi and well-known list all paid routes", () => {
     ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token", "https://example.test/v1/approvals"]);
 });
 
-test("every operation summary fits a wallet prompt (pay.sh requires 63 characters or fewer)", () => {
+test("every operation summary fits pay.sh: 63 characters or fewer, starting with a verb", () => {
   const spec = openApi("https://example.test", "eip155:8453", ["eip155:8453", SOLANA.network]);
   for (const [path, ops] of Object.entries(spec.paths)) {
-    for (const [method, op] of Object.entries(ops)) assert.ok(op.summary.length <= 63, `${method.toUpperCase()} ${path}: ${op.summary.length} chars`);
+    for (const [method, op] of Object.entries(ops)) {
+      assert.ok(op.summary.length <= 63, `${method.toUpperCase()} ${path}: ${op.summary.length} chars`);
+      assert.match(op.summary, /^(Check|Explain|Find|Get|Scan)\b/, `${method.toUpperCase()} ${path}: starts with a verb`);
+    }
   }
 });
 
