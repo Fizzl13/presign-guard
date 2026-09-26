@@ -3,63 +3,95 @@
 <head>
 <meta charset="UTF-8">
 <title>presign-guard: check before your agent signs</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"%3E%3Crect width="128" height="128" rx="28" fill="%23a78bfa"/%3E%3Cpath d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="%230d1117" stroke-width="16" stroke-linecap="round"/%3E%3Cpath d="M36 68 H72" stroke="%230d1117" stroke-width="16" stroke-linecap="round"/%3E%3Cg fill="%230d1117"%3E%3Ccircle cx="92" cy="72" r="8"/%3E%3Ccircle cx="100" cy="52" r="5"/%3E%3Ccircle cx="104" cy="38" r="3"/%3E%3C/g%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22%3E%3Crect width=%22128%22 height=%22128%22 rx=%2228%22 fill=%22%23a78bfa%22/%3E%3Cpath d=%22M78 30 A22 22 0 0 0 52 52 V104%22 fill=%22none%22 stroke=%22%230d1117%22 stroke-width=%2216%22 stroke-linecap=%22round%22/%3E%3Cpath d=%22M36 68 H72%22 stroke=%22%230d1117%22 stroke-width=%2216%22 stroke-linecap=%22round%22/%3E%3Cg fill=%22%230d1117%22%3E%3Ccircle cx=%2292%22 cy=%2272%22 r=%228%22/%3E%3Ccircle cx=%22100%22 cy=%2252%22 r=%225%22/%3E%3Ccircle cx=%22104%22 cy=%2238%22 r=%223%22/%3E%3C/g%3E%3C/svg%3E">
+<meta name="theme-color" content="#0d1117">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature, including the token itself. $0.01 per check in USDC via x402 on Base.">
 <style>
+  /* fizzl brand v1: ink + violet, rounded like the f-mark, three dots as the motif.
+     Keep this block identical in presign-guard, x402-doctor and ichimoku-signal. */
   :root {
-    --bg: #0f1115; --panel: #171a21; --line: #2a2f3a; --text: #f3f4f6; --soft: #9ca3af;
-    --green: #6ee7b7; --green-bg: #064e3b; --orange: #fdba74; --orange-bg: #7c2d12; --red: #fca5a5; --red-bg: #7f1d1d;
-    --accent: #a78bfa; --mono-bg: #0b0d11;
-  }
-  @media (prefers-color-scheme: light) {
-    :root { --bg: #f6f7f9; --panel: #ffffff; --line: #e5e7eb; --text: #111827; --soft: #6b7280;
-      --green: #047857; --green-bg: #d1fae5; --orange: #9a3412; --orange-bg: #ffedd5; --red: #b91c1c; --red-bg: #fee2e2;
-      --accent: #6d28d9; --mono-bg: #f3f4f6; }
+    color-scheme: dark;
+    --ink: #0d1117; --ink-2: #151a22; --ink-3: #1c232d; --line: #262e3a;
+    --violet: #a78bfa; --violet-soft: rgba(167,139,250,.14); --violet-line: rgba(167,139,250,.35);
+    --text: #eef1f6; --soft: #97a1b0;
+    --green: #6ee7b7; --green-bg: rgba(110,231,183,.14); --orange: #fdba74; --orange-bg: rgba(253,186,116,.14); --red: #fca5a5; --red-bg: rgba(252,165,165,.14);
+    --mono: ui-monospace, 'SF Mono', Consolas, monospace;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif; }
-  .wrap { max-width: 760px; margin: 0 auto; padding: 48px 16px 72px; }
-  .eyebrow { font: 500 13px/1 ui-monospace, 'SF Mono', Consolas, monospace; color: var(--soft); margin-bottom: 14px; }
-  h1 { font-size: clamp(28px, 6vw, 40px); line-height: 1.15; margin: 0 0 14px; letter-spacing: -0.01em; }
-  .lead { color: var(--soft); font-size: 17px; margin: 0 0 32px; max-width: 60ch; }
-  h2 { font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--soft); margin: 40px 0 12px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
-  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-  .presets button { font: 600 14px/1 system-ui, sans-serif; border-radius: 999px; padding: 9px 14px; border: 1px solid var(--line); background: var(--bg); color: var(--text); cursor: pointer; }
-  .presets button.active { background: var(--text); color: var(--bg); border-color: var(--text); }
-  textarea { width: 100%; min-height: 190px; resize: vertical; background: var(--mono-bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font: 13px/1.5 ui-monospace, 'SF Mono', Consolas, monospace; }
-  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
-  .pay { font: 600 15px/1 system-ui, sans-serif; color: var(--bg); background: var(--accent); border: 0; padding: 12px 18px; border-radius: 999px; cursor: pointer; }
-  .pay:disabled { opacity: 0.6; cursor: wait; }
-  select { font: 14px system-ui, sans-serif; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
-  .note { color: var(--soft); font-size: 14px; margin-top: 12px; }
+  body { margin: 0; background: var(--ink); color: var(--text); font: 16px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; background: radial-gradient(900px 480px at 85% -10%, rgba(167,139,250,.16), transparent 60%); }
+  .wrap { position: relative; max-width: 800px; margin: 0 auto; padding: 22px 16px 64px; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 22px; margin-bottom: 44px; border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; }
+  .brand .mark { width: 40px; height: 40px; display: block; flex: none; }
+  .brand b { font-size: 18px; letter-spacing: -.01em; display: block; line-height: 1.1; }
+  .brand small { color: var(--soft); font-size: 12.5px; }
+  .brand small em { color: var(--violet); font-style: normal; font-weight: 700; }
+  .live { font: 600 12px/1 var(--mono); color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; white-space: nowrap; }
+  .live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); margin-right: 8px; }
+  .dots { display: inline-flex; align-items: flex-end; gap: 4px; margin-right: 10px; vertical-align: middle; }
+  .dots i { display: block; border-radius: 50%; background: var(--violet); }
+  .dots i:nth-child(1) { width: 9px; height: 9px; } .dots i:nth-child(2) { width: 6px; height: 6px; margin-bottom: 5px; } .dots i:nth-child(3) { width: 4px; height: 4px; margin-bottom: 10px; }
+  .eyebrow { font: 600 13px/1 var(--mono); color: var(--violet); margin-bottom: 18px; letter-spacing: .02em; }
+  h1 { font-size: clamp(34px, 7vw, 56px); line-height: 1.04; margin: 0 0 18px; letter-spacing: -.035em; font-weight: 800; }
+  h1 em { font-style: normal; color: var(--violet); }
+  .lead { color: var(--soft); font-size: 18px; margin: 0 0 40px; max-width: 58ch; }
+  h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--text); margin: 52px 0 14px; display: flex; align-items: center; }
+  .card { background: var(--ink-2); border: 1px solid var(--line); border-radius: 22px; padding: 22px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .grid .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .grid .card p { margin: 0; color: var(--soft); font-size: 14.5px; overflow-wrap: anywhere; }
+  code { font-family: var(--mono); font-size: .9em; }
+  pre { margin: 0; background: var(--ink); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; overflow-x: auto; font: 13px/1.55 var(--mono); }
+  a { color: var(--violet); }
+  select, input, textarea { color: var(--text); }
+  :focus-visible { outline: 2px solid var(--violet-line); outline-offset: 2px; }
+  .video { display: block; width: 100%; height: auto; aspect-ratio: 16/9; border-radius: 22px; border: 1px solid var(--line); background: #05070a; }
+  .more { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .more a { display: flex; gap: 12px; align-items: center; text-decoration: none; color: var(--text); background: var(--ink-2); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px; }
+  .more a:hover { border-color: var(--violet-line); }
+  .more .mark { width: 34px; height: 34px; flex: none; }
+  .more b { display: block; font-size: 15px; } .more span span { color: var(--soft); font-size: 13px; }
+  footer { margin-top: 44px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--soft); font-size: 13px; }
+  .by-fizzl { margin: 26px 0 0; font-size: 12.5px; line-height: 1; }
+  .by-fizzl a { display: inline-flex; align-items: center; gap: 6px; color: var(--soft); text-decoration: none; }
+  .by-fizzl a:hover { color: var(--text); }
+  .by-fizzl svg { height: 20px; width: auto; display: block; } .by-fizzl .b { fill: var(--violet); }
+  @media (max-width: 560px) { .live { display: none; } .topbar { margin-bottom: 32px; } }
+</style>
+<style>
+  .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .presets button { font: 600 14px/1 system-ui, sans-serif; border-radius: 999px; padding: 10px 16px; border: 1px solid var(--line); background: var(--ink-3); color: var(--soft); cursor: pointer; }
+  .presets button:hover { color: var(--text); border-color: var(--violet-line); }
+  .presets button.active { background: var(--violet-soft); color: var(--violet); border-color: var(--violet-line); }
+  textarea { width: 100%; min-height: 190px; resize: vertical; background: var(--ink); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; font: 13px/1.55 var(--mono); }
+  .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  .pay { font: 800 15px/1 system-ui, sans-serif; color: var(--ink); background: var(--violet); border: 0; padding: 14px 22px; border-radius: 999px; cursor: pointer; box-shadow: 0 8px 28px rgba(167,139,250,.25); }
+  .pay:hover { filter: brightness(1.06); }
+  .pay:disabled { opacity: .6; cursor: wait; }
+  select { font: 14px system-ui, sans-serif; padding: 11px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--ink-3); }
+  .note { color: var(--soft); font-size: 14px; margin-top: 14px; }
   .status { margin-top: 14px; font-size: 15px; }
   .status.error { color: var(--red); }
   .result { margin-top: 16px; display: none; }
-  .badge { display: inline-block; font-weight: 700; font-size: 18px; text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 14px; border-radius: 999px; }
-  .green { color: var(--green); background: var(--green-bg); }
-  .orange { color: var(--orange); background: var(--orange-bg); }
-  .red { color: var(--red); background: var(--red-bg); }
+  .badge { display: inline-block; font-weight: 800; font-size: 18px; text-transform: uppercase; letter-spacing: .04em; padding: 8px 16px; border-radius: 999px; }
+  .green { color: var(--green); background: var(--green-bg); } .orange { color: var(--orange); background: var(--orange-bg); } .red { color: var(--red); background: var(--red-bg); }
   .reasons { margin: 12px 0 0; padding-left: 20px; } .reasons li { margin: 4px 0; }
-  .reasons code, .grid code { font-family: ui-monospace, 'SF Mono', Consolas, monospace; font-size: 0.9em; }
   .explain { margin-top: 12px; }
-  .video { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); background: #000; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-  .grid .card h3 { margin: 0 0 6px; font-size: 16px; }
-  .grid .card p { margin: 0; color: var(--soft); font-size: 14.5px; overflow-wrap: anywhere; }
-  a { color: var(--accent); }
-  footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--soft); font-size: 13px; }
 </style>
-<style>.by-fizzl{margin:28px 0 0;font-size:12.5px;line-height:1}.by-fizzl a{display:inline-flex;align-items:center;gap:6px;color:inherit;opacity:.75;text-decoration:none}.by-fizzl a:hover,.by-fizzl a:focus-visible{opacity:1}.by-fizzl svg{height:20px;width:auto;display:block}.by-fizzl .b{fill:#a78bfa}@media (prefers-color-scheme: light){.by-fizzl .b{fill:#6d28d9}}</style>
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow">x402 · Base · for AI agents</div>
-  <h1>Check it before your agent signs it.</h1>
+  <header class="topbar">
+    <a class="brand" href="/"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="30" fill="#a78bfa"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><g fill="#0d1117"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>presign-guard</b><small>by <em>fizzl</em> · pay-per-call tools for AI agents</small></span></a>
+    <span class="live">ONLINE · BASE + SOLANA</span>
+  </header>
+  <div class="eyebrow"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>x402 · Base · for AI agents</div>
+  <h1>Check it <em>before</em> your agent signs it.</h1>
   <p class="lead">Send presign-guard the transaction, approval or signature your agent is about to sign. You get back green, orange or red, with the reasons, in under a second. $0.01 per check in USDC via x402. No account, no API key.</p>
 
-  <h2>Try it</h2>
+  <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Try it</h2>
   <div class="card">
     <div class="presets" id="presets">
       <button type="button" data-preset="unlimited" class="active">Unlimited approval</button>
@@ -83,19 +115,19 @@
     </div>
   </div>
 
-  <h2>See it in a minute</h2>
+  <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>See it in a minute</h2>
   <video class="video" controls playsinline preload="none" poster="/media/explainer.jpg" width="1920" height="1080">
     <source src="/media/explainer.mp4" type="video/mp4">
     <a href="/media/explainer.mp4">Watch the explainer video</a>
   </video>
 
-  <h2>New: the token verdict in 45 seconds</h2>
+  <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>New: the token verdict in 45 seconds</h2>
   <video class="video" controls playsinline preload="none" poster="/media/token.jpg" width="1920" height="1080">
     <source src="/media/token.mp4" type="video/mp4">
     <a href="/media/token.mp4">Watch the token verdict video</a>
   </video>
 
-  <h2>How agents use it</h2>
+  <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>How agents use it</h2>
   <div class="grid">
     <div class="card"><h3>HTTP + x402</h3><p><code>POST /v1/check</code> answers 402 with the price; the agent pays and gets the verdict in the same request.</p></div>
     <div class="card"><h3>What it reads</h3><p>Approvals, raw transactions, and EIP-712 signatures: Permit, Permit2, Seaport and x402 payments (EIP-3009). It checks who gets access and the token itself: honeypots, fake look-alikes and high taxes.</p></div>
@@ -104,6 +136,12 @@
     <div class="card"><h3>Discovery</h3><p><a href="/openapi.json">OpenAPI</a>, <a href="/.well-known/x402">/.well-known/x402</a> and the CDP Bazaar.</p></div>
   </div>
 
+  <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>More from fizzl</h2>
+  <div class="more">
+    <a href="https://x402-doctor.onrender.com"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="30" fill="#a78bfa"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><g fill="#0d1117"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>x402 Doctor</b><span>Check an x402 endpoint before paying it</span></span></a>
+    <a href="https://ichimoku-signal.onrender.com"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="30" fill="#a78bfa"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><g fill="#0d1117"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>Ichimoku Signal</b><span>Crypto trend signals per call</span></span></a>
+    <a href="https://www.npmjs.com/package/x402-safe-fetch"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect width="128" height="128" rx="30" fill="#a78bfa"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#0d1117" stroke-width="16" stroke-linecap="round"/><g fill="#0d1117"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>x402-safe-fetch</b><span>npm: a fetch that checks before it pays</span></span></a>
+  </div>
   <footer>Errors are never charged: a bad request or an outage cancels the payment and never returns a guessed verdict. Checked with <a href="https://x402-doctor.onrender.com">x402 Doctor</a>. Code on <a href="https://github.com/Fizzl13/presign-guard">GitHub</a>.<br>Also on <a href="https://smithery.ai/servers/frits-zwager/presign-guard">Smithery</a> · <a href="https://agentic.market/services/presign-guard-onrender-com">Agentic Market</a> · MCP: <code>https://presign-guard.onrender.com/mcp</code></footer>
   <p class="by-fizzl"><a href="https://github.com/Fizzl13" title="Fizzl: pay-per-call tools for AI agents">by <svg viewBox="-6 -14 236 126" role="img" aria-label="fizzl"><g fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"><path d="M44 12 A20 20 0 0 0 20 32 V100"/><path d="M6 48 H38"/><path d="M64 56 V100"/><path d="M88 52 H124 L88 100 H124"/><path d="M144 52 H180 L144 100 H180"/><path d="M200 8 V84 A16 16 0 0 0 216 100"/></g><g class="b"><circle cx="64" cy="26" r="9"/><circle cx="78" cy="10" r="5"/><circle cx="90" cy="-2" r="3"/></g></svg></a></p>
 </div>
