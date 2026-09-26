@@ -148,4 +148,4 @@ The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8
 
 ## Data sources
 
-Risk data comes from the [GoPlus Security API](https://gopluslabs.io). OFAC SDN sanctions screening and domain age come from [PG1](https://pg1-ai-agent.vercel.app) (public OFAC and RDAP data, credited as `pg1` in `sources`); the token verdict adds [RugCheck](https://rugcheck.xyz) (Solana) and [DexScreener](https://dexscreener.com) (market data). Plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).
+Risk data comes from the [GoPlus Security API](https://gopluslabs.io). OFAC SDN sanctions screening and domain age come from [PG1](https://pg1-ai-agent.vercel.app) (public OFAC and RDAP data, credited as `pg1` in `sources`; set `PG1_API_KEY` to a PG1 membership key to be exempt from PG1's anonymous rate limit); the token verdict adds [RugCheck](https://rugcheck.xyz) (Solana) and [DexScreener](https://dexscreener.com) (market data). Plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).

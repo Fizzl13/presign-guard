@@ -8,7 +8,8 @@
 const PG1_URL = () => process.env.PG1_MCP_URL || "https://pg1-ai-agent.vercel.app/api/mcp";
 const PG1_TIMEOUT_MS = 3000;
 const SANCTIONS_TTL_MS = 60 * 60 * 1000;      // the list syncs daily
-const DOMAIN_TTL_MS = 6 * 60 * 60 * 1000;
+const DOMAIN_TTL_MS = 24 * 60 * 60 * 1000;   // PG1 caches RDAP answers for 24 h too
+const RATE_LIMIT_PAUSE_MS = 5 * 60 * 1000;
 export const NEW_DOMAIN_DAYS = 30;
 
 const cache = new Map();
@@ -24,22 +25,37 @@ async function cached(key, ttl, fn) {
 }
 
 let rpcId = 0;
+// Anonymous callers get 60 calls an hour per IP (shared on Render); PG1_API_KEY
+// (the PG1 membership key, set in Render only) is exempt. After a rate_limited
+// answer PG1 is left alone for a few minutes instead of being asked again.
+let pausedUntil = 0;
+export const pg1Paused = () => Date.now() < pausedUntil;
+export function resetPg1() { pausedUntil = 0; cache.clear(); }
+
 // One tools/call; the tool's JSON result, or null when PG1 can't be used right now.
 async function callTool(name, args) {
-  if (process.env.PG1_DISABLED === "1") return null;
+  if (process.env.PG1_DISABLED === "1" || pg1Paused()) return null;
+  const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
+  const key = process.env.PG1_API_KEY?.trim();
+  if (key) headers["x-api-key"] = key;
   try {
     const res = await fetch(PG1_URL(), {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers,
       body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } }),
       signal: AbortSignal.timeout(PG1_TIMEOUT_MS),
     });
+    if (res.status === 429) { pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS; return null; }
     if (!res.ok) return null;
     const text = await res.text();
     const sse = text.match(/^data: (.*)$/m);
     const body = JSON.parse(sse ? sse[1] : text);
     const result = body?.result;
-    if (!result || result.isError) return null;
+    if (!result) return null;
+    if (result.isError) {
+      if (/rate_limited/.test(JSON.stringify(result))) pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS;
+      return null;
+    }
     if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
     const out = JSON.parse(result.content?.[0]?.text ?? "null");
     return out && typeof out === "object" ? out : null;
