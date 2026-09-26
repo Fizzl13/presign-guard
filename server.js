@@ -10,6 +10,7 @@ import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js"
 import { createUsageLog, describePresignCall } from "./src/usage.js";
 import { createMcpRouter } from "./src/mcp.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
+import { pg1KeyStatusNow } from "./src/pg1.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -65,7 +66,8 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 // Free routes first, so they never hit the paywall
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK }));
+// pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow() }));
 const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
 app.get("/", (req, res, next) => (req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
 app.get("/", (_req, res) => res.json({
