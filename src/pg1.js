@@ -30,7 +30,7 @@ let rpcId = 0;
 // answer PG1 is left alone for a few minutes instead of being asked again.
 let pausedUntil = 0;
 export const pg1Paused = () => Date.now() < pausedUntil;
-export function resetPg1() { pausedUntil = 0; cache.clear(); }
+export function resetPg1() { pausedUntil = 0; cache.clear(); keyStatus = null; lastKnown = null; }
 
 // One tools/call; the tool's JSON result, or null when PG1 can't be used right now.
 async function callTool(name, args) {
@@ -62,6 +62,33 @@ async function callTool(name, args) {
   } catch {
     return null;
   }
+}
+
+// Whether PG1 accepts PG1_API_KEY, for /health: "unset", PG1's license_status
+// (e.g. "invalid_or_expired" for a wrong key), or "unknown" when PG1 can't be
+// asked. Only the status leaves this function, never the key. Cached for an hour.
+let keyStatus = null;
+export async function pg1KeyStatus() {
+  const key = process.env.PG1_API_KEY?.trim();
+  if (!key) return "unset";
+  if (keyStatus && keyStatus.expires > Date.now() && keyStatus.key === key) return keyStatus.value;
+  const r = await callTool("get_usage_status", { license_key: key });
+  const value = r && typeof r.license_status === "string" && r.license_status ? r.license_status.slice(0, 40) : "unknown";
+  if (value !== "unknown") keyStatus = { key, value, expires: Date.now() + 60 * 60 * 1000 };
+  return value;
+}
+
+// For /health, which Render also uses as its health check: never waits on PG1.
+// Returns the last known status ("checking" before the first answer) and refreshes in the background.
+let lastKnown = null;
+let refreshing = false;
+export function pg1KeyStatusNow() {
+  if (!process.env.PG1_API_KEY?.trim()) return "unset";
+  if (!refreshing && !(keyStatus && keyStatus.expires > Date.now())) {
+    refreshing = true;
+    pg1KeyStatus().then((v) => { lastKnown = v; }).catch(() => {}).finally(() => { refreshing = false; });
+  }
+  return keyStatus?.value ?? lastKnown ?? "checking";
 }
 
 // { listed, matches: [{ sdnName, programs }], listSynced } or null.

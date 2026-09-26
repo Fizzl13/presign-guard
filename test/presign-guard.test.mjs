@@ -4,7 +4,7 @@ import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createCheckRouter } from "../src/presign-guard.js";
-import { resetPg1, pg1Paused } from "../src/pg1.js";
+import { resetPg1, pg1Paused, pg1KeyStatus, pg1KeyStatusNow } from "../src/pg1.js";
 
 process.env.ANTHROPIC_API_KEY = "test-key";
 
@@ -51,7 +51,9 @@ async function mockPg1(opts) {
   }
   const { params } = JSON.parse(opts.body);
   let out;
-  if (params.name === "check_wallet_sanctions") {
+  if (params.name === "get_usage_status") {
+    out = { identifier: "1.2.3.4", license_status: params.arguments.license_key === "good-key" ? "active" : "invalid_or_expired" };
+  } else if (params.name === "check_wallet_sanctions") {
     const listed = params.arguments.address.toLowerCase() === SANCTIONED;
     out = { address: params.arguments.address, listed, list_last_synced: "2026-09-25T20:10:41Z",
       matches: listed ? [{ sdn_name: "LAZARUS GROUP", currency: "ETH", programs: ["DPRK3"], sdn_uid: "27307" }] : [] };
@@ -490,5 +492,27 @@ test("PG1 rate_limited: the check answers, and PG1 is left alone for a while", a
   const again = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "2" });
   assert.equal(again.status, 200);
   assert.equal(pg1Calls, calls, "no PG1 calls while paused");
+  resetPg1();
+});
+
+test("PG1 key status for /health: unset, PG1's verdict on the key, never the key", async () => {
+  resetPg1();
+  delete process.env.PG1_API_KEY;
+  assert.equal(await pg1KeyStatus(), "unset");
+  process.env.PG1_API_KEY = "good-key";
+  assert.equal(await pg1KeyStatus(), "active");
+  resetPg1();
+  process.env.PG1_API_KEY = "wrong-key";
+  assert.equal(await pg1KeyStatus(), "invalid_or_expired");
+  resetPg1();
+  pg1Down = true;
+  assert.equal(await pg1KeyStatus(), "unknown");
+  pg1Down = false;
+  resetPg1();
+  process.env.PG1_API_KEY = "good-key";
+  assert.equal(pg1KeyStatusNow(), "checking", "never waits on PG1");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(pg1KeyStatusNow(), "active");
+  delete process.env.PG1_API_KEY;
   resetPg1();
 });
