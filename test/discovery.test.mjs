@@ -40,6 +40,13 @@ test("openapi and well-known list all paid routes", () => {
     ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token", "https://example.test/v1/approvals"]);
 });
 
+test("every operation summary fits a wallet prompt (pay.sh requires 63 characters or fewer)", () => {
+  const spec = openApi("https://example.test", "eip155:8453", ["eip155:8453", SOLANA.network]);
+  for (const [path, ops] of Object.entries(spec.paths)) {
+    for (const [method, op] of Object.entries(ops)) assert.ok(op.summary.length <= 63, `${method.toUpperCase()} ${path}: ${op.summary.length} chars`);
+  }
+});
+
 test("wallet approvals: $0.02 on Base, plus Solana when a Solana wallet is set, with GET query metadata", () => {
   const baseOnly = x402Routes(PAY_TO, "eip155:8453")["GET /v1/approvals"];
   assert.deepEqual(baseOnly.accepts.map((a) => [a.network, a.price]), [["eip155:8453", "$0.02"]]);
