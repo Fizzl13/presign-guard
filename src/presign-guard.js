@@ -689,7 +689,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
-      "Is this transaction, approval or signature safe to sign? Pre-sign verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures: flagged or sanctioned spenders, unlimited allowances, plain-wallet spenders and risky tokens"),
+      "Is this transaction, approval or signature safe to sign? Pre-sign verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
     "POST /v1/check/explain": route("/v1/check/explain",
       "Pre-sign risk verdict plus a plain-language explanation in Dutch or English"),
     [`GET ${TOKEN_ROUTE.path}`]: {
@@ -697,7 +697,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
         { scheme: "exact", price: tokenPrice, network, payTo },
         ...(solana?.payTo ? [{ scheme: "exact", price: tokenPrice, network: solana.network, payTo: solana.payTo }] : []),
       ],
-      description: "Is this token safe to buy, hold or accept? Checks a Solana or EVM token for honeypot and rug-pull signs (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
+      description: "Is this token safe to buy, or a honeypot or rug pull? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
       ...tokenServiceMetadata,
       extensions: tokenBazaarExtension(),
