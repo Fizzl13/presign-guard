@@ -34,6 +34,7 @@ let rpcDown = false;
 let pg1Down = false;
 let pg1Calls = 0;
 let pg1RateLimited = false;
+let pg1FailNext = 0; // this many PG1 calls answer 503 before it recovers
 let pg1LastKey;
 
 // PG1 MCP: check_wallet_sanctions and check_domain_age, shaped like the live responses.
@@ -46,6 +47,7 @@ async function mockPg1(opts) {
   pg1Calls++;
   pg1LastKey = opts.headers["x-api-key"];
   if (pg1Down) return new Response("down", { status: 503 });
+  if (pg1FailNext > 0) { pg1FailNext--; return new Response("cold start", { status: 503 }); }
   if (pg1RateLimited) {
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "Rate limit reached", code: "rate_limited" }) }] } }));
   }
@@ -119,7 +121,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.close(); globalThis.fetch = realFetch; });
-beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; pg1RateLimited = false; });
+beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; pg1RateLimited = false; pg1FailNext = 0; });
 
 async function check(body, path = "/v1/check") {
   const res = await realFetch(base + path, {
@@ -509,6 +511,55 @@ test("PG1 rate_limited: the check answers, and PG1 is left alone for a while", a
   const again = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "2" });
   assert.equal(again.status, 200);
   assert.equal(pg1Calls, calls, "no PG1 calls while paused");
+  resetPg1();
+});
+
+// Collects console.warn lines while fn runs.
+async function warnings(fn) {
+  const lines = [];
+  const orig = console.warn;
+  console.warn = (...a) => lines.push(a.join(" "));
+  try { await fn(); } finally { console.warn = orig; }
+  return lines;
+}
+
+test("PG1 slow start: one 503 is tried again, the address is still screened, and the reason is logged", async () => {
+  resetPg1();
+  process.env.PG1_API_KEY = "secret-member-key";
+  pg1FailNext = 1;
+  let r;
+  const lines = await warnings(async () => {
+    r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: SANCTIONED, amount: "1" });
+  });
+  delete process.env.PG1_API_KEY;
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("SANCTIONED_ADDRESS"));
+  assert.ok(!codes(r).includes("SANCTIONS_SCREEN_UNAVAILABLE"));
+  assert.ok(lines.some((l) => l === "PG1 check_wallet_sanctions: HTTP 503, retry ok"), lines.join("\n"));
+  assert.ok(!lines.some((l) => l.includes("secret-member-key")), "the key is never logged");
+  resetPg1();
+});
+
+test("PG1 down: tried twice, then the gap is info and both reasons are logged", async () => {
+  resetPg1();
+  pg1Down = true;
+  let r;
+  const lines = await warnings(async () => {
+    r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" });
+  });
+  assert.ok(codes(r).includes("SANCTIONS_SCREEN_UNAVAILABLE"));
+  const failed = lines.filter((l) => l === "PG1 check_wallet_sanctions: HTTP 503, retry HTTP 503");
+  assert.ok(failed.length >= 1, lines.join("\n"));
+  assert.equal(pg1Calls, 2 * lines.length, "each screened address: one call and one retry");
+  resetPg1();
+});
+
+test("PG1 rate_limited is not tried again", async () => {
+  resetPg1();
+  pg1RateLimited = true;
+  const lines = await warnings(() => check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" }));
+  assert.ok(lines.length >= 1 && lines.every((l) => l === "PG1 check_wallet_sanctions: rate_limited, paused 5 min"), lines.join("\n"));
+  assert.equal(pg1Calls, lines.length, "one call per screened address, no retry");
   resetPg1();
 });
 

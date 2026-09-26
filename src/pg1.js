@@ -33,34 +33,55 @@ export const pg1Paused = () => Date.now() < pausedUntil;
 export function resetPg1() { pausedUntil = 0; cache.clear(); keyStatus = null; lastKnown = null; }
 
 // One tools/call; the tool's JSON result, or null when PG1 can't be used right now.
+// A timeout, network error or 5xx (e.g. a Vercel cold start) is tried once more.
+// Each failure is logged with its reason, never with the key or the arguments.
 async function callTool(name, args) {
   if (process.env.PG1_DISABLED === "1" || pg1Paused()) return null;
+  const first = await attempt(name, args);
+  if (!first.fail) return first.out;
+  if (!first.retry) { console.warn(`PG1 ${name}: ${first.fail}`); return null; }
+  const second = await attempt(name, args);
+  if (!second.fail) { console.warn(`PG1 ${name}: ${first.fail}, retry ok`); return second.out; }
+  console.warn(`PG1 ${name}: ${first.fail}, retry ${second.fail}`);
+  return null;
+}
+
+// { out } on success, else { fail: reason, retry: whether trying again can help }.
+async function attempt(name, args) {
   const headers = { "content-type": "application/json", accept: "application/json, text/event-stream" };
   const key = process.env.PG1_API_KEY?.trim();
   if (key) headers["x-api-key"] = key;
+  const started = Date.now();
+  let res;
   try {
-    const res = await fetch(PG1_URL(), {
+    res = await fetch(PG1_URL(), {
       method: "POST",
       headers,
       body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } }),
       signal: AbortSignal.timeout(PG1_TIMEOUT_MS),
     });
-    if (res.status === 429) { pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS; return null; }
-    if (!res.ok) return null;
+  } catch (e) {
+    const timedOut = e?.name === "TimeoutError" || e?.name === "AbortError";
+    return { fail: timedOut ? `timeout after ${Date.now() - started} ms` : `network error (${e?.cause?.code ?? e?.name ?? "unknown"})`, retry: true };
+  }
+  if (res.status === 429) { pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS; return { fail: "HTTP 429, paused 5 min", retry: false }; }
+  if (!res.ok) return { fail: `HTTP ${res.status}`, retry: res.status >= 500 };
+  try {
     const text = await res.text();
     const sse = text.match(/^data: (.*)$/m);
     const body = JSON.parse(sse ? sse[1] : text);
     const result = body?.result;
-    if (!result) return null;
+    if (!result) return { fail: `no result${body?.error?.code != null ? ` (JSON-RPC error ${body.error.code})` : ""}`, retry: false };
     if (result.isError) {
-      if (/rate_limited/.test(JSON.stringify(result))) pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS;
-      return null;
+      const limited = /rate_limited/.test(JSON.stringify(result));
+      if (limited) pausedUntil = Date.now() + RATE_LIMIT_PAUSE_MS;
+      return { fail: limited ? "rate_limited, paused 5 min" : "tool error", retry: false };
     }
-    if (result.structuredContent && typeof result.structuredContent === "object") return result.structuredContent;
+    if (result.structuredContent && typeof result.structuredContent === "object") return { out: result.structuredContent };
     const out = JSON.parse(result.content?.[0]?.text ?? "null");
-    return out && typeof out === "object" ? out : null;
-  } catch {
-    return null;
+    return out && typeof out === "object" ? { out } : { fail: "empty result", retry: false };
+  } catch (e) {
+    return { fail: e?.name === "TimeoutError" ? `timeout after ${Date.now() - started} ms` : "unreadable response", retry: e?.name === "TimeoutError" };
   }
 }
 
