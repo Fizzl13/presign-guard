@@ -236,6 +236,10 @@ test("route: invalid input is a 400 before the paywall; a verdict otherwise", as
     const bad = await realFetch(`${base}/v1/token?chain=solana&address=nope&paid=no`);
     assert.equal(bad.status, 400);
     assert.equal((await bad.json()).error, "invalid_request");
+    const probe = await realFetch(`${base}/v1/token?paid=no`);
+    assert.equal(probe.status, 402, "a bare probe gets the price, not a 400");
+    const paidBare = await realFetch(`${base}/v1/token`);
+    assert.equal(paidBare.status, 400, "paying without a query still gets a 400 (never settled)");
     const unpaid = await realFetch(`${base}/v1/token?chain=solana&address=${BONK}&paid=no`);
     assert.equal(unpaid.status, 402);
     const ok = await realFetch(`${base}/v1/token?chain=solana&address=${BONK}`);

@@ -176,7 +176,10 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
       let size = 0;
       const keep = (chunk, encoding) => {
         if (!chunk || size > 65536 || typeof chunk === 'function') return;
-        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), typeof encoding === 'string' ? encoding : 'utf8');
+        // The MCP transport writes Uint8Arrays, not Buffers: String() on those gives "123,34,…".
+        const buf = Buffer.isBuffer(chunk) ? chunk
+          : chunk instanceof Uint8Array ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength)
+          : Buffer.from(String(chunk), typeof encoding === 'string' ? encoding : 'utf8');
         size += buf.length;
         if (size <= 65536) chunks.push(buf);
       };
