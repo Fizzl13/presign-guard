@@ -6,7 +6,7 @@
 // and ichimoku-signal.
 export const CLAIMS = {
   headers: {},
-  wellKnown: "857bd9d55cb8d42eb41f294993a7f420223870a976d70460", // listing ee5c650c-d63 (/v1/token)
+  wellKnown: null,
 };
 
 export function nohumansClaim(claims = CLAIMS) {
