@@ -162,6 +162,55 @@ function getCode(chainId, address) {
   });
 }
 
+function getStorageAt(chainId, address, slot) {
+  return cached(`slot:${chainId}:${address}:${slot}`, async () => {
+    let res;
+    try {
+      res = await fetch(process.env[`RPC_URL_${chainId}`] || RPC_URLS[chainId], {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getStorageAt", params: [address, slot, "latest"] }),
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new UpstreamError(`Chain RPC unreachable (${err.name})`);
+    }
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    if (typeof body?.result !== "string") throw new UpstreamError(`Chain RPC error${res.ok ? "" : ` (HTTP ${res.status})`}`);
+    return body.result;
+  });
+}
+
+// GoPlus approval_security sometimes calls a plain contract a proxy (DEGEN on
+// Base: a full 11.6 KB contract with no proxy slot set, while token_security
+// says is_proxy=0). Confirm on-chain against the standard layouts; the first
+// match names what points where.
+const PROXY_SLOTS = [
+  ["eip1967", "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"],
+  ["eip1967-beacon", "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50"],
+  ["eip1822", "0xc5f16f0fcc639fa48a6947836d9850f504798523bf8c9a3a87d5876cf622bcf7"],
+  ["openzeppelin-legacy", "0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3"],
+];
+const MINIMAL_PROXY = /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3$/i;
+
+// { kind, points_to } when confirmed, null when no standard layout matches,
+// "unchecked" when the chain RPC can't be asked.
+async function confirmProxy(chainId, address) {
+  try {
+    const code = await getCode(chainId, address);
+    const minimal = MINIMAL_PROXY.exec(code);
+    if (minimal) return { kind: "eip1167", points_to: `0x${minimal[1].toLowerCase()}` };
+    for (const [kind, slot] of PROXY_SLOTS) {
+      const value = await getStorageAt(chainId, address, slot);
+      const target = /^0x0*([0-9a-f]{1,40})$/i.exec(value);
+      if (target && /[1-9a-f]/i.test(target[1])) return { kind, points_to: `0x${target[1].padStart(40, "0").toLowerCase()}` };
+    }
+    return null;
+  } catch {
+    return "unchecked";
+  }
+}
+
 // Some GoPlus endpoints key results by lowercase address, some return fields directly.
 const pickResult = (result, address) => result?.[address] ?? result;
 const flag = (v) => String(v) === "1";
@@ -503,7 +552,8 @@ export async function analyze(req) {
       ]);
       delegate = { address: address7702, addrSec: da.data, contract: dc.data, partial: da.partial || dc.partial };
     }
-    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated, delegate }];
+    const proxy = !delegated && flag(c.data?.is_contract) && flag(c.data?.is_proxy) ? await confirmProxy(req.chainId, address) : null;
+    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated, delegate, proxy }];
   }));
   const results = new Map(lookups);
 
@@ -517,7 +567,7 @@ export async function analyze(req) {
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
-  for (const [address, { addrSec, contract, partial, delegated, delegate }] of results) {
+  for (const [address, { addrSec, contract, partial, delegated, delegate, proxy }] of results) {
     if (partial) add("PARTIAL_SOURCE_DATA", "info", address);
     if (delegated) add("EIP7702_DELEGATED_WALLET", "info", address, { delegate: delegate.address });
     if (delegate) {
@@ -543,7 +593,8 @@ export async function analyze(req) {
       if (malicious.length) add("MALICIOUS_CONTRACT_BEHAVIOR", "red", address, malicious);
       if (flag(contract.doubt_list)) add("ON_DOUBT_LIST", "red", address);
       if (!flag(contract.is_open_source)) add("UNVERIFIED_CONTRACT", "orange", address);
-      if (flag(contract.is_proxy)) add("UPGRADEABLE_PROXY", "info", address);
+      if (proxy === "unchecked") add("UPGRADEABLE_PROXY", "info", address, { confirmed: false });
+      else if (proxy) add("UPGRADEABLE_PROXY", "info", address, proxy);
       const deployed = Number(contract.deployed_time);
       if (deployed && now - deployed < RECENT_DEPLOY_SECONDS) add("RECENTLY_DEPLOYED", "orange", address);
       if (flag(contract.trust_list)) add("ON_TRUST_LIST", "info", address);

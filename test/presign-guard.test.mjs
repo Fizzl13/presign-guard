@@ -19,6 +19,11 @@ const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wall
 const DELEGATED_BAD = "0xbad0000000000000000000000000000000000005"; // EIP-7702 wallet delegating to PHISH
 const DELEGATED_UNVERIFIED = "0xbad0000000000000000000000000000000000006"; // delegating to unverified code
 const UNVERIFIED_IMPL = "0xbad0000000000000000000000000000000000007";
+const REAL_PROXY = "0x3333000000000000000000000000000000000001"; // GoPlus is_proxy, EIP-1967 slot set on-chain
+const FAKE_PROXY = "0x3333000000000000000000000000000000000002"; // GoPlus is_proxy, no proxy layout on-chain (like DEGEN)
+const MIN_PROXY = "0x3333000000000000000000000000000000000003";  // GoPlus is_proxy, an EIP-1167 clone
+const UNCHECKED_PROXY = "0x3333000000000000000000000000000000000005"; // GoPlus is_proxy, looked up only while the RPC is down
+const IMPL = "0x4444000000000000000000000000000000000004";
 const PARTIAL = "0xbad0000000000000000000000000000000000003"; // GoPlus answers code 2, fields missing
 const HONEY = "0x7777000000000000000000000000000000000001";   // honeypot token
 const FAKE_USDC = "0x7777000000000000000000000000000000000002"; // impersonates USDC
@@ -69,9 +74,20 @@ async function mockPg1(opts) {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify(out) }] } }));
 }
 
+const EIP1967_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
+let rpcMethods = [];
 function mockRpc(opts) {
   if (rpcDown) return new Response("down", { status: 502 });
-  const address = JSON.parse(opts.body).params[0].toLowerCase();
+  const { method, params } = JSON.parse(opts.body);
+  rpcMethods.push(method);
+  const address = params[0].toLowerCase();
+  if (method === "eth_getStorageAt") {
+    const set = address === REAL_PROXY && params[1] === EIP1967_SLOT;
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: set ? "0x000000000000000000000000" + IMPL.slice(2) : "0x" + "0".repeat(64) }));
+  }
+  if (address === MIN_PROXY) {
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3` }));
+  }
   const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2) }[address];
   const result = delegateTo ? "0xef0100" + delegateTo : "0x6080604052";
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
@@ -100,7 +116,8 @@ function mockGoplus(url) {
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
     ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
-    : { is_contract: isEoa ? "0" : "1", is_open_source: u.includes(UNVERIFIED_IMPL) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [] };
+    : { is_contract: isEoa ? "0" : "1", is_open_source: u.includes(UNVERIFIED_IMPL) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
+        ...([REAL_PROXY, FAKE_PROXY, MIN_PROXY, UNCHECKED_PROXY].some((p) => u.includes(p)) && { is_proxy: "1" }) };
   return new Response(JSON.stringify({ code: 1, message: "OK", result }));
 }
 
@@ -317,6 +334,39 @@ test("EIP-7702 wallet delegating to unverified code is orange", async () => {
   assert.equal(r.body.verdict, "orange");
   const u = r.body.reasons.find((x) => x.code === "UNVERIFIED_DELEGATE");
   assert.equal(u.details.delegate, UNVERIFIED_IMPL);
+});
+
+test("UPGRADEABLE_PROXY only when the chain confirms it: EIP-1967 slot or EIP-1167 clone, naming what it points to", async () => {
+  const real = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: REAL_PROXY, amount: "1000000" });
+  const r = real.body.reasons.find((x) => x.code === "UPGRADEABLE_PROXY" && x.subject === REAL_PROXY);
+  assert.deepStrictEqual(r.details, { kind: "eip1967", points_to: IMPL });
+  const clone = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: MIN_PROXY, amount: "1000000" });
+  assert.deepStrictEqual(clone.body.reasons.find((x) => x.code === "UPGRADEABLE_PROXY").details, { kind: "eip1167", points_to: IMPL });
+});
+
+test("a GoPlus is_proxy with no proxy layout on-chain (like DEGEN) is not shown", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: FAKE_PROXY, amount: "1000000" });
+  assert.strictEqual(r.status, 200);
+  assert.ok(!r.body.reasons.some((x) => x.code === "UPGRADEABLE_PROXY"), JSON.stringify(r.body.reasons));
+});
+
+test("chain RPC down: the GoPlus proxy flag stays, marked unconfirmed, and the check still answers", async () => {
+  rpcDown = true;
+  try {
+    const FRESH = UNCHECKED_PROXY; // the approved token (the check's target), never looked up before (lookups are cached)
+    const r = await check({ type: "approval", chainId: 8453, token: FRESH, spender: EOA, amount: "1000000" });
+    assert.strictEqual(r.status, 200);
+    const p = r.body.reasons.find((x) => x.code === "UPGRADEABLE_PROXY" && x.subject === FRESH);
+    assert.deepStrictEqual(p && p.details, { confirmed: false });
+  } finally {
+    rpcDown = false;
+  }
+});
+
+test("contracts GoPlus doesn't call a proxy cost no storage reads", async () => {
+  rpcMethods = [];
+  await check({ type: "approval", chainId: 8453, token: TOKEN, spender: "0x2222222222222222222222222222222222222299", amount: "1000000" });
+  assert.ok(!rpcMethods.includes("eth_getStorageAt"), rpcMethods.join(","));
 });
 
 test("permit to an EIP-7702 wallet is red, not an unverified contract", async () => {
