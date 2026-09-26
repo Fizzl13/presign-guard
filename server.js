@@ -1,4 +1,5 @@
 import express from "express";
+import { securityHeaders } from "./src/security-headers.js";
 import { fileURLToPath } from "node:url";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
@@ -66,6 +67,7 @@ const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA);
 const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
+app.use(securityHeaders);
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
