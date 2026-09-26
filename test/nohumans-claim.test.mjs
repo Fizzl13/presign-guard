@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import express from "express";
 import { nohumansClaim, CLAIMS } from "../src/nohumans-claim.js";
 
-test("nohumans claim: the pending token as plain text; per-endpoint headers; 404 when nothing is pending", async () => {
+test("nohumans claim: a pending token as plain text; per-endpoint headers; nothing pending now", async () => {
   const app = express();
-  app.use("/pending", nohumansClaim());
+  assert.equal(CLAIMS.wellKnown, null, "no claim pending");
+  app.use("/pending", nohumansClaim({ headers: {}, wellKnown: "tok" }));
   app.use("/none", nohumansClaim({ headers: { "/v1/token": "tok" }, wellKnown: null }));
   app.use((_req, res) => res.status(404).end());
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
@@ -14,7 +15,7 @@ test("nohumans claim: the pending token as plain text; per-endpoint headers; 404
     const res = await fetch(`${base}/pending/.well-known/nohumans-claim`);
     assert.equal(res.status, 200);
     assert.match(res.headers.get("content-type"), /^text\/plain/);
-    assert.equal(await res.text(), CLAIMS.wellKnown);
+    assert.equal(await res.text(), "tok");
     assert.equal((await fetch(`${base}/none/.well-known/nohumans-claim`)).status, 404);
     assert.equal((await fetch(`${base}/none/v1/token`)).headers.get("x-nohumans-claim"), "tok");
     assert.equal((await fetch(`${base}/none/v1/check`)).headers.get("x-nohumans-claim"), null);
