@@ -149,8 +149,8 @@ export function mirrorChallengeIntoBody(_req, res, next) {
         try {
           const challenge = JSON.parse(Buffer.from(String(header), "base64").toString("utf8"));
           if (Array.isArray(challenge.accepts)) {
-            body = { ...(body || {}), x402Version: challenge.x402Version, accepts: challenge.accepts };
-            if (challenge.error) body.error = challenge.error;
+            // the whole challenge: x402 v2 carries resource next to accepts
+            body = { ...(body || {}), ...challenge };
           }
         } catch {
           // leave the body as is
