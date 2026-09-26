@@ -93,7 +93,7 @@ function mockGoplus(url) {
   const isEoa = u.includes(EOA);
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
-    ? { phishing_activities: isPhish ? "1" : "0" }
+    ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
     : { is_contract: isEoa ? "0" : "1", is_open_source: "1", malicious_behavior: isPhish ? ["drainer"] : [] };
   return new Response(JSON.stringify({ code: 1, message: "OK", result }));
 }
@@ -415,6 +415,23 @@ test("a sanctioned spender is red, with the SDN entry; PG1 is credited", async (
   assert.deepEqual(hit.details.matches, [{ name: "LAZARUS GROUP", programs: ["DPRK3"] }]);
   assert.equal(hit.details.list, "OFAC SDN");
   assert.ok(r.body.sources.includes("pg1"));
+  // GoPlus flags it too: one sanctions reason, crediting both sources.
+  assert.ok(!codes(r).includes("SANCTIONED"));
+  assert.equal(r.body.reasons.filter((x) => x.code === "SANCTIONED_ADDRESS").length, 1);
+  assert.deepEqual(hit.details.alsoFlaggedBy, ["goplus"]);
+});
+
+test("PG1 down: GoPlus's SANCTIONED flag still makes a sanctioned spender red", async () => {
+  resetPg1(); // forget the cached PG1 answer from the test above
+  pg1Down = true;
+  try {
+    const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: SANCTIONED, amount: "1000000" });
+    assert.equal(r.body.verdict, "red");
+    assert.ok(codes(r).includes("SANCTIONED"));
+    assert.ok(!codes(r).includes("SANCTIONED_ADDRESS"));
+  } finally {
+    pg1Down = false;
+  }
 });
 
 test("a sanctioned payment recipient in an x402 signature is red", async () => {
