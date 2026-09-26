@@ -45,7 +45,7 @@ test("every operation summary fits pay.sh: 63 characters or fewer, starting with
   for (const [path, ops] of Object.entries(spec.paths)) {
     for (const [method, op] of Object.entries(ops)) {
       assert.ok(op.summary.length <= 63, `${method.toUpperCase()} ${path}: ${op.summary.length} chars`);
-      assert.match(op.summary, /^(Check|Explain|Find|Get|Scan)\b/, `${method.toUpperCase()} ${path}: starts with a verb`);
+      assert.match(op.summary, /^(Check|Find|Get)\b/, `${method.toUpperCase()} ${path}: starts with a verb`);
     }
   }
 });

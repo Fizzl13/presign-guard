@@ -14,7 +14,7 @@ export const ROUTES = {
   "/v1/check/explain": {
     price: "0.03",
     operationId: "checkAndExplain",
-    summary: "Explain a pre-sign verdict in plain language (English, Dutch)",
+    summary: "Get a pre-sign verdict with a plain-language explanation",
   },
 };
 
