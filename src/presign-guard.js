@@ -533,8 +533,13 @@ export async function analyze(req) {
     if (!sc) { add("SANCTIONS_SCREEN_UNAVAILABLE", "info", address); continue; }
     pg1Used = true;
     if (sc.listed) {
+      // One sanctions reason per address: GoPlus's bare SANCTIONED flag folds into
+      // the OFAC entry, credited in alsoFlaggedBy.
+      const goplusIdx = reasons.findIndex((r) => r.code === "SANCTIONED" && r.subject === address);
+      if (goplusIdx !== -1) reasons.splice(goplusIdx, 1);
       add("SANCTIONED_ADDRESS", "red", address, {
         list: "OFAC SDN", matches: sc.matches.map((m) => ({ name: m.sdnName, programs: m.programs })), listSynced: sc.listSynced,
+        ...(goplusIdx !== -1 && { alsoFlaggedBy: ["goplus"] }),
       });
     }
   }
