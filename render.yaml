@@ -23,5 +23,7 @@ services:
         sync: false
       - key: USAGE_LOG_TOKEN
         sync: false
+      - key: PG1_API_KEY # PG1 membership key: exempt from PG1's anonymous rate limit (optional)
+        sync: false
       - key: USAGE_LOG_REPO
         value: Fizzl13/usage-log

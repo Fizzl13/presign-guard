@@ -4,6 +4,7 @@ import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createCheckRouter } from "../src/presign-guard.js";
+import { resetPg1, pg1Paused } from "../src/pg1.js";
 
 process.env.ANTHROPIC_API_KEY = "test-key";
 
@@ -32,6 +33,8 @@ let goplusCalls = 0;
 let rpcDown = false;
 let pg1Down = false;
 let pg1Calls = 0;
+let pg1RateLimited = false;
+let pg1LastKey;
 
 // PG1 MCP: check_wallet_sanctions and check_domain_age, shaped like the live responses.
 const DOMAINS = {
@@ -41,7 +44,11 @@ const DOMAINS = {
 };
 async function mockPg1(opts) {
   pg1Calls++;
+  pg1LastKey = opts.headers["x-api-key"];
   if (pg1Down) return new Response("down", { status: 503 });
+  if (pg1RateLimited) {
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "Rate limit reached", code: "rate_limited" }) }] } }));
+  }
   const { params } = JSON.parse(opts.body);
   let out;
   if (params.name === "check_wallet_sanctions") {
@@ -110,7 +117,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.close(); globalThis.fetch = realFetch; });
-beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; });
+beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; pg1RateLimited = false; });
 
 async function check(body, path = "/v1/check") {
   const res = await realFetch(base + path, {
@@ -459,4 +466,29 @@ test("origin: localhost and IPs are not looked up; junk is a 400 before any look
   const bad = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1", origin: "not a url" });
   assert.equal(bad.status, 400);
   assert.equal(pg1Calls + goplusCalls, 0);
+});
+
+test("PG1: the membership key goes along as x-api-key when set, and only then", async () => {
+  resetPg1();
+  process.env.PG1_API_KEY = " test-member-key \n";
+  await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" });
+  assert.equal(pg1LastKey, "test-member-key");
+  delete process.env.PG1_API_KEY;
+  resetPg1();
+  await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" });
+  assert.equal(pg1LastKey, undefined);
+});
+
+test("PG1 rate_limited: the check answers, and PG1 is left alone for a while", async () => {
+  resetPg1();
+  pg1RateLimited = true;
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" });
+  assert.equal(r.status, 200);
+  assert.ok(codes(r).includes("SANCTIONS_SCREEN_UNAVAILABLE"));
+  assert.ok(pg1Paused());
+  const calls = pg1Calls;
+  const again = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "2" });
+  assert.equal(again.status, 200);
+  assert.equal(pg1Calls, calls, "no PG1 calls while paused");
+  resetPg1();
 });
