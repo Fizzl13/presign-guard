@@ -1,5 +1,6 @@
 import express from "express";
 import { securityHeaders } from "./src/security-headers.js";
+import { nohumansClaim } from "./src/nohumans-claim.js";
 import { fileURLToPath } from "node:url";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
@@ -68,6 +69,7 @@ const app = express();
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 app.use(securityHeaders);
+app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).

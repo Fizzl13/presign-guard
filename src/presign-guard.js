@@ -697,7 +697,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
         { scheme: "exact", price: tokenPrice, network, payTo },
         ...(solana?.payTo ? [{ scheme: "exact", price: tokenPrice, network: solana.network, payTo: solana.payTo }] : []),
       ],
-      description: "Token verdict (green/orange/red, grade SAFE/CAUTION/RISKY/AVOID, reason codes, one-line summary, market data) for a Solana or EVM token: mint/freeze authority, honeypot, tax, LP lock, liquidity, age, holder concentration",
+      description: "Is this token safe to buy, hold or accept? Checks a Solana or EVM token for honeypot and rug-pull signs (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
       ...tokenServiceMetadata,
       extensions: tokenBazaarExtension(),
