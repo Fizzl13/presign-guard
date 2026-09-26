@@ -43,3 +43,30 @@ test("usage log: a token verdict is logged with the chain, token, verdict and gr
     result: { verdict: "orange", grade: "CAUTION", reasons: "NEW_TOKEN", error: undefined },
   });
 });
+
+test("usage log: an MCP answer written as a Uint8Array is read (the verdict is logged)", async () => {
+  const written = [];
+  const fetchFn = async (url, opts = {}) => {
+    if ((opts.method || "GET") === "GET") return new Response("{}", { status: 404 });
+    written.push(Buffer.from(JSON.parse(opts.body).content, "base64").toString("utf8"));
+    return Response.json({}, { status: 201 });
+  };
+  const usageLog = createUsageLog({ service: "presign", env: { USAGE_LOG_TOKEN: "t" }, fetchFn, log: { warn() {}, error() {} } });
+  const app = express();
+  app.use(usageLog.middleware(describePresignCall));
+  // Like the MCP transport: raw end() with a Uint8Array, no res.json.
+  app.post("/mcp", express.json(), (_req, res) => {
+    const reply = { jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: JSON.stringify({ verdict: "green", grade: "SAFE" }) }] } };
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(new TextEncoder().encode(JSON.stringify(reply)));
+  });
+  const server = app.listen(0);
+  const call = { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "token_quick_verdict", arguments: { chain: "base", address: "0xabc" } } };
+  await fetch(`http://127.0.0.1:${server.address().port}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(call) });
+  await new Promise((r) => setTimeout(r, 30));
+  await usageLog.flush();
+  server.close();
+  const event = JSON.parse(written[0].trim());
+  assert.equal(event.route, "token_quick_verdict");
+  assert.deepEqual(event.result, { verdict: "green", grade: "SAFE" });
+});

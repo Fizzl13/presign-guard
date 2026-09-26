@@ -367,8 +367,12 @@ export async function tokenVerdict({ chain, address }, now = Date.now()) {
 // ---------- routes ----------
 
 // Mounted before the paywall: an invalid query gets a 400 instead of a price.
+// A bare /v1/token (no chain, no address) is how catalogues and health monitors
+// probe an x402 endpoint: it goes on to the paywall and gets the 402 challenge.
+// Paying without a query still ends in a 400, and a 400 is never settled.
 export function validateTokenQuery(req, res, next) {
   if (req.method !== "GET" || req.path !== "/v1/token") return next();
+  if (req.query?.chain === undefined && req.query?.address === undefined) return next();
   try {
     req.tokenRequest = parseTokenRequest(req.query);
     next();
