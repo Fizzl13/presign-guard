@@ -12,6 +12,7 @@ import { createMcpRouter } from "./src/mcp.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
+import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -86,6 +87,7 @@ app.get("/", (_req, res) => res.json({
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
 app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])])));
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
+app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
 
 // Usage log: every check with what was sent, for the dashboard at
 // x402-doctor.onrender.com/admin/usage. Does nothing without USAGE_LOG_TOKEN.
