@@ -490,9 +490,20 @@ export async function analyze(req) {
       getAddressSecurity(req.chainId, address),
       getContractSecurity(req.chainId, address),
     ]);
-    const delegated = spenders.has(address) && flag(c.data?.is_contract) &&
-      DELEGATION_CODE.test(await getCode(req.chainId, address));
-    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated }];
+    const code = spenders.has(address) && flag(c.data?.is_contract) ? await getCode(req.chainId, address) : null;
+    const delegated = DELEGATION_CODE.test(code ?? "");
+    // The contract an EIP-7702 wallet delegates to runs with the wallet's authority:
+    // screen it like a spender contract.
+    let delegate = null;
+    if (delegated) {
+      const address7702 = "0x" + code.slice(8).toLowerCase();
+      const [da, dc] = await Promise.all([
+        getAddressSecurity(req.chainId, address7702),
+        getContractSecurity(req.chainId, address7702),
+      ]);
+      delegate = { address: address7702, addrSec: da.data, contract: dc.data, partial: da.partial || dc.partial };
+    }
+    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated, delegate }];
   }));
   const results = new Map(lookups);
 
@@ -506,9 +517,21 @@ export async function analyze(req) {
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
-  for (const [address, { addrSec, contract, partial, delegated }] of results) {
+  for (const [address, { addrSec, contract, partial, delegated, delegate }] of results) {
     if (partial) add("PARTIAL_SOURCE_DATA", "info", address);
-    if (delegated) add("EIP7702_DELEGATED_WALLET", "info", address);
+    if (delegated) add("EIP7702_DELEGATED_WALLET", "info", address, { delegate: delegate.address });
+    if (delegate) {
+      if (delegate.partial) add("PARTIAL_SOURCE_DATA", "info", delegate.address);
+      const flags = [
+        ...ADDRESS_RED_FLAGS.filter((f) => flag(delegate.addrSec?.[f])),
+        ...(Array.isArray(delegate.contract?.malicious_behavior) ? delegate.contract.malicious_behavior : []),
+        ...(flag(delegate.contract?.doubt_list) ? ["doubt_list"] : []),
+      ];
+      if (flags.length) add("MALICIOUS_DELEGATE", "red", address, { delegate: delegate.address, flags });
+      else if (delegate.contract && flag(delegate.contract.is_contract) && !flag(delegate.contract.is_open_source)) {
+        add("UNVERIFIED_DELEGATE", "orange", address, { delegate: delegate.address });
+      }
+    }
     for (const f of ADDRESS_RED_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "red", address);
     for (const f of ADDRESS_ORANGE_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "orange", address);
     if (Number(addrSec?.number_of_malicious_contracts_created) > 0) {

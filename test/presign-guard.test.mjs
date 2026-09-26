@@ -16,6 +16,9 @@ const EOA = "0xbad0000000000000000000000000000000000001";  // plain wallet
 const PHISH = "0xbad0000000000000000000000000000000000002"; // flagged contract
 const USER = "0x1111111111111111111111111111111111111111";
 const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wallet: GoPlus says contract
+const DELEGATED_BAD = "0xbad0000000000000000000000000000000000005"; // EIP-7702 wallet delegating to PHISH
+const DELEGATED_UNVERIFIED = "0xbad0000000000000000000000000000000000006"; // delegating to unverified code
+const UNVERIFIED_IMPL = "0xbad0000000000000000000000000000000000007";
 const PARTIAL = "0xbad0000000000000000000000000000000000003"; // GoPlus answers code 2, fields missing
 const HONEY = "0x7777000000000000000000000000000000000001";   // honeypot token
 const FAKE_USDC = "0x7777000000000000000000000000000000000002"; // impersonates USDC
@@ -69,7 +72,8 @@ async function mockPg1(opts) {
 function mockRpc(opts) {
   if (rpcDown) return new Response("down", { status: 502 });
   const address = JSON.parse(opts.body).params[0].toLowerCase();
-  const result = address === DELEGATED ? "0xef0100" + "ab".repeat(20) : "0x6080604052";
+  const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2) }[address];
+  const result = delegateTo ? "0xef0100" + delegateTo : "0x6080604052";
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
 }
 
@@ -96,7 +100,7 @@ function mockGoplus(url) {
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
     ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
-    : { is_contract: isEoa ? "0" : "1", is_open_source: "1", malicious_behavior: isPhish ? ["drainer"] : [] };
+    : { is_contract: isEoa ? "0" : "1", is_open_source: u.includes(UNVERIFIED_IMPL) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [] };
   return new Response(JSON.stringify({ code: 1, message: "OK", result }));
 }
 
@@ -289,6 +293,30 @@ test("GoPlus partial data still gives a verdict, marked, and a missing is_contra
   assert.equal(r.body.verdict, "red");
   assert.ok(codes(r).includes("SIGNATURE_GRANT_TO_EOA"));
   assert.ok(codes(r).includes("PARTIAL_SOURCE_DATA"));
+});
+
+test("EIP-7702 wallet: the delegate contract is named and screened; a clean one adds nothing", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: DELEGATED, amount: "1000000" });
+  const d = r.body.reasons.find((x) => x.code === "EIP7702_DELEGATED_WALLET");
+  assert.equal(d.details.delegate, "0x" + "ab".repeat(20));
+  assert.ok(!codes(r).includes("MALICIOUS_DELEGATE"));
+  assert.ok(!codes(r).includes("UNVERIFIED_DELEGATE"));
+});
+
+test("EIP-7702 wallet delegating to a flagged contract is red, with the delegate and flags", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: DELEGATED_BAD, amount: "1000000" });
+  assert.equal(r.body.verdict, "red");
+  const m = r.body.reasons.find((x) => x.code === "MALICIOUS_DELEGATE");
+  assert.equal(m.subject, DELEGATED_BAD);
+  assert.equal(m.details.delegate, PHISH);
+  assert.deepEqual(m.details.flags, ["phishing_activities", "drainer"]);
+});
+
+test("EIP-7702 wallet delegating to unverified code is orange", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: DELEGATED_UNVERIFIED, amount: "1000000" });
+  assert.equal(r.body.verdict, "orange");
+  const u = r.body.reasons.find((x) => x.code === "UNVERIFIED_DELEGATE");
+  assert.equal(u.details.delegate, UNVERIFIED_IMPL);
 });
 
 test("permit to an EIP-7702 wallet is red, not an unverified contract", async () => {
