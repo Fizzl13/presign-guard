@@ -30,10 +30,20 @@ test("token verdict: $0.01 on Base, plus Solana only when a Solana wallet is set
 
 test("openapi and well-known list all paid routes", () => {
   const spec = openApi("https://example.test", "eip155:8453", ["eip155:8453", SOLANA.network]);
-  assert.deepEqual(Object.keys(spec.paths), ["/v1/check", "/v1/check/explain", "/v1/token"]);
+  assert.deepEqual(Object.keys(spec.paths), ["/v1/check", "/v1/check/explain", "/v1/token", "/v1/approvals"]);
   assert.deepEqual(spec.paths["/v1/check"].post["x-payment-info"].networks, ["eip155:8453"]);
   assert.deepEqual(spec.paths["/v1/token"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/token"].get.parameters.map((p) => p.name), ["chain", "address"]);
+  assert.deepEqual(spec.paths["/v1/approvals"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
+  assert.deepEqual(spec.paths["/v1/approvals"].get.parameters.map((p) => p.name), ["chain", "address"]);
   assert.deepEqual(wellKnown("https://example.test").resources,
-    ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token"]);
+    ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token", "https://example.test/v1/approvals"]);
+});
+
+test("wallet approvals: $0.02 on Base, plus Solana when a Solana wallet is set, with GET query metadata", () => {
+  const baseOnly = x402Routes(PAY_TO, "eip155:8453")["GET /v1/approvals"];
+  assert.deepEqual(baseOnly.accepts.map((a) => [a.network, a.price]), [["eip155:8453", "$0.02"]]);
+  const both = x402Routes(PAY_TO, "eip155:8453", SOLANA)["GET /v1/approvals"];
+  assert.deepEqual(both.accepts.map((a) => [a.network, a.payTo]), [["eip155:8453", PAY_TO], [SOLANA.network, SOLANA.payTo]]);
+  assert.deepEqual(both.extensions.bazaar.info.input.queryParams, { chain: "ethereum", address: "0x28c6c06298d514db089934071355e5743bf21d60" });
 });
