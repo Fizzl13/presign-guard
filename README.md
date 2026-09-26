@@ -17,12 +17,13 @@ Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
+| `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval, its spender, and which to revoke (see below) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
 | `GET /health` | free | Liveness |
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
 | `GET /.well-known/x402` | free | x402 discovery manifest |
 
-Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict also on Solana). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict and the approval audit also on Solana). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
 
 ## MCP
 
@@ -35,8 +36,9 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict a
 | `presign_check_explain` | $0.03 USDC via x402 | The same plus a plain-language explanation, as `POST /v1/check/explain` |
 | `token_quick_verdict` | free, shares the 10 calls/hour | The token verdict and grade only |
 | `token_verdict` | $0.01 USDC via x402 | The full token verdict, as `GET /v1/token` |
+| `wallet_approvals` | $0.02 USDC via x402 | The wallet approval audit, as `GET /v1/approvals` |
 
-The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
+The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` and `wallet_approvals` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Token verdict
 
@@ -66,6 +68,36 @@ Grades: `SAFE` (green), `CAUTION` (one orange reason), `RISKY` (two or more), `A
 | info | `MUTABLE_METADATA`, `NO_SOCIALS`, `TOKEN_ON_TRUST_LIST`, `NO_SECURITY_DATA`, `RUGCHECK_DANGER`, `RUGCHECK_UNAVAILABLE`, `LP_NOT_LOCKED` on older tokens, on trust-list tokens (USDC, USDT, WETH): the issuer's powers, `LP_NOT_LOCKED`, `LOW_LIQUIDITY` and `NO_DEX_MARKET` (DexScreener undercounts quote assets) |
 
 On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, freeze, change balances) are info: the issuer keeps them on purpose. Missing data never makes a token red. If GoPlus or DexScreener is down there is no verdict (503, not charged); if RugCheck is down the verdict comes without it and says so.
+
+## Wallet approval audit
+
+`GET /v1/approvals?chain=base&address=<wallet>` (or `chain=ethereum|arbitrum|optimism|polygon|bsc`) is the follow-up to `/v1/check`: that one asks "should I sign this approval?", this one asks "which approvals did I already give, and which should I revoke?". Agents with their own wallet can run it as a periodic check.
+
+```json
+{
+  "verdict": "red",
+  "grade": "AVOID",
+  "one_liner": "AVOID: 5 approvals, 1 to a flagged address, 1 to a plain wallet, 1 unlimited; revoke 3",
+  "reasons": [{ "code": "SPENDER_MALICIOUS", "severity": "red", "details": { "count": 1, "spenders": ["0x…"] } }, "…"],
+  "summary": { "approvals": 5, "tokens": 2, "unlimited": 2, "toRevoke": 3 },
+  "approvals": [{
+    "token": { "address": "0x…", "symbol": "USDC" },
+    "spender": { "address": "0x…", "name": null, "trusted": false, "contract": true },
+    "amount": "500", "unlimited": false, "approvedAt": "…", "severity": "red",
+    "codes": [{ "code": "SPENDER_MALICIOUS", "severity": "red", "details": { "behaviors": ["phishing_activities"] } }],
+    "revoke": true
+  }, "…"],
+  "revokeUrl": "https://revoke.cash/address/0x…?chainId=8453"
+}
+```
+
+| Severity | Codes (per approval; the wallet-level reasons count them) |
+|---|---|
+| red | `SPENDER_MALICIOUS` (the spender is flagged by GoPlus) |
+| orange | `APPROVAL_TO_WALLET` (the spender is a plain wallet, not a contract), `SPENDER_SUSPICIOUS` (GoPlus doubt list), `SPENDER_UNVERIFIED` (contract source not verified), `UNLIMITED_APPROVAL` (to a spender not on the GoPlus trust list) |
+| info | `UNLIMITED_APPROVAL_TRUSTED` (e.g. Permit2), `STALE_APPROVAL` (older than a year), `TOKEN_FLAGGED` (the approved token itself), `NO_APPROVALS` |
+
+Every approval with an orange or red code has `revoke: true`. The grades are the same as the token verdict. Source: GoPlus `token_approval_security` (ERC-20 allowances); NFT approvals are not covered. If GoPlus is down there is no verdict (503, not charged).
 
 ## Request types
 

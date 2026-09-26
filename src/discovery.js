@@ -79,6 +79,76 @@ export const tokenBazaarExtension = () => declareDiscoveryExtension({
   output: { schema: TOKEN_OUTPUT_SCHEMA, example: TOKEN_OUTPUT_EXAMPLE },
 });
 
+// GET /v1/approvals: the open ERC-20 allowances of a wallet, and which to revoke.
+export const APPROVALS_ROUTE = {
+  path: "/v1/approvals",
+  price: "0.02",
+  operationId: "walletApprovals",
+  summary: "Wallet approval audit: which open token approvals could drain this wallet, and which to revoke",
+};
+
+export const APPROVALS_INPUT_EXAMPLE = { chain: "ethereum", address: "0x28c6c06298d514db089934071355e5743bf21d60" };
+
+export const APPROVALS_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    chain: { type: "string", enum: ["base", "ethereum", "arbitrum", "optimism", "polygon", "bsc"], description: "EVM chain to audit" },
+    address: { type: "string", description: "Wallet address (0x...)" },
+  },
+  required: ["chain", "address"],
+};
+
+const APPROVALS_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    verdict: { type: "string", enum: ["green", "orange", "red"] },
+    grade: { type: "string", enum: ["SAFE", "CAUTION", "RISKY", "AVOID"] },
+    one_liner: { type: "string" },
+    reasons: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { code: { type: "string" }, severity: { type: "string", enum: ["red", "orange", "info"] }, details: {} },
+        required: ["code", "severity"],
+      },
+    },
+    summary: { type: "object", description: "approvals, tokens, unlimited, toRevoke" },
+    approvals: {
+      type: "array",
+      description: "Per allowance: token, spender (address, name, trusted, contract), amount, approvedAt, severity, codes, revoke",
+      items: { type: "object" },
+    },
+    revokeUrl: { type: "string" },
+    checkedAt: { type: "string" },
+  },
+  required: ["verdict", "grade", "one_liner", "reasons", "approvals"],
+};
+
+const APPROVALS_OUTPUT_EXAMPLE = {
+  verdict: "orange",
+  grade: "CAUTION",
+  one_liner: "CAUTION: 3 approvals, 1 unlimited; revoke 1",
+  reasons: [
+    { code: "UNLIMITED_APPROVAL", severity: "orange", details: { count: 1, spenders: ["0x1111111254eeb25477b68fb85ed929f73a960582"] } },
+    { code: "STALE_APPROVAL", severity: "info", details: { count: 2, spenders: [EXAMPLE_SPENDER.toLowerCase()] } },
+  ],
+  summary: { approvals: 3, tokens: 2, unlimited: 1, toRevoke: 1 },
+  approvals: [{
+    token: { address: EXAMPLE_TOKEN.toLowerCase(), symbol: "USDC", name: "USD Coin" },
+    spender: { address: "0x1111111254eeb25477b68fb85ed929f73a960582", name: "AggregationRouterV5", trusted: false, contract: true },
+    amount: "unlimited", unlimited: true, approvedAt: "2025-03-01T10:00:00.000Z", severity: "orange",
+    codes: [{ code: "UNLIMITED_APPROVAL", severity: "orange" }], revoke: true,
+  }],
+  revokeUrl: "https://revoke.cash/address/0x...?chainId=8453",
+};
+
+export const approvalsBazaarExtension = () => declareDiscoveryExtension({
+  method: "GET",
+  input: APPROVALS_INPUT_EXAMPLE,
+  inputSchema: APPROVALS_INPUT_SCHEMA,
+  output: { schema: APPROVALS_OUTPUT_SCHEMA, example: APPROVALS_OUTPUT_EXAMPLE },
+});
+
 export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_TOKEN, spender: EXAMPLE_SPENDER, amount: "1000000" };
 
 export const INPUT_SCHEMA = {
@@ -137,6 +207,7 @@ export const bazaarExtension = () => declareDiscoveryExtension({
 
 export const serviceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "pre-sign", "approvals", "agents"] };
 export const tokenServiceMetadata = { serviceName: "presign-guard", tags: ["token-security", "due-diligence", "solana", "base", "agents"] };
+export const approvalsServiceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "approvals", "revoke", "agents"] };
 
 // @x402/express puts the v2 challenge only in the PAYMENT-REQUIRED header and
 // sends an empty {} body; some clients read accepts[] from the body.
@@ -206,13 +277,34 @@ export function openApi(origin, network, tokenNetworks = [network]) {
       },
     },
   };
+  paths[APPROVALS_ROUTE.path] = {
+    get: {
+      operationId: APPROVALS_ROUTE.operationId,
+      summary: APPROVALS_ROUTE.summary,
+      "x-payment-info": {
+        price: { mode: "fixed", currency: "USD", amount: APPROVALS_ROUTE.price },
+        protocols: ["x402"],
+        networks: tokenNetworks,
+        asset: "USDC",
+      },
+      parameters: Object.entries(APPROVALS_INPUT_SCHEMA.properties).map(([name, schema]) => ({
+        name, in: "query", required: true, schema, example: APPROVALS_INPUT_EXAMPLE[name],
+      })),
+      responses: {
+        200: { description: "Audit", content: { "application/json": { schema: APPROVALS_OUTPUT_SCHEMA, example: APPROVALS_OUTPUT_EXAMPLE } } },
+        400: { description: "Invalid request; nothing is charged" },
+        402: { description: "Payment Required" },
+        503: { description: "GoPlus is down; nothing is charged, no verdict" },
+      },
+    },
+  };
   return {
     openapi: "3.1.0",
     info: {
       title: "presign-guard",
-      version: "2.2.0",
-      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it.",
-      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data.",
+      version: "2.3.0",
+      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, and GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke.",
+      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke.",
     },
     servers: [{ url: origin }],
     paths,
@@ -222,14 +314,15 @@ export function openApi(origin, network, tokenNetworks = [network]) {
 export function wellKnown(origin) {
   return {
     version: 1,
-    resources: [...Object.keys(ROUTES), TOKEN_ROUTE.path].map((p) => origin + p),
+    resources: [...Object.keys(ROUTES), TOKEN_ROUTE.path, APPROVALS_ROUTE.path].map((p) => origin + p),
     x402Version: 2,
     kind: "resource-server",
     name: "presign-guard",
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM transactions, approvals and signatures, and token verdicts for Solana and EVM tokens.",
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM transactions, approvals and signatures, token verdicts for Solana and EVM tokens, and wallet approval audits.",
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
       { url: origin + TOKEN_ROUTE.path, method: "GET", description: TOKEN_ROUTE.summary },
+      { url: origin + APPROVALS_ROUTE.path, method: "GET", description: APPROVALS_ROUTE.summary },
     ],
     openapi: `${origin}/openapi.json`,
     docs: "https://github.com/Fizzl13/presign-guard",

@@ -10,6 +10,7 @@ import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js"
 import { createUsageLog, describePresignCall } from "./src/usage.js";
 import { createMcpRouter } from "./src/mcp.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
+import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -95,9 +96,11 @@ app.use(createUsageLog({ service: "presign" }).middleware(describePresignCall));
 app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA }));
 
 app.use(validateTokenQuery);
+app.use(validateApprovalsQuery);
 app.use(mirrorChallengeIntoBody);
 app.use(paymentMiddleware(ROUTES, resourceServer));
 app.use(createCheckRouter());
 app.use(createTokenRouter());
+app.use(createApprovalsRouter());
 
 app.listen(PORT, () => console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`));

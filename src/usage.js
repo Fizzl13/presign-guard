@@ -52,9 +52,27 @@ function describeTokenCall(req, body) {
   };
 }
 
+// GET /v1/approvals: which wallet, the verdict and grade, and the risky codes.
+function describeApprovalsCall(req, body) {
+  const q = req.query || {};
+  const b = body || {};
+  return {
+    route: "approvals",
+    via: req.get && req.get("sec-fetch-site") === "same-origin" ? "web" : "api",
+    input: { chain: q.chain, target: q.address },
+    result: {
+      verdict: b.verdict === null ? "none" : b.verdict,
+      grade: b.grade,
+      reasons: Array.isArray(b.reasons) ? b.reasons.filter((r) => r.severity !== "info").map((r) => r.code).join(", ") || undefined : undefined,
+      error: b.error,
+    },
+  };
+}
+
 export function describePresignCall(req, _res, body) {
   if (req.method === "POST" && req.path === "/mcp") return describeMcpCall(req, body);
   if (req.method === "GET" && req.path === "/v1/token") return describeTokenCall(req, body);
+  if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method !== "POST" || !ROUTES[req.path]) return null;
   const input = req.body || {};
   const td = typedDataOf(input);

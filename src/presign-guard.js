@@ -14,11 +14,14 @@
 // Verify in testing that your middleware version skips settlement on non-2xx responses.
 
 import express from "express";
-import { ROUTES, TOKEN_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata } from "./discovery.js";
+import {
+  ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
+  approvalsBazaarExtension, approvalsServiceMetadata,
+} from "./discovery.js";
 import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem";
 import { screenSanctions, domainAge, originHost, NEW_DOMAIN_DAYS } from "./pg1.js";
 
-const GOPLUS_BASE = "https://api.gopluslabs.io/api/v1";
+const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
 const RPC_TIMEOUT_MS = 4000;
 const CLAUDE_TIMEOUT_MS = 12000;
@@ -112,19 +115,24 @@ async function cached(key, fn, ttlMs = CACHE_TTL_MS) {
 
 // ---------- GoPlus ----------
 
-async function goplus(path) {
+// version: "v1" for most endpoints, "v2" for token_approval_security.
+// emptyOk: a null result means "nothing found" (a wallet without approvals), not an error.
+async function goplus(path, { version = "v1", emptyOk = false } = {}) {
   const headers = { accept: "application/json" };
   // Check GoPlus docs for the exact auth header format on your plan.
   if (process.env.GOPLUS_ACCESS_TOKEN) headers.Authorization = process.env.GOPLUS_ACCESS_TOKEN;
 
   let res;
   try {
-    res = await fetch(`${GOPLUS_BASE}${path}`, { headers, signal: AbortSignal.timeout(GOPLUS_TIMEOUT_MS) });
+    res = await fetch(`${GOPLUS_BASE}/${version}${path}`, { headers, signal: AbortSignal.timeout(GOPLUS_TIMEOUT_MS) });
   } catch (err) {
     throw new UpstreamError(`GoPlus unreachable (${err.name})`);
   }
   if (!res.ok) throw new UpstreamError(`GoPlus HTTP ${res.status}`);
   const body = await res.json().catch(() => null);
+  if (emptyOk && body && (body.code === 1 || body.code === 2) && (body.result === null || body.result === undefined)) {
+    return { result: [], partial: body.code === 2 };
+  }
   // code 2 = "partial data obtained": the result is usable but some fields may be missing.
   // Missing fields raise no flags, except a missing is_contract, which counts as a plain wallet (stricter).
   if (!body || (body.code !== 1 && body.code !== 2) || !body.result || typeof body.result !== "object") {
@@ -673,6 +681,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
     extensions: bazaarExtension(),
   });
   const tokenPrice = `$${TOKEN_ROUTE.price}`;
+  const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
       "Pre-sign risk verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures"),
@@ -687,6 +696,16 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
       mimeType: "application/json",
       ...tokenServiceMetadata,
       extensions: tokenBazaarExtension(),
+    },
+    [`GET ${APPROVALS_ROUTE.path}`]: {
+      accepts: [
+        { scheme: "exact", price: approvalsPrice, network, payTo },
+        ...(solana?.payTo ? [{ scheme: "exact", price: approvalsPrice, network: solana.network, payTo: solana.payTo }] : []),
+      ],
+      description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
+      mimeType: "application/json",
+      ...approvalsServiceMetadata,
+      extensions: approvalsBazaarExtension(),
     },
   };
 }

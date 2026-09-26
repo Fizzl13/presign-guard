@@ -1,13 +1,14 @@
 // MCP server (Streamable HTTP, stateless) on POST /mcp, so MCP clients (Claude,
 // Cursor, agent frameworks) and MCP directories can find and use presign-guard.
 //
-// Five tools:
+// Six tools:
 // - presign_quick_check and token_quick_verdict (free, rate-limited together):
 //   the verdict only, green/orange/red.
 // - presign_check ($0.01) and presign_check_explain ($0.03), via x402: the same
 //   as POST /v1/check and /v1/check/explain, paid inside the MCP call
 //   (_meta["x402/payment"]) at the same price and to the same payout wallet.
 // - token_verdict ($0.01, Base or Solana): the same as GET /v1/token.
+// - wallet_approvals ($0.02, Base or Solana): the same as GET /v1/approvals.
 //
 // Invalid input is refused before payment; a failed check is not charged.
 
@@ -19,12 +20,13 @@ import { createPaymentWrapper } from "@x402/mcp";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { parseRequest, analyze, explain } from "./presign-guard.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
+import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
 import {
-  ROUTES, TOKEN_ROUTE, INPUT_SCHEMA, INPUT_EXAMPLE, TOKEN_INPUT_SCHEMA, TOKEN_INPUT_EXAMPLE,
-  serviceMetadata, tokenServiceMetadata,
+  ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, INPUT_SCHEMA, INPUT_EXAMPLE, TOKEN_INPUT_SCHEMA, TOKEN_INPUT_EXAMPLE,
+  APPROVALS_INPUT_SCHEMA, APPROVALS_INPUT_EXAMPLE, serviceMetadata, tokenServiceMetadata, approvalsServiceMetadata,
 } from "./discovery.js";
 
-export const VERSION = "1.1.0";
+export const VERSION = "1.2.0";
 export const FREE_CALLS_PER_HOUR = 10;
 
 const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
@@ -47,6 +49,11 @@ const EXPLAIN_INPUT = { ...CHECK_INPUT, lang: z.enum(["en", "nl"]).optional().de
 const TOKEN_INPUT = {
   chain: z.enum(TOKEN_INPUT_SCHEMA.properties.chain.enum).describe("Chain the token lives on"),
   address: z.string().describe("Solana mint address (base58) or EVM token contract (0x...)"),
+};
+
+const APPROVALS_INPUT = {
+  chain: z.enum(APPROVALS_INPUT_SCHEMA.properties.chain.enum).describe("EVM chain to audit"),
+  address: z.string().describe("Wallet address (0x...)"),
 };
 
 const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }] });
@@ -81,6 +88,14 @@ function validate(args) {
 function validateToken(args) {
   try {
     return { request: parseTokenRequest(args) };
+  } catch (err) {
+    return { error: err.message || "invalid request" };
+  }
+}
+
+function validateApprovals(args) {
+  try {
+    return { request: parseApprovalsRequest(args) };
   } catch (err) {
     return { error: err.message || "invalid request" };
   }
@@ -131,9 +146,24 @@ const PAID_TOOLS = [
       `Paid (${price} USDC via x402 on Base or Solana): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc) and the token address or mint; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
     run: (request) => tokenVerdict(request),
   },
+  {
+    name: "wallet_approvals",
+    route: APPROVALS_ROUTE.path,
+    title: "Wallet approval audit",
+    input: APPROVALS_INPUT,
+    validate: validateApprovals,
+    discovery: { inputSchema: APPROVALS_INPUT_SCHEMA, example: APPROVALS_INPUT_EXAMPLE },
+    metadata: approvalsServiceMetadata,
+    solana: true,
+    summary: "Which open token approvals could drain this wallet? Every ERC-20 allowance with who the spender is, a verdict, and the ones to revoke.",
+    description: (price) =>
+      `Paid (${price} USDC via x402 on Base or Solana): audit the open token approvals of an EVM wallet (base, ethereum, arbitrum, optimism, polygon, bsc), for example your agent's own wallet as a periodic check. Get back green/orange/red, a grade, a one-line summary and every ERC-20 allowance with its spender: flagged malicious (red), a plain wallet, on a doubt list, an unverified contract or an unlimited allowance to a spender not on the GoPlus trust list (orange), plus which ones to revoke and a revoke.cash link. NFT approvals are not covered. Same as GET /v1/approvals.`,
+    run: (request) => walletApprovals(request),
+  },
 ];
 
-const priceOf = (tool) => `$${tool.route === TOKEN_ROUTE.path ? TOKEN_ROUTE.price : ROUTES[tool.route].price}`;
+const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [APPROVALS_ROUTE.path]: APPROVALS_ROUTE };
+const priceOf = (tool) => `$${(OTHER_ROUTES[tool.route] ?? ROUTES[tool.route]).price}`;
 
 // accepts[] per paid tool, built once the facilitator is reachable.
 function paidWrapperFactory({ resourceServer, network, payTo, solana, tool }) {
