@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authorise the receipt signer</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e; --accent: #a78bfa; --ok: #3fb950; --bad: #f85149; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.4rem; margin: 0 0 8px; }
+  p, li { color: var(--muted); }
+  .card { background: var(--card); border-radius: 12px; padding: 16px; margin: 16px 0; }
+  pre { white-space: pre-wrap; word-break: break-all; background: #0b0f14; border-radius: 8px; padding: 12px; font-size: 0.9rem; color: var(--text); }
+  button { background: var(--accent); color: #0d1117; border: 0; border-radius: 10px; padding: 12px 18px; font-weight: 600; font-size: 1rem; width: 100%; margin-top: 8px; }
+  label { display: block; margin-top: 8px; color: var(--muted); }
+  input { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 8px; border: 1px solid #30363d; background: #0b0f14; color: var(--text); font-size: 1rem; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Authorise the receipt signer</h1>
+  <p>Signs a certificate with the payout wallet that says: this key may sign {{SERVICE}}'s verdict receipts. Clients that pin only the payout wallet then accept receipts from this key, with no package update. Open this page in your wallet's browser (MetaMask mobile: the browser tab).</p>
+
+  <div class="card">
+    <div id="status">Loading the current signer…</div>
+    <label for="from">Valid from (UTC date)</label>
+    <input id="from" type="date">
+    <p>Message to sign:</p>
+    <pre id="msg">…</pre>
+    <button id="sign" disabled>Sign with the payout wallet</button>
+  </div>
+
+  <div class="card" id="result" hidden>
+    <p>Put this value in Render → {{SERVICE}} → Environment as <b>RECEIPT_SIGNER_CERT</b>, save, and let it redeploy:</p>
+    <pre id="cert"></pre>
+    <button id="copy">Copy</button>
+    <p id="who"></p>
+  </div>
+
+  <p>The signature only authorises a signing key for receipts: it moves no funds and approves nothing. After the redeploy, <a href="{{WELL_KNOWN}}" style="color:var(--accent)">the signer page</a> shows the certificate.</p>
+</main>
+<script>
+  const AUTHORITY = "{{AUTHORITY}}";
+  const SERVICE = "{{SERVICE}}";
+  const $ = (id) => document.getElementById(id);
+  let signer = null;
+  const today = new Date().toISOString().slice(0, 10);
+  $("from").value = today;
+  const message = () => `fizzl receipt signer\nservice: ${SERVICE}\nsigner: ${signer}\nvalid_from: ${$("from").value}`;
+  const render = () => { $("msg").textContent = signer ? message() : "…"; };
+  $("from").addEventListener("input", render);
+
+  fetch("{{WELL_KNOWN}}").then((r) => r.json()).then((d) => {
+    const current = (d.signers || []).find((s) => s.status === "current");
+    if (!d.signing || !current) { $("status").innerHTML = '<span class="bad">Signing is off: set RECEIPT_SIGNER_SECRET first.</span>'; return; }
+    signer = current.address;
+    const has = d.certificate && d.certificate.signer === signer;
+    $("status").innerHTML = `Current signer: <b>${signer}</b><br>${has ? '<span class="ok">Already certified (valid from ' + d.certificate.valid_from + ').</span>' : "Not certified yet."}`;
+    $("sign").disabled = false;
+    render();
+  }).catch(() => { $("status").innerHTML = '<span class="bad">Could not load the signer.</span>'; });
+
+  $("sign").addEventListener("click", async () => {
+    if (!window.ethereum) { alert("No wallet found. Open this page in your wallet's browser."); return; }
+    try {
+      const [account] = await window.ethereum.request({ method: "eth_requestAccounts" });
+      const hex = "0x" + Array.from(new TextEncoder().encode(message())).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const signature = await window.ethereum.request({ method: "personal_sign", params: [hex, account] });
+      $("cert").textContent = `${$("from").value}:${signature}`;
+      $("who").innerHTML = account.toLowerCase() === AUTHORITY.toLowerCase()
+        ? '<span class="ok">Signed by the payout wallet.</span>'
+        : `<span class="bad">Signed by ${account}, not the payout wallet ${AUTHORITY}: switch accounts and sign again, or the certificate will be ignored.</span>`;
+      $("result").hidden = false;
+    } catch (err) {
+      alert(`Not signed: ${err.message || err}`);
+    }
+  });
+  $("copy").addEventListener("click", () => navigator.clipboard.writeText($("cert").textContent));
+</script>
+</body>
+</html>

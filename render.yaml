@@ -27,6 +27,8 @@ services:
         sync: false
       - key: RECEIPT_SIGNER_SECRET # signs verdict receipts (src/receipt.js); holds no funds; unset = unsigned answers
         generateValue: true
+      - key: RECEIPT_SIGNER_CERT # payout wallet's certificate for the signing key ("YYYY-MM-DD:0x…", from /sign-receipt-key; optional)
+        sync: false
       - key: X402_TRUST_TXT # x402-trust.com provider verification line (public key; optional)
         sync: false
       - key: USAGE_LOG_REPO

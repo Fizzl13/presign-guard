@@ -136,3 +136,48 @@ test("payment: Solana gives the transfer authority (signer #2 after the fee paye
   assert.match(p.transaction_sha256, /^[0-9a-f]{64}$/);
   assert.equal(svmPayer("!!"), null, "garbage does not throw");
 });
+
+import { certMessage, certValid, AUTHORITY } from "../src/receipt.js";
+import { privateKeyToAccount as pk, generatePrivateKey as gen } from "viem/accounts";
+
+// The payout wallet stand-in that authorises signing keys.
+const authority = pk(gen());
+const certFor = async (signerAddress, validFrom = "2026-09-01", key = authority) =>
+  `${validFrom}:${await key.signMessage({ message: certMessage({ service: "presign-guard", signer: signerAddress, valid_from: validFrom }) })}`;
+
+test("certificate: the payout wallet authorises the key; it rides in every receipt and verifies without pinned signers", async () => {
+  assert.equal(AUTHORITY, "0x6B0F4651eD42893ab58139938175E4a69f175F25", "the payout wallet");
+  const address = createSigner({ RECEIPT_SIGNER_SECRET: SECRET }).address;
+  const env = { RECEIPT_SIGNER_SECRET: SECRET, RECEIPT_AUTHORITY: authority.address, RECEIPT_SIGNER_CERT: await certFor(address) };
+  const signer = createSigner(env);
+  const cert = await signer.certificate();
+  assert.deepEqual({ ...cert, signature: undefined }, { service: "presign-guard", signer: address, valid_from: "2026-09-01", authority: authority.address, signature: undefined });
+  assert.equal(await certValid(cert, { authority: authority.address, service: "presign-guard" }), true);
+  assert.equal(await certValid(cert, { authority: authority.address, service: "x402-doctor" }), false, "bound to the service");
+
+  const signed = await signer.sign({ verdict: "green" }, { route: "GET /v1/token", input: {} });
+  assert.equal(signed.receipt.cert.signer, address);
+  const ok = await verifyReceipt(signed, { authority: authority.address });
+  assert.deepEqual([ok.valid, ok.signer_status], [true, "certified"], "no pinned list needed");
+  const swapped = { ...signed, receipt: { ...signed.receipt, cert: { ...signed.receipt.cert, valid_from: "2020-01-01" } } };
+  assert.equal((await verifyReceipt(swapped, { authority: authority.address })).valid, false, "the certificate is inside the signed bytes");
+});
+
+test("certificate: a rotated key works as soon as it is certified; a wrong, foreign or backdated certificate does not", async () => {
+  const rotated = createSigner({ RECEIPT_SIGNER_SECRET: `${SECRET}-rotated` });
+  const env = (cert) => ({ RECEIPT_SIGNER_SECRET: `${SECRET}-rotated`, RECEIPT_AUTHORITY: authority.address, RECEIPT_SIGNER_CERT: cert });
+
+  const good = await createSigner(env(await certFor(rotated.address))).sign({ verdict: "green" }, { route: "r", input: {} });
+  assert.equal((await verifyReceipt(good, { authority: authority.address })).valid, true);
+
+  const stranger = pk(gen());
+  assert.equal(await createSigner(env(await certFor(rotated.address, "2026-09-01", stranger))).certificate(), null, "signed by someone else: ignored at startup");
+  assert.equal(await createSigner(env(await certFor("0x0000000000000000000000000000000000000001"))).certificate(), null, "for another key: ignored");
+  assert.equal(await createSigner(env("garbage")).certificate(), null);
+
+  const future = await createSigner(env(await certFor(rotated.address, "2999-01-01"))).sign({ verdict: "green" }, { route: "r", input: {} });
+  assert.equal((await verifyReceipt(future, { authority: authority.address })).valid, false, "signatures before valid_from do not count");
+
+  const unsigned = await createSigner({ RECEIPT_SIGNER_SECRET: `${SECRET}-rotated` }).sign({ verdict: "green" }, { route: "r", input: {} });
+  assert.equal(unsigned.receipt.cert, undefined, "no certificate configured: none in the receipt");
+});

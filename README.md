@@ -190,6 +190,17 @@ msg = json.dumps({**answer, "receipt": receipt}, sort_keys=True, separators=(","
 assert Account.recover_message(encode_defunct(text=msg), signature=sig) == answer["receipt"]["signer"]
 ```
 
+**Key rotation without client updates:** the payout wallet (`0x6B0F4651eD42893ab58139938175E4a69f175F25`, the `payTo` of every payment) authorises each signing key with a certificate: a `personal_sign` over
+
+```
+fizzl receipt signer
+service: presign-guard
+signer: <signing key address>
+valid_from: <YYYY-MM-DD>
+```
+
+Set it as `RECEIPT_SIGNER_CERT` (`YYYY-MM-DD:0x<signature>`; the page `/sign-receipt-key` produces it from the wallet's browser). It is checked at startup and carried inside every receipt as `receipt.cert`, so a client that pins only the payout wallet verifies receipts from a new key offline. To rotate: generate a new `RECEIPT_SIGNER_SECRET`, sign a new certificate, move the old address to `RECEIPT_RETIRED_SIGNERS`.
+
 The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it holds no funds and signs nothing but receipts). Without it, answers are unsigned.
 
 ### Not covered
