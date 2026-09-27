@@ -191,7 +191,7 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, tool }) {
   };
 }
 
-function buildServer({ paidWrappers, allowFree }) {
+function buildServer({ paidWrappers, allowFree, signer = null }) {
   const server = new McpServer({ name: "presign-guard", version: VERSION });
 
   server.registerTool(
@@ -260,7 +260,9 @@ function buildServer({ paidWrappers, allowFree }) {
         }
         return paid(async () => {
           try {
-            return text(await tool.run(checked.request, args));
+            const result = await tool.run(checked.request, args);
+            // Signed like the HTTP answers (receipt.js): route "mcp <tool>", input = the tool arguments.
+            return text(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args }) : result);
           } catch (err) {
             return toolError(`could not check: ${err.message}`); // not charged
           }
@@ -272,13 +274,13 @@ function buildServer({ paidWrappers, allowFree }) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, signer = null }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, tool })]));
   const limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
 
   router.post("/mcp", express.json({ limit: "64kb" }), async (req, res) => {
-    const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip) });
+    const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip), signer });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();

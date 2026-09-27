@@ -17,6 +17,9 @@ import { wrapMCPClientWithPayment } from "@x402/mcp";
 import { x402Client } from "@x402/core/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { createMcpRouter, FREE_CALLS_PER_HOUR } from "../src/mcp.js";
+import { createSigner, verifyReceipt } from "../src/receipt.js";
+
+const SIGNER = createSigner({ RECEIPT_SIGNER_SECRET: "mcp-test-secret-that-is-long-enough-0123" });
 
 const BASE = "eip155:8453";
 const SOLANA = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
@@ -108,7 +111,7 @@ before(async () => {
   const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: `http://127.0.0.1:${fac.address().port}` })).register(BASE, new ServerEvmScheme())
     .register(SOLANA, new ServerSvmScheme());
   const app = express();
-  app.use(createMcpRouter({ resourceServer, network: BASE, payTo: PAY_TO, solana: { network: SOLANA, payTo: PAY_TO_SOLANA } }));
+  app.use(createMcpRouter({ resourceServer, network: BASE, payTo: PAY_TO, solana: { network: SOLANA, payTo: PAY_TO_SOLANA }, signer: SIGNER }));
   const s = await new Promise((resolve) => { const x = app.listen(0, "127.0.0.1", () => resolve(x)); });
   servers.push(s);
   baseUrl = `http://127.0.0.1:${s.address().port}`;
@@ -176,6 +179,8 @@ test("paid tools: a real signed Base payment returns the full verdict and settle
   assert.ok(Array.isArray(data.reasons));
   assert.equal(result.paymentMade, true);
   assert.deepEqual([state.verify, state.settle], [1, 1]);
+  const check = await verifyReceipt(data, { signers: SIGNER.signers, route: "mcp presign_check", input: APPROVAL });
+  assert.deepEqual([check.valid, check.input_matches], [true, true], "paid MCP verdicts are signed like the HTTP ones");
   const explained = await client.callTool("presign_check_explain", { ...APPROVAL, lang: "nl" });
   const e = JSON.parse(explained.content[0].text);
   assert.deepEqual([e.verdict, e.explanation.lang, e.explanation.text], ["green", "nl", "Plain explanation."]);
