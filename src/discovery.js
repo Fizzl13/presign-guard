@@ -37,6 +37,22 @@ export const TOKEN_INPUT_SCHEMA = {
   required: ["chain", "address"],
 };
 
+// Signed verdicts (receipt.js): present when the service has a signer configured.
+const RECEIPT_SCHEMA = {
+  type: "object",
+  description: "Signature over this whole answer (without receipt.signature), so the verdict can be verified later: EIP-191 personal_sign over canonical JSON (sorted keys, compact, ASCII-escaped). Signer addresses: /.well-known/presign-guard-signer.json; free check: POST /v1/verify.",
+  properties: {
+    request_id: { type: "string" },
+    route: { type: "string" },
+    input_sha256: { type: "string", description: "sha256 of canonical JSON {route, input}: your body (POST) or query parameters (GET)" },
+    signed_at: { type: "string" },
+    signer: { type: "string" },
+    algorithm: { type: "string", enum: ["eip191-canonical-json-v1"] },
+    signature: { type: "string" },
+  },
+  required: ["request_id", "route", "input_sha256", "signed_at", "signer", "algorithm", "signature"],
+};
+
 const TOKEN_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -58,6 +74,7 @@ const TOKEN_OUTPUT_SCHEMA = {
     },
     sources: { type: "array", items: { type: "string" } },
     checkedAt: { type: "string" },
+    receipt: RECEIPT_SCHEMA,
   },
   required: ["verdict", "grade", "one_liner", "reasons"],
 };
@@ -120,6 +137,7 @@ const APPROVALS_OUTPUT_SCHEMA = {
     },
     revokeUrl: { type: "string" },
     checkedAt: { type: "string" },
+    receipt: RECEIPT_SCHEMA,
   },
   required: ["verdict", "grade", "one_liner", "reasons", "approvals"],
 };
@@ -188,6 +206,7 @@ const OUTPUT_SCHEMA = {
     },
     subject: { type: "object" },
     explanation: { type: "object", properties: { lang: { type: "string" }, text: { type: "string" } } },
+    receipt: RECEIPT_SCHEMA,
   },
   required: ["verdict", "reasons"],
 };
@@ -302,9 +321,9 @@ export function openApi(origin, network, tokenNetworks = [network]) {
     openapi: "3.1.0",
     info: {
       title: "presign-guard",
-      version: "2.3.0",
-      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, and GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke.",
-      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke.",
+      version: "2.4.0",
+      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, and GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke. Every paid answer carries a signed receipt (EIP-191) binding the verdict to your request, verifiable later.",
+      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke. Keep the receipt field of each answer: it is signed by the address at /.well-known/presign-guard-signer.json and proves which verdict you got for which request; POST /v1/verify checks one for free.",
     },
     servers: [{ url: origin }],
     paths,
@@ -318,7 +337,8 @@ export function wellKnown(origin) {
     x402Version: 2,
     kind: "resource-server",
     name: "presign-guard",
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM transactions, approvals and signatures, token verdicts for Solana and EVM tokens, and wallet approval audits.",
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM transactions, approvals and signatures, token verdicts for Solana and EVM tokens, and wallet approval audits. Every paid answer is signed (verifiable receipt).",
+    signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
       { url: origin + TOKEN_ROUTE.path, method: "GET", description: TOKEN_ROUTE.summary },
