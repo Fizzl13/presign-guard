@@ -110,7 +110,7 @@ app.get("/.well-known/presign-guard-signer.json", async (_req, res) => res.json(
   certificate_format: "personal_sign by the authority over: fizzl receipt signer\\nservice: <service>\\nsigner: <address>\\nvalid_from: <YYYY-MM-DD>",
   sign_certificate: `${PUBLIC_URL}/sign-receipt-key`,
   algorithm: ALGORITHM,
-  canonicalization: "JSON with keys sorted at every level, no whitespace, non-ASCII as \\uXXXX (Python: json.dumps(obj, sort_keys=True, separators=(',', ':'), ensure_ascii=True))",
+  canonicalization: "js-json-stringify-sorted-utf16-ascii-v1: keys sorted by UTF-16 code units at every level, no whitespace, every code unit from U+007F up as lowercase \\uXXXX, numbers as JavaScript's JSON.stringify writes them (1.0 -> 1, 0.000001 -> 0.000001), UTF-8 bytes. Python's json.dumps matches only for ASCII keys and integers; Python equivalent: https://github.com/Fizzl13/presign-guard/blob/main/examples/canonical.py",
   input_sha256: "sha256 of the canonical JSON of {route, input}: route like 'POST /v1/check' or 'mcp presign_check'; input = the JSON body (POST), the query parameters as strings (GET) or the tool arguments (MCP)",
   verify: `${PUBLIC_URL}/v1/verify`,
 }));

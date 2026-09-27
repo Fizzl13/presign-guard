@@ -3,9 +3,11 @@
 // which verdict was delivered for which request, not only that money moved.
 //
 // What is signed: the whole response body with `receipt.signature` left out,
-// serialised as canonical JSON (keys sorted at every level, no whitespace,
-// non-ASCII escaped as \uXXXX, the same bytes as Python's
-// json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True)),
+// serialised as canonical JSON, profile js-json-stringify-sorted-utf16-ascii-v1:
+// keys sorted by UTF-16 code units at every level, no whitespace, every code
+// unit from U+007F up escaped as lowercase \uXXXX, numbers as JSON.stringify
+// writes them, UTF-8 bytes. Python's json.dumps matches only for ASCII keys and
+// integers; examples/canonical.py is the Python equivalent,
 // signed with EIP-191 personal_sign. The receipt holds a request id, the route,
 // a SHA-256 of the request input (recomputable by the buyer), the time and the
 // signer, plus the payment (payer and EIP-3009 nonce, see paymentOf), so the

@@ -164,7 +164,7 @@ Every paid answer (HTTP and MCP) carries a `receipt` signed by presign-guard, so
 }
 ```
 
-- **What is signed:** the whole response with `receipt.signature` left out, as canonical JSON (keys sorted at every level, no whitespace, non-ASCII as `\uXXXX`: the same bytes as Python's `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`), with EIP-191 `personal_sign`. Flipping the verdict, or moving it to another request id, breaks the signature.
+- **What is signed:** the whole response with `receipt.signature` left out, as canonical JSON (profile `js-json-stringify-sorted-utf16-ascii-v1`: keys sorted by UTF-16 code units at every level, no whitespace, every code unit from U+007F up escaped as lowercase `\uXXXX`, numbers spelled as JavaScript's `JSON.stringify` writes them — `1.0` → `1`, `0.000001` → `0.000001`, `1e21` → `1e+21` — then UTF-8 bytes). Python's `json.dumps` matches only for ASCII keys and integers (it writes `1.0` and `1e-06`); use [`examples/canonical.py`](examples/canonical.py), with EIP-191 `personal_sign`. Flipping the verdict, or moving it to another request id, breaks the signature.
 - **`input_sha256`** is the SHA-256 of the canonical JSON of `{"route": …, "input": …}`, where `input` is your JSON body (POST), your query parameters as strings (GET), or the tool arguments (MCP, route `mcp <tool>`). Recompute it to prove the verdict answers *your* request.
 - **`payment`** ties the verdict to the payment that bought it, from your x402 payment payload. On Base: the payer and the EIP-3009 nonce, so anyone can find the settlement on-chain as the USDC contract's `AuthorizationUsed(payer, nonce)` event without trusting us. On Solana: the payer and a SHA-256 of the signed transaction you sent (the facilitator adds its fee-payer signature at settlement, so the final transaction id is not known when we sign).
 - **Signer addresses:** [`/.well-known/presign-guard-signer.json`](https://presign-guard.onrender.com/.well-known/presign-guard-signer.json). Retired signers stay listed with their dates, so old receipts keep verifying.
@@ -179,15 +179,12 @@ const signer = await recoverMessageAddress({ message: canonicalJson({ ...answer,
 // signer must equal answer.receipt.signer and be listed in /.well-known/presign-guard-signer.json
 ```
 
-Python (eth-account):
+Python (eth-account), with [`examples/canonical.py`](examples/canonical.py) (not `json.dumps`, which spells numbers differently):
 
 ```python
-import json
-from eth_account import Account
-from eth_account.messages import encode_defunct
-receipt = dict(answer["receipt"]); sig = receipt.pop("signature")
-msg = json.dumps({**answer, "receipt": receipt}, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-assert Account.recover_message(encode_defunct(text=msg), signature=sig) == answer["receipt"]["signer"]
+from canonical import verify_receipt
+assert verify_receipt(answer) == answer["receipt"]["signer"]
+# and the signer must be listed in /.well-known/presign-guard-signer.json (or certified by the payout wallet)
 ```
 
 **Key rotation without client updates:** the payout wallet (`0x6B0F4651eD42893ab58139938175E4a69f175F25`, the `payTo` of every payment) authorises each signing key with a certificate: a `personal_sign` over
