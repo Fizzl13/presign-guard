@@ -156,6 +156,7 @@ Every paid answer (HTTP and MCP) carries a `receipt` signed by presign-guard, so
   "request_id": "5f0c…",
   "route": "POST /v1/check",
   "input_sha256": "9a1e…",
+  "payment": { "network": "eip155:8453", "asset": "0x8335…", "amount": "10000", "pay_to": "0x6B0F…", "payer": "0x0fD3…", "nonce": "0x5c1d…", "proof": "eip3009" },
   "signed_at": "2026-09-27T09:30:00.000Z",
   "signer": "0x…",
   "algorithm": "eip191-canonical-json-v1",
@@ -165,6 +166,7 @@ Every paid answer (HTTP and MCP) carries a `receipt` signed by presign-guard, so
 
 - **What is signed:** the whole response with `receipt.signature` left out, as canonical JSON (keys sorted at every level, no whitespace, non-ASCII as `\uXXXX`: the same bytes as Python's `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`), with EIP-191 `personal_sign`. Flipping the verdict, or moving it to another request id, breaks the signature.
 - **`input_sha256`** is the SHA-256 of the canonical JSON of `{"route": …, "input": …}`, where `input` is your JSON body (POST), your query parameters as strings (GET), or the tool arguments (MCP, route `mcp <tool>`). Recompute it to prove the verdict answers *your* request.
+- **`payment`** ties the verdict to the payment that bought it, from your x402 payment payload. On Base: the payer and the EIP-3009 nonce, so anyone can find the settlement on-chain as the USDC contract's `AuthorizationUsed(payer, nonce)` event without trusting us. On Solana: the payer and a SHA-256 of the signed transaction you sent (the facilitator adds its fee-payer signature at settlement, so the final transaction id is not known when we sign).
 - **Signer addresses:** [`/.well-known/presign-guard-signer.json`](https://presign-guard.onrender.com/.well-known/presign-guard-signer.json). Retired signers stay listed with their dates, so old receipts keep verifying.
 - **Check one for free:** `POST /v1/verify` with `{"response": <the signed answer>, "route": "POST /v1/check", "input": <what you sent>}` returns `valid`, `signer`, `known_signer` and `input_matches`.
 
