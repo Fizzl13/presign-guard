@@ -587,7 +587,7 @@ test("origin reputation: a listed phishing site is red, credited to every list t
   const hit = r.body.reasons.find((x) => x.code === "PHISHING_SITE");
   assert.deepEqual(hit.details.flaggedBy, ["pg1", "goplus"]);
   assert.equal(hit.details.matchType, "exact");
-  assert.ok(r.body.sources.includes("pg1") && r.body.sources.includes("metamask"));
+  assert.ok(r.body.sources.includes("pg1"));
   // GoPlus alone is enough for red.
   const gp = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "only-goplus-knows.com" });
   assert.equal(gp.body.verdict, "red");
@@ -603,15 +603,29 @@ test("origin reputation: a lookalike is orange and names the brand; the real bra
   assert.ok(!codes(real).includes("LOOKALIKE_SITE"));
 });
 
-test("origin reputation: a MetaMask block is orange (scanner false positives), not red", async () => {
+test("origin reputation: the MetaMask scanner is off by default", async () => {
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "x402-shop.example" });
-  const hit = r.body.reasons.find((x) => x.code === "WALLET_BLOCKS_SITE");
-  assert.equal(hit.severity, "orange");
-  assert.deepEqual(hit.details, { wallet: "MetaMask", action: "BLOCK", risks: [{ type: "DRAINER", severity: "CRITICAL" }] });
-  assert.notEqual(r.body.verdict, "red");
+  assert.ok(!codes(r).includes("WALLET_BLOCKS_SITE"));
+  assert.ok(!r.body.sources.includes("metamask"));
+  assert.ok(!codes(r).includes("SITE_REPUTATION_UNAVAILABLE"), "off is not unavailable");
+});
+
+test("origin reputation: with METAMASK_SCAN=on a MetaMask block is orange (scanner false positives), not red", async () => {
+  process.env.METAMASK_SCAN = "on";
+  try {
+    const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "x402-shop.example" });
+    const hit = r.body.reasons.find((x) => x.code === "WALLET_BLOCKS_SITE");
+    assert.equal(hit.severity, "orange");
+    assert.deepEqual(hit.details, { wallet: "MetaMask", action: "BLOCK", risks: [{ type: "DRAINER", severity: "CRITICAL" }] });
+    assert.notEqual(r.body.verdict, "red");
+    assert.ok(r.body.sources.includes("metamask"));
+  } finally {
+    delete process.env.METAMASK_SCAN;
+  }
 });
 
 test("origin reputation: an unavailable source is info, never a clean result; ORIGIN_REPUTATION=off skips it", async () => {
+  process.env.METAMASK_SCAN = "on";
   metamaskDown = true;
   reputationDown = true;
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "sourcesdown.example" });
@@ -623,6 +637,7 @@ test("origin reputation: an unavailable source is info, never a clean result; OR
     assert.ok(!codes(off).some((c) => /PHISHING_SITE|LOOKALIKE_SITE|WALLET_BLOCKS_SITE|SITE_REPUTATION/.test(c)));
   } finally {
     delete process.env.ORIGIN_REPUTATION;
+    delete process.env.METAMASK_SCAN;
   }
 });
 
