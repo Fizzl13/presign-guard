@@ -3,6 +3,10 @@
 // eth-phishing-detect list: it blocks domains that are on no list, with false
 // positives (browser x402 payment pages get flagged as drainers), so a block is
 // orange, never red. One GET per host, cached for an hour; null when unavailable.
+//
+// Off by default: the endpoint is internal to MetaMask (no published API or
+// licence; MetaMask's terms cover its APIs, and Blockaid sells this verdict as a
+// paid API). METAMASK_SCAN=on turns it on, e.g. once Blockaid grants access.
 
 const SCAN_URL = "https://dapp-scanning.api.cx.metamask.io/scan?url=";
 const TTL_MS = 60 * 60 * 1000;
@@ -13,7 +17,7 @@ export function resetSiteScan() { cache.clear(); }
 
 // { action: "BLOCK" | "WARN" | "NONE" | ..., risks: [{ type, severity }] } or null.
 export async function metamaskSiteScan(host) {
-  if (process.env.METAMASK_SCAN_DISABLED === "1") return null;
+  if (process.env.METAMASK_SCAN !== "on") return null;
   const hit = cache.get(host);
   if (hit && hit.expires > Date.now()) return hit.value;
   let value = null;

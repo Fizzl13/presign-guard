@@ -672,7 +672,7 @@ export async function analyze(req) {
         add("WALLET_BLOCKS_SITE", "orange", req.origin, { wallet: "MetaMask", action: scan.action, risks: scan.risks });
       }
     }
-    const unavailable = [...(pg1Rep ? [] : ["pg1"]), ...(gpPhish ? [] : ["goplus"]), ...(scan ? [] : ["metamask"])];
+    const unavailable = [...(pg1Rep ? [] : ["pg1"]), ...(gpPhish ? [] : ["goplus"]), ...(scan || process.env.METAMASK_SCAN !== "on" ? [] : ["metamask"])];
     if (unavailable.length) add("SITE_REPUTATION_UNAVAILABLE", "info", req.origin, { sources: unavailable });
   }
 
