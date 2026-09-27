@@ -51,6 +51,23 @@ const DOMAINS = {
   "claim-usdc-drop.xyz": { available: true, domain: "claim-usdc-drop.xyz", registration_date: "2026-09-22T10:00:00Z", age_days: 3 },
   "fizzl.eu": { available: false, domain: "fizzl.eu", reason: "No RDAP server registered for the '.eu' TLD in the IANA bootstrap file." },
 };
+// check_hostname_reputation, shaped like the live answers.
+const REPUTATION = {
+  "002271coinbase.com": { verdict: "listed", sources: [{ name: "MetaMask eth-phishing-detect", match_type: "exact" }], lookalike_of: null },
+  "metamask-login.com": { verdict: "lookalike", sources: [{ name: "PG1 lookalike detection", match_type: "keyword" }], lookalike_of: "metamask.io" },
+  "metamask.io": { verdict: "allowlisted", sources: [{ name: "MetaMask eth-phishing-detect", match_type: "exact" }], lookalike_of: null },
+};
+const GOPLUS_PHISHING = new Set(["002271coinbase.com", "only-goplus-knows.com"]);
+const METAMASK_BLOCKS = new Set(["x402-shop.example"]);
+let metamaskDown = false;
+let reputationDown = false;
+function mockMetamask(url) {
+  if (metamaskDown) return new Response("down", { status: 503 });
+  const host = new URL(decodeURIComponent(new URL(url).searchParams.get("url"))).hostname;
+  const block = METAMASK_BLOCKS.has(host);
+  return new Response(JSON.stringify({ domainName: host, recommendedAction: block ? "BLOCK" : "NONE", riskFactors: block ? [{ type: "DRAINER", severity: "CRITICAL", message: "Domain identified as a wallet drainer." }] : null, verified: false, status: "COMPLETE" }));
+}
+
 async function mockPg1(opts) {
   pg1Calls++;
   pg1LastKey = opts.headers["x-api-key"];
@@ -67,6 +84,10 @@ async function mockPg1(opts) {
     const listed = params.arguments.address.toLowerCase() === SANCTIONED;
     out = { address: params.arguments.address, listed, list_last_synced: "2026-09-25T20:10:41Z",
       matches: listed ? [{ sdn_name: "LAZARUS GROUP", currency: "ETH", programs: ["DPRK3"], sdn_uid: "27307" }] : [] };
+  } else if (params.name === "check_hostname_reputation") {
+    if (reputationDown) return new Response("db unreachable", { status: 503 });
+    const h = params.arguments.hostname;
+    out = { hostname: h, sources: [], lookalike_of: null, verdict: "not_listed", ...REPUTATION[h], list_synced_at: "2026-09-27T02:21:33Z" };
   } else {
     const d = params.arguments.domain;
     out = DOMAINS[d] ?? { available: false, domain: d, reason: `RDAP server responded with 404 for '${d}'.` };
@@ -106,6 +127,10 @@ function mockGoplus(url) {
   goplusCalls++;
   if (goplusDown) return new Response("oops", { status: 502 });
   const u = String(url);
+  if (u.includes("/phishing_site")) {
+    const host = new URL(new URL(u).searchParams.get("url")).hostname;
+    return new Response(JSON.stringify({ code: 1, message: "OK", result: { website_contract_security: [], phishing_site: GOPLUS_PHISHING.has(host) ? 1 : 0 } }));
+  }
   if (u.includes("/token_security/")) {
     const address = new URL(u).searchParams.get("contract_addresses").toLowerCase();
     const result = TOKEN_DATA[address] ? { [address]: TOKEN_DATA[address] } : {};
@@ -133,6 +158,7 @@ before(async () => {
     if (u.includes("gopluslabs")) return mockGoplus(u);
     if (u.includes("api.anthropic.com")) return mockClaude();
     if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
+    if (u.includes("dapp-scanning.api.cx.metamask.io")) return mockMetamask(u);
     if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) return mockRpc(opts);
     return realFetch(url, opts);
   };
@@ -142,7 +168,7 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.close(); globalThis.fetch = realFetch; });
-beforeEach(() => { goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; pg1RateLimited = false; pg1FailNext = 0; });
+beforeEach(() => { metamaskDown = false; reputationDown = false; goplusDown = false; claudeDown = false; rpcDown = false; goplusCalls = 0; pg1Down = false; pg1Calls = 0; pg1RateLimited = false; pg1FailNext = 0; });
 
 async function check(body, path = "/v1/check") {
   const res = await realFetch(base + path, {
@@ -553,6 +579,51 @@ test("origin: an unregistered domain is orange; a TLD without RDAP is unknown, n
   const eu = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "fizzl.eu" });
   assert.equal(eu.body.verdict, "green");
   assert.ok(codes(eu).includes("DOMAIN_AGE_UNKNOWN"));
+});
+
+test("origin reputation: a listed phishing site is red, credited to every list that has it", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "https://002271coinbase.com/claim" });
+  assert.equal(r.body.verdict, "red");
+  const hit = r.body.reasons.find((x) => x.code === "PHISHING_SITE");
+  assert.deepEqual(hit.details.flaggedBy, ["pg1", "goplus"]);
+  assert.equal(hit.details.matchType, "exact");
+  assert.ok(r.body.sources.includes("pg1") && r.body.sources.includes("metamask"));
+  // GoPlus alone is enough for red.
+  const gp = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "only-goplus-knows.com" });
+  assert.equal(gp.body.verdict, "red");
+  assert.deepEqual(gp.body.reasons.find((x) => x.code === "PHISHING_SITE").details.flaggedBy, ["goplus"]);
+});
+
+test("origin reputation: a lookalike is orange and names the brand; the real brand is allowlisted context", async () => {
+  const fake = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "metamask-login.com" });
+  assert.equal(fake.body.verdict, "orange");
+  assert.equal(fake.body.reasons.find((x) => x.code === "LOOKALIKE_SITE").details.lookalikeOf, "metamask.io");
+  const real = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "metamask.io" });
+  assert.ok(codes(real).includes("SITE_ALLOWLISTED"));
+  assert.ok(!codes(real).includes("LOOKALIKE_SITE"));
+});
+
+test("origin reputation: a MetaMask block is orange (scanner false positives), not red", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "x402-shop.example" });
+  const hit = r.body.reasons.find((x) => x.code === "WALLET_BLOCKS_SITE");
+  assert.equal(hit.severity, "orange");
+  assert.deepEqual(hit.details, { wallet: "MetaMask", action: "BLOCK", risks: [{ type: "DRAINER", severity: "CRITICAL" }] });
+  assert.notEqual(r.body.verdict, "red");
+});
+
+test("origin reputation: an unavailable source is info, never a clean result; ORIGIN_REPUTATION=off skips it", async () => {
+  metamaskDown = true;
+  reputationDown = true;
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "sourcesdown.example" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body.reasons.find((x) => x.code === "SITE_REPUTATION_UNAVAILABLE").details.sources, ["pg1", "metamask"]);
+  process.env.ORIGIN_REPUTATION = "off";
+  try {
+    const off = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "002271coinbase.com" });
+    assert.ok(!codes(off).some((c) => /PHISHING_SITE|LOOKALIKE_SITE|WALLET_BLOCKS_SITE|SITE_REPUTATION/.test(c)));
+  } finally {
+    delete process.env.ORIGIN_REPUTATION;
+  }
 });
 
 test("origin: localhost and IPs are not looked up; junk is a 400 before any lookup", async () => {

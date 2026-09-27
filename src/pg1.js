@@ -1,6 +1,8 @@
 // PG1 (pg1-ai-agent.vercel.app), a free MCP server built on public data:
 // - check_wallet_sanctions: the address against the OFAC SDN list (US Treasury, synced daily).
 // - check_domain_age: RDAP registration age of a domain.
+// - check_hostname_reputation: MetaMask's eth-phishing-detect block/allowlist
+//   plus PG1's lookalike detection (synced daily).
 // Used as an extra source, credited as "pg1" in `sources`. When PG1 is slow or down,
 // the check goes on without it and says so (info), never a 503: GoPlus also carries
 // a sanctions flag, and a missing domain age is not a warning.
@@ -9,6 +11,7 @@ const PG1_URL = () => process.env.PG1_MCP_URL || "https://pg1-ai-agent.vercel.ap
 const PG1_TIMEOUT_MS = 3000;
 const SANCTIONS_TTL_MS = 60 * 60 * 1000;      // the list syncs daily
 const DOMAIN_TTL_MS = 24 * 60 * 60 * 1000;   // PG1 caches RDAP answers for 24 h too
+const REPUTATION_TTL_MS = 60 * 60 * 1000;    // the lists sync daily; new phishing sites appear fast
 const RATE_LIMIT_PAUSE_MS = 5 * 60 * 1000;
 export const NEW_DOMAIN_DAYS = 30;
 
@@ -138,6 +141,17 @@ export function domainAge(host) {
     const reason = String(r.reason ?? "");
     // RDAP 404 = the registry has no such domain; anything else = unknown (e.g. no RDAP for the TLD).
     return { domain: r.domain ?? host, found: false, unregistered: /\b404\b/.test(reason), reason: reason.slice(0, 200) };
+  });
+}
+
+// { verdict: "listed" | "lookalike" | "allowlisted" | "not_listed", matchType, lookalikeOf, listSynced } or null.
+// not_listed means "not on the lists", never "safe"; PG1 errors instead of a false not_listed.
+export function hostnameReputation(host) {
+  return cached(`reputation:${host}`, REPUTATION_TTL_MS, async () => {
+    const r = await callTool("check_hostname_reputation", { hostname: host });
+    if (!r || !["listed", "lookalike", "allowlisted", "not_listed"].includes(r.verdict)) return null;
+    const source = Array.isArray(r.sources) ? r.sources[0] : null;
+    return { verdict: r.verdict, matchType: source?.match_type ?? null, lookalikeOf: r.lookalike_of ?? null, listSynced: r.list_synced_at ?? null };
   });
 }
 
