@@ -19,7 +19,8 @@ import {
   approvalsBazaarExtension, approvalsServiceMetadata,
 } from "./discovery.js";
 import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem";
-import { screenSanctions, domainAge, originHost, NEW_DOMAIN_DAYS } from "./pg1.js";
+import { screenSanctions, domainAge, hostnameReputation, originHost, NEW_DOMAIN_DAYS } from "./pg1.js";
+import { metamaskSiteScan } from "./site-scan.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -140,6 +141,21 @@ async function goplus(path, { version = "v1", emptyOk = false } = {}) {
   }
   return { result: body.result, partial: body.code === 2 };
 }
+
+// GoPlus phishing_site for the origin: { phishing: boolean } or null when unavailable.
+function goplusPhishing(host) {
+  return cached(`phishing:${host}`, async () => {
+    try {
+      const { result } = await goplus(`/phishing_site?url=${encodeURIComponent(`https://${host}`)}`);
+      return result.phishing_site === undefined ? null : { phishing: Number(result.phishing_site) === 1 };
+    } catch {
+      return null;
+    }
+  });
+}
+
+// Phishing, lookalike and wallet-block checks on the origin; ORIGIN_REPUTATION=off disables them.
+const originReputationOn = () => process.env.ORIGIN_REPUTATION !== "off";
 
 // ---------- chain RPC ----------
 
@@ -533,6 +549,11 @@ export async function analyze(req) {
     Promise.all([...subjects].map(async (address) => [address, await screenSanctions(address)])),
     req.origin ? domainAge(req.origin) : Promise.resolve(undefined),
   ]);
+  // The origin against phishing lists (PG1: MetaMask eth-phishing-detect + lookalikes;
+  // GoPlus phishing_site) and MetaMask's site scanner; each null when unavailable.
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
 
   const lookups = await Promise.all([...subjects].map(async (address) => {
     const [a, c] = await Promise.all([
@@ -628,6 +649,33 @@ export async function analyze(req) {
     }
   }
 
+  let metamaskUsed = false;
+  const rep = await reputation;
+  if (rep) {
+    const [pg1Rep, gpPhish, scan] = rep;
+    if (pg1Rep) pg1Used = true;
+    const flaggedBy = [...(pg1Rep?.verdict === "listed" ? ["pg1"] : []), ...(gpPhish?.phishing ? ["goplus"] : [])];
+    if (flaggedBy.length) {
+      add("PHISHING_SITE", "red", req.origin, {
+        flaggedBy,
+        ...(pg1Rep?.verdict === "listed" && { list: "MetaMask eth-phishing-detect", matchType: pg1Rep.matchType, listSynced: pg1Rep.listSynced }),
+        ...(pg1Rep?.lookalikeOf && { lookalikeOf: pg1Rep.lookalikeOf }),
+      });
+    } else if (pg1Rep?.verdict === "lookalike") {
+      add("LOOKALIKE_SITE", "orange", req.origin, { lookalikeOf: pg1Rep.lookalikeOf, listSynced: pg1Rep.listSynced });
+    } else if (pg1Rep?.verdict === "allowlisted") {
+      add("SITE_ALLOWLISTED", "info", req.origin, { list: "MetaMask eth-phishing-detect" });
+    }
+    if (scan) {
+      metamaskUsed = true;
+      if (scan.action === "BLOCK" || (scan.action && scan.action !== "NONE")) {
+        add("WALLET_BLOCKS_SITE", "orange", req.origin, { wallet: "MetaMask", action: scan.action, risks: scan.risks });
+      }
+    }
+    const unavailable = [...(pg1Rep ? [] : ["pg1"]), ...(gpPhish ? [] : ["goplus"]), ...(scan ? [] : ["metamask"])];
+    if (unavailable.length) add("SITE_REPUTATION_UNAVAILABLE", "info", req.origin, { sources: unavailable });
+  }
+
   if (req.revoke) add("REVOKES_APPROVAL", "info", req.revokedSpender ?? req.target);
 
   for (const g of req.grants) {
@@ -700,7 +748,7 @@ export async function analyze(req) {
       value: req.value.toString(),
     },
     scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). Not covered: eth_sign/personal_sign messages and transaction simulation.",
-    sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : [])],
+    sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : [])],
     checkedAt: new Date().toISOString(),
   };
 }
