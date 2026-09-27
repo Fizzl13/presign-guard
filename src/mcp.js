@@ -21,6 +21,7 @@ import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { parseRequest, analyze, explain } from "./presign-guard.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
 import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
+import { paymentOf } from "./receipt.js";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, INPUT_SCHEMA, INPUT_EXAMPLE, TOKEN_INPUT_SCHEMA, TOKEN_INPUT_EXAMPLE,
   APPROVALS_INPUT_SCHEMA, APPROVALS_INPUT_EXAMPLE, serviceMetadata, tokenServiceMetadata, approvalsServiceMetadata,
@@ -262,7 +263,8 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
           try {
             const result = await tool.run(checked.request, args);
             // Signed like the HTTP answers (receipt.js): route "mcp <tool>", input = the tool arguments.
-            return text(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args }) : result);
+            const payment = paymentOf(extra && extra._meta && extra._meta["x402/payment"]);
+            return text(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment }) : result);
           } catch (err) {
             return toolError(`could not check: ${err.message}`); // not charged
           }

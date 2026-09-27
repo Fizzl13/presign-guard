@@ -96,3 +96,43 @@ test("without a signer the middleware does nothing", async () => {
     server.close();
   }
 });
+
+import { paymentOf, paymentFromHeaders, svmPayer, base58 } from "../src/receipt.js";
+import { getBase58Decoder } from "@solana/kit";
+
+test("payment: EVM EIP-3009 gives payer, nonce and amount; the receipt signs it", async () => {
+  const payload = {
+    x402Version: 2,
+    accepted: { scheme: "exact", network: "eip155:8453", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", amount: "10000", payTo: "0x6B0F4651eD42893ab58139938175E4a69f175F25" },
+    payload: { signature: "0x11", authorization: { from: "0x0fD3D46E688855B24536df33BBa3dFa35b67445C", to: "0x6B0F4651eD42893ab58139938175E4a69f175F25", value: "10000", validAfter: "0", validBefore: "9", nonce: "0xabc" } },
+  };
+  assert.deepEqual(paymentOf(payload), { network: "eip155:8453", asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", amount: "10000", pay_to: "0x6B0F4651eD42893ab58139938175E4a69f175F25", payer: "0x0fD3D46E688855B24536df33BBa3dFa35b67445C", nonce: "0xabc", proof: "eip3009" });
+  const header = Buffer.from(JSON.stringify(payload)).toString("base64");
+  assert.equal(paymentFromHeaders({ "payment-signature": header }).nonce, "0xabc");
+  assert.equal(paymentFromHeaders({ "x-payment": header }).payer, "0x0fD3D46E688855B24536df33BBa3dFa35b67445C", "v1 header name too");
+  assert.equal(paymentFromHeaders({}), null);
+  assert.equal(paymentFromHeaders({ "payment-signature": "not json" }), null);
+
+  const signer = createSigner({ RECEIPT_SIGNER_SECRET: SECRET });
+  const signed = await signer.sign({ verdict: "green" }, { route: "GET /v1/token", input: {}, payment: paymentOf(payload) });
+  assert.equal(signed.receipt.payment.nonce, "0xabc");
+  assert.equal((await verifyReceipt(signed, { signers: signer.signers })).valid, true);
+  const swapped = { ...signed, receipt: { ...signed.receipt, payment: { ...signed.receipt.payment, payer: "0x0000000000000000000000000000000000000001" } } };
+  assert.equal((await verifyReceipt(swapped, { signers: signer.signers })).valid, false, "the payment is inside the signed bytes");
+});
+
+test("payment: Solana gives the transfer authority (signer #2 after the fee payer) and a hash of the transaction", () => {
+  const feePayer = Buffer.alloc(32, 7);
+  const authority = Buffer.from(Array.from({ length: 32 }, (_, i) => i + 1));
+  const other = Buffer.alloc(32, 9);
+  // wire format: 2 signatures, v0 prefix, header [2 required, 0, 1], 3 account keys
+  const tx = Buffer.concat([Buffer.from([2]), Buffer.alloc(128), Buffer.from([0x80, 2, 0, 1, 3]), feePayer, authority, other, Buffer.alloc(40)]);
+  const expected = getBase58Decoder().decode(authority);
+  assert.equal(base58(authority), expected, "base58 matches @solana/kit");
+  assert.equal(svmPayer(tx.toString("base64")), expected);
+  const p = paymentOf({ x402Version: 2, accepted: { scheme: "exact", network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", amount: "10000", asset: "EPjF", payTo: "ATWJ" }, payload: { transaction: tx.toString("base64") } });
+  assert.equal(p.payer, expected);
+  assert.equal(p.proof, "svm-transaction");
+  assert.match(p.transaction_sha256, /^[0-9a-f]{64}$/);
+  assert.equal(svmPayer("!!"), null, "garbage does not throw");
+});

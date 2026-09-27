@@ -181,6 +181,8 @@ test("paid tools: a real signed Base payment returns the full verdict and settle
   assert.deepEqual([state.verify, state.settle], [1, 1]);
   const check = await verifyReceipt(data, { signers: SIGNER.signers, route: "mcp presign_check", input: APPROVAL });
   assert.deepEqual([check.valid, check.input_matches], [true, true], "paid MCP verdicts are signed like the HTTP ones");
+  assert.equal(data.receipt.payment.payer, account.address, "the receipt names who paid");
+  assert.match(data.receipt.payment.nonce, /^0x[0-9a-f]{64}$/);
   const explained = await client.callTool("presign_check_explain", { ...APPROVAL, lang: "nl" });
   const e = JSON.parse(explained.content[0].text);
   assert.deepEqual([e.verdict, e.explanation.lang, e.explanation.text], ["green", "nl", "Plain explanation."]);

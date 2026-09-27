@@ -8,8 +8,9 @@
 // json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True)),
 // signed with EIP-191 personal_sign. The receipt holds a request id, the route,
 // a SHA-256 of the request input (recomputable by the buyer), the time and the
-// signer, so the verdict cannot be moved to another request or flipped without
-// breaking the signature.
+// signer, plus the payment (payer and EIP-3009 nonce, see paymentOf), so the
+// verdict cannot be moved to another request or flipped without breaking the
+// signature, and anyone can find the on-chain payment behind it.
 //
 // The key comes from RECEIPT_SIGNER_SECRET: any long random string (Render's
 // "Generate" button), hashed into a private key. It holds no funds and signs
@@ -43,6 +44,66 @@ export const sha256 = (s) => createHash("sha256").update(s).digest("hex");
 // What the buyer sent, hashed the same way on both sides.
 export const inputHash = (route, input) => sha256(canonicalJson({ route, input: input ?? {} }));
 
+// The payment behind a paid answer, from the x402 payment payload (the
+// PAYMENT-SIGNATURE / X-PAYMENT header, or _meta["x402/payment"] over MCP):
+// - EVM (EIP-3009): payer and nonce. The settlement is the asset contract's
+//   AuthorizationUsed(payer, nonce) event, so anyone can find the on-chain
+//   transfer that paid for this answer without trusting us.
+// - Solana: payer (the transfer authority) and a SHA-256 of the signed
+//   transaction the client sent; the facilitator adds the fee-payer signature
+//   when it settles, so the final transaction id is not known yet here.
+const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+export function base58(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let out = "";
+  while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; out = "1" + out; }
+  return out;
+}
+
+// The transfer authority of a partially signed Solana transaction: signer #2
+// after the facilitator's fee payer (x402 exact on Solana).
+export function svmPayer(base64Tx) {
+  try {
+    const b = Buffer.from(base64Tx, "base64");
+    let o = 0;
+    const compact = () => { let v = 0, shift = 0, byte; do { byte = b[o++]; v |= (byte & 0x7f) << shift; shift += 7; } while (byte & 0x80); return v; };
+    const signatures = compact();
+    o += 64 * signatures;
+    if (b[o] & 0x80) o++; // versioned message prefix
+    const required = b[o];
+    o += 3; // header
+    const keys = compact();
+    if (required < 2 || keys < 2 || b.length < o + 64) return null;
+    return base58(b.subarray(o + 32, o + 64));
+  } catch {
+    return null;
+  }
+}
+
+export function paymentOf(p) {
+  if (!p || typeof p !== "object") return null;
+  const acc = p.accepted || p; // v2 carries the chosen requirement in accepted; v1 at the top level
+  const out = { network: acc.network ?? null, asset: acc.asset ?? null, amount: acc.amount ?? acc.maxAmountRequired ?? null, pay_to: acc.payTo ?? null };
+  const auth = p.payload && p.payload.authorization;
+  const tx = p.payload && p.payload.transaction;
+  if (auth && auth.from && auth.nonce) return { ...out, amount: auth.value ?? out.amount, payer: auth.from, nonce: auth.nonce, proof: "eip3009" };
+  if (typeof tx === "string") return { ...out, payer: svmPayer(tx), transaction_sha256: sha256(tx), proof: "svm-transaction" };
+  return out.network ? out : null;
+}
+
+// The decoded payment payload from the request headers (base64 or base64url JSON).
+export function paymentFromHeaders(headers) {
+  const raw = headers["payment-signature"] || headers["x-payment"];
+  if (!raw) return null;
+  try {
+    return paymentOf(JSON.parse(Buffer.from(String(raw), "base64").toString("utf8")));
+  } catch {
+    return null;
+  }
+}
+
 // Older signer addresses stay published so old receipts still verify:
 // RECEIPT_RETIRED_SIGNERS="0xabc…:2026-09-27/2026-12-01,0xdef…:…/…".
 function retiredSigners(env) {
@@ -67,11 +128,12 @@ export function createSigner(env = process.env) {
     address: account.address,
     signers: [{ address: account.address, status: "current", valid_from: env.RECEIPT_SIGNER_SINCE || null, valid_until: null }, ...retired.map((r) => ({ ...r, status: "retired" }))],
     // Returns the body with a signed receipt added; the verdict fields are untouched.
-    async sign(body, { route, input }) {
+    async sign(body, { route, input, payment = null }) {
       const receipt = {
         request_id: randomUUID(),
         route,
         input_sha256: inputHash(route, input),
+        ...(payment && { payment }),
         signed_at: new Date().toISOString(),
         signer: account.address,
         algorithm: "eip191-canonical-json-v1",
@@ -117,7 +179,7 @@ export function signPaidResponses(signer, paidRoutes) {
     res.json = (body) => {
       if (res.statusCode !== 200 || !body || typeof body !== "object" || Array.isArray(body)) return json(body);
       const input = req.method === "GET" ? { ...req.query } : req.body;
-      signer.sign(body, { route, input }).then(json, (err) => {
+      signer.sign(body, { route, input, payment: paymentFromHeaders(req.headers) }).then(json, (err) => {
         console.warn(`receipt signing failed on ${route}: ${err.message}`);
         json(body); // an unsigned verdict beats no verdict
       });

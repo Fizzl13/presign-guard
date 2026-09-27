@@ -45,6 +45,15 @@ const RECEIPT_SCHEMA = {
     request_id: { type: "string" },
     route: { type: "string" },
     input_sha256: { type: "string", description: "sha256 of canonical JSON {route, input}: your body (POST) or query parameters (GET)" },
+    payment: {
+      type: "object",
+      description: "The payment behind this answer, from your x402 payment payload. EVM: payer + EIP-3009 nonce; find the settlement as AuthorizationUsed(payer, nonce) on the asset contract. Solana: payer + sha256 of the signed transaction you sent.",
+      properties: {
+        network: { type: "string" }, asset: { type: "string" }, amount: { type: "string" }, pay_to: { type: "string" },
+        payer: { type: "string" }, nonce: { type: "string" }, transaction_sha256: { type: "string" },
+        proof: { type: "string", enum: ["eip3009", "svm-transaction"] },
+      },
+    },
     signed_at: { type: "string" },
     signer: { type: "string" },
     algorithm: { type: "string", enum: ["eip191-canonical-json-v1"] },
