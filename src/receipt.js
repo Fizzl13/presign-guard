@@ -25,7 +25,7 @@ export const ALGORITHM = "EIP-191 personal_sign over canonical JSON of the respo
 // Canonical JSON: sorted keys, compact, ASCII only. undefined members are dropped
 // (as JSON.stringify does), so the signed bytes match what the client receives.
 export function canonicalJson(value) {
-  const ascii = (s) => JSON.stringify(s).replace(/[\u007f-￿]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const ascii = (s) => JSON.stringify(s).replace(/[\u007f-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
   const walk = (v) => {
     if (v === null || typeof v !== "object") return v === undefined ? undefined : typeof v === "string" ? ascii(v) : JSON.stringify(v);
     if (typeof v.toJSON === "function") return walk(v.toJSON());
