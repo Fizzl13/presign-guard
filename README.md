@@ -199,7 +199,7 @@ signer: <signing key address>
 valid_from: <YYYY-MM-DD>
 ```
 
-Set it as `RECEIPT_SIGNER_CERT` (`YYYY-MM-DD:0x<signature>`; the page `/sign-receipt-key` produces it from the wallet's browser). It is checked at startup and carried inside every receipt as `receipt.cert`, so a client that pins only the payout wallet verifies receipts from a new key offline. To rotate: generate a new `RECEIPT_SIGNER_SECRET`, sign a new certificate, move the old address to `RECEIPT_RETIRED_SIGNERS`.
+Set it as `RECEIPT_SIGNER_CERT` (`YYYY-MM-DD:0x<signature>`; the page `/sign-receipt-key` produces it from the wallet's browser; `/sign-receipt-key?service=x402-doctor` does the same for x402 Doctor, so the payout wallet signs on one site only). It is checked at startup and carried inside every receipt as `receipt.cert`, so a client that pins only the payout wallet verifies receipts from a new key offline. To rotate: generate a new `RECEIPT_SIGNER_SECRET`, sign a new certificate, move the old address to `RECEIPT_RETIRED_SIGNERS`.
 
 The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it holds no funds and signs nothing but receipts). Without it, answers are unsigned.
 

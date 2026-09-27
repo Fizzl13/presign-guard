@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Authorise the receipt signer</title>
+<title>Receipt signer: {{SERVICE}}</title>
 <meta name="robots" content="noindex">
 <style>
   :root { --bg: #0d1117; --card: #161b22; --text: #e6edf3; --muted: #8b949e; --accent: #a78bfa; --ok: #3fb950; --bad: #f85149; }
@@ -21,7 +21,7 @@
 </head>
 <body>
 <main>
-  <h1>Authorise the receipt signer</h1>
+  <h1>Authorise the receipt signer: {{SERVICE}}</h1>
   <p>Signs a certificate with the payout wallet that says: this key may sign {{SERVICE}}'s verdict receipts. Clients that pin only the payout wallet then accept receipts from this key, with no package update. Open this page in your wallet's browser (MetaMask mobile: the browser tab).</p>
 
   <div class="card">
@@ -40,7 +40,8 @@
     <p id="who"></p>
   </div>
 
-  <p>The signature only authorises a signing key for receipts: it moves no funds and approves nothing. After the redeploy, <a href="{{WELL_KNOWN}}" style="color:var(--accent)">the signer page</a> shows the certificate.</p>
+  <p>The signature only authorises a signing key for receipts: it moves no funds and approves nothing. After the redeploy, <a href="{{SIGNER_PAGE}}" style="color:var(--accent)">the signer page</a> shows the certificate.</p>
+  <p>Other services: {{OTHERS}}.</p>
 </main>
 <script>
   const AUTHORITY = "{{AUTHORITY}}";
@@ -55,6 +56,7 @@
 
   fetch("{{WELL_KNOWN}}").then((r) => r.json()).then((d) => {
     const current = (d.signers || []).find((s) => s.status === "current");
+    if (d.error) { $("status").innerHTML = '<span class="bad">Could not load the signer.</span>'; return; }
     if (!d.signing || !current) { $("status").innerHTML = '<span class="bad">Signing is off: set RECEIPT_SIGNER_SECRET first.</span>'; return; }
     signer = current.address;
     const has = d.certificate && d.certificate.signer === signer;

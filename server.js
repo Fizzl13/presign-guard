@@ -17,6 +17,7 @@ import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
 import { readFileSync } from "node:fs";
+import { signPageRouter } from "./src/sign-page.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -113,9 +114,16 @@ app.get("/.well-known/presign-guard-signer.json", async (_req, res) => res.json(
   input_sha256: "sha256 of the canonical JSON of {route, input}: route like 'POST /v1/check' or 'mcp presign_check'; input = the JSON body (POST), the query parameters as strings (GET) or the tool arguments (MCP)",
   verify: `${PUBLIC_URL}/v1/verify`,
 }));
-const SIGN_PAGE = readFileSync(fileURLToPath(new URL("./public/sign-receipt-key.html", import.meta.url)), "utf8")
-  .replaceAll("{{SERVICE}}", SERVICE).replaceAll("{{AUTHORITY}}", AUTH).replaceAll("{{WELL_KNOWN}}", "/.well-known/presign-guard-signer.json");
-app.get("/sign-receipt-key", (_req, res) => res.type("html").send(SIGN_PAGE));
+// Certificate signing page, also for Doctor (?service=x402-doctor): the payout
+// wallet signs on this one site.
+const DOCTOR_URL = (process.env.DOCTOR_URL ?? "https://x402-doctor.onrender.com").replace(/\/$/, "");
+app.use(signPageRouter({
+  page: readFileSync(fileURLToPath(new URL("./public/sign-receipt-key.html", import.meta.url)), "utf8"),
+  authority: AUTH,
+  self: SERVICE,
+  localSigner: async () => ({ signing: Boolean(SIGNER), signers: SIGNER ? SIGNER.signers : [], certificate: SIGNER ? await SIGNER.certificate() : null }),
+  remotes: { "x402-doctor": `${DOCTOR_URL}/.well-known/x402-doctor-signer.json` },
+}));
 app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
   const { response, route, input } = req.body || {};
   const body = response && typeof response === "object" ? response : req.body;
