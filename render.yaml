@@ -25,6 +25,8 @@ services:
         sync: false
       - key: PG1_API_KEY # PG1 membership key: exempt from PG1's anonymous rate limit (optional)
         sync: false
+      - key: RECEIPT_SIGNER_SECRET # signs verdict receipts (src/receipt.js); holds no funds; unset = unsigned answers
+        generateValue: true
       - key: X402_TRUST_TXT # x402-trust.com provider verification line (public key; optional)
         sync: false
       - key: USAGE_LOG_REPO

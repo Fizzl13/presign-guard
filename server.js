@@ -15,6 +15,7 @@ import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
+import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM } from "./src/receipt.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -64,6 +65,8 @@ const facilitators = MAINNET
 const resourceServer = new x402ResourceServer(facilitators).register(NETWORK, new ExactEvmScheme());
 if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
 const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA);
+// Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
+const SIGNER = createSigner();
 
 const app = express();
 app.set("trust proxy", 1);
@@ -87,11 +90,27 @@ app.get("/", (_req, res) => res.json({
     agentic_market: "https://agentic.market/services/presign-guard-onrender-com",
   },
   openapi: `${PUBLIC_URL}/openapi.json`,
+  signer: `${PUBLIC_URL}/.well-known/presign-guard-signer.json`,
 }));
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
 app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])])));
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
+
+// Who signs the verdicts, and how to check one (free).
+app.get("/.well-known/presign-guard-signer.json", (_req, res) => res.json({
+  signing: Boolean(SIGNER),
+  signers: SIGNER ? SIGNER.signers : [],
+  algorithm: ALGORITHM,
+  canonicalization: "JSON with keys sorted at every level, no whitespace, non-ASCII as \\uXXXX (Python: json.dumps(obj, sort_keys=True, separators=(',', ':'), ensure_ascii=True))",
+  input_sha256: "sha256 of the canonical JSON of {route, input}: route like 'POST /v1/check' or 'mcp presign_check'; input = the JSON body (POST), the query parameters as strings (GET) or the tool arguments (MCP)",
+  verify: `${PUBLIC_URL}/v1/verify`,
+}));
+app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
+  const { response, route, input } = req.body || {};
+  const body = response && typeof response === "object" ? response : req.body;
+  res.json(await verifyReceipt(body, { signers: SIGNER ? SIGNER.signers : [], route, input }));
+});
 
 // Usage log: every check with what was sent, for the dashboard at
 // x402-doctor.onrender.com/admin/usage. Does nothing without USAGE_LOG_TOKEN.
@@ -99,12 +118,13 @@ app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
 app.use(createUsageLog({ service: "presign" }).middleware(describePresignCall));
 
 // MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA }));
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, signer: SIGNER }));
 
 app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);
 app.use(mirrorChallengeIntoBody);
 app.use(paymentMiddleware(ROUTES, resourceServer));
+app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
 app.use(createTokenRouter());
 app.use(createApprovalsRouter());

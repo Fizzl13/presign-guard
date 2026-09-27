@@ -147,6 +147,49 @@ Every token that is approved, permitted or paid is also checked with GoPlus toke
 | orange | `UNVERIFIED_DELEGATE` (an EIP-7702 wallet delegates to unverified code), `UNLIMITED_APPROVAL`, `UNLIMITED_TRANSFER`, `APPROVAL_FOR_ALL`, `APPROVAL_TO_EOA`, `SIGNATURE_TRANSFER`, `LONG_LIVED_PERMISSION`, `NONCANONICAL_PERMIT2`, `UNVERIFIED_CONTRACT`, `RECENTLY_DEPLOYED`, `MARKETPLACE_ORDER`, `UNRECOGNIZED_SIGNATURE`, `BLACKLIST_DOUBT`, `MIXER`, `NEW_DOMAIN` (origin registered under 30 days ago), `DOMAIN_NOT_REGISTERED`, and for the token `TOKEN_OWNER_CAN_CHANGE_BALANCES`, `TOKEN_OWNERSHIP_RECLAIMABLE`, `TOKEN_HIDDEN_OWNER`, `TOKEN_SELFDESTRUCT`, `TOKEN_CANNOT_SELL_ALL`, `TOKEN_CREATOR_MADE_HONEYPOTS`, `TOKEN_HIGH_TAX` (buy or sell tax of 10% or more), `TOKEN_UNVERIFIED` |
 | info | `EIP7702_DELEGATED_WALLET` (a plain wallet with EIP-7702 code, treated as a wallet; details name the delegate contract, which is screened like a spender), `PARTIAL_SOURCE_DATA` (GoPlus returned partial data for this address), `PAYMENT_AUTHORIZATION`, `REVOKES_APPROVAL`, `OFFCHAIN_SIGNATURE`, `SIGNATURE_EXPIRED`, `UPGRADEABLE_PROXY` (only when the chain confirms a standard proxy layout: EIP-1967 or its beacon, EIP-1822, the older OpenZeppelin slot or an EIP-1167 clone; details name the kind and what it points to, or `confirmed: false` when the chain RPC can't be asked), `ON_TRUST_LIST`, `UNDECODED_CALL`, and issuer controls on the token (USDC has several): `TOKEN_MINTABLE`, `TOKEN_PAUSABLE`, `TOKEN_BLACKLIST`, `TOKEN_UPGRADEABLE`, `TOKEN_TAX_MODIFIABLE`, `TOKEN_TRADING_COOLDOWN`, `TOKEN_TAX`, `TOKEN_ON_TRUST_LIST`, `TOKEN_NO_SECURITY_DATA` (GoPlus has no record of the token), `DOMAIN_AGE`, `DOMAIN_AGE_UNKNOWN` (no RDAP data for that TLD), and when PG1 can't be reached `SANCTIONS_SCREEN_UNAVAILABLE` / `DOMAIN_AGE_UNAVAILABLE` (the check goes on; GoPlus still carries a sanctions flag) |
 
+### Signed verdicts
+
+Every paid answer (HTTP and MCP) carries a `receipt` signed by presign-guard, so you can later prove **which verdict was delivered for which request**, not only that you paid:
+
+```json
+"receipt": {
+  "request_id": "5f0c…",
+  "route": "POST /v1/check",
+  "input_sha256": "9a1e…",
+  "signed_at": "2026-09-27T09:30:00.000Z",
+  "signer": "0x…",
+  "algorithm": "eip191-canonical-json-v1",
+  "signature": "0x…"
+}
+```
+
+- **What is signed:** the whole response with `receipt.signature` left out, as canonical JSON (keys sorted at every level, no whitespace, non-ASCII as `\uXXXX`: the same bytes as Python's `json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True)`), with EIP-191 `personal_sign`. Flipping the verdict, or moving it to another request id, breaks the signature.
+- **`input_sha256`** is the SHA-256 of the canonical JSON of `{"route": …, "input": …}`, where `input` is your JSON body (POST), your query parameters as strings (GET), or the tool arguments (MCP, route `mcp <tool>`). Recompute it to prove the verdict answers *your* request.
+- **Signer addresses:** [`/.well-known/presign-guard-signer.json`](https://presign-guard.onrender.com/.well-known/presign-guard-signer.json). Retired signers stay listed with their dates, so old receipts keep verifying.
+- **Check one for free:** `POST /v1/verify` with `{"response": <the signed answer>, "route": "POST /v1/check", "input": <what you sent>}` returns `valid`, `signer`, `known_signer` and `input_matches`.
+
+Verify it yourself (Node, viem):
+
+```js
+import { recoverMessageAddress } from "viem";
+const { signature, ...rest } = answer.receipt;
+const signer = await recoverMessageAddress({ message: canonicalJson({ ...answer, receipt: rest }), signature });
+// signer must equal answer.receipt.signer and be listed in /.well-known/presign-guard-signer.json
+```
+
+Python (eth-account):
+
+```python
+import json
+from eth_account import Account
+from eth_account.messages import encode_defunct
+receipt = dict(answer["receipt"]); sig = receipt.pop("signature")
+msg = json.dumps({**answer, "receipt": receipt}, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+assert Account.recover_message(encode_defunct(text=msg), signature=sig) == answer["receipt"]["signer"]
+```
+
+The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it holds no funds and signs nothing but receipts). Without it, answers are unsigned.
+
 ### Not covered
 
 `eth_sign` and `personal_sign` messages, and transaction simulation. Treat a green verdict as "no known risk signals", not as a guarantee.
