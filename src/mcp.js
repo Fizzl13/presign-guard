@@ -102,6 +102,11 @@ function validateApprovals(args) {
   }
 }
 
+// Valid example arguments per tool, in tools/list as _meta.examples (zod 3 schemas
+// cannot carry JSON Schema examples): agents and checkers such as x402 Doctor
+// can send a well-formed call instead of guessing.
+const examplesMeta = (example) => ({ examples: [example] });
+
 const CHECK_DISCOVERY = { inputSchema: { type: "object", properties: INPUT_SCHEMA.properties, required: INPUT_SCHEMA.required }, example: INPUT_EXAMPLE };
 
 const PAID_TOOLS = [
@@ -203,6 +208,7 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
         `Free: the green/orange/red verdict only, for a transaction, token approval or EIP-712 signature your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
       inputSchema: CHECK_INPUT,
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: examplesMeta(INPUT_EXAMPLE),
     },
     async (args) => {
       if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use presign_check ($0.01 USDC via x402) or POST https://presign-guard.onrender.com/v1/check.`);
@@ -225,6 +231,7 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
         `Free: the green/orange/red verdict and grade only, for a Solana or EVM token your agent is about to buy, hold or accept. Limited to ${FREE_CALLS_PER_HOUR} free calls per hour (shared with presign_quick_check). For the reasons, one-line summary and market data use token_verdict ($0.01).`,
       inputSchema: TOKEN_INPUT,
       annotations: { readOnlyHint: true, openWorldHint: true },
+      _meta: examplesMeta(TOKEN_INPUT_EXAMPLE),
     },
     async (args) => {
       if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use token_verdict ($0.01 USDC via x402) or GET https://presign-guard.onrender.com/v1/token.`);
@@ -249,6 +256,7 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
         description: `${tool.description(price)} The answer carries a signed receipt (EIP-191, bound to your arguments) that proves later which verdict you got.`,
         inputSchema: tool.input,
         annotations: { readOnlyHint: true, openWorldHint: true },
+        _meta: examplesMeta(tool.discovery.example),
       },
       async (args, extra) => {
         const checked = tool.validate(args); // before the payment step

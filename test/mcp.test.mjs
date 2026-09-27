@@ -138,6 +138,21 @@ test("lists the free quick checks and the paid tools with their prices", async (
   await client.close();
 });
 
+test("every tool lists valid example arguments in _meta.examples: paid tools answer them with the payment requirement", async () => {
+  const client = await mcpClient();
+  const { tools } = await client.listTools();
+  for (const tool of tools) {
+    const example = tool._meta && tool._meta.examples && tool._meta.examples[0];
+    assert.ok(example && typeof example === "object", `${tool.name} has an example`);
+    for (const key of tool.inputSchema.required || []) assert.ok(key in example, `${tool.name} example has ${key}`);
+    if (/quick/.test(tool.name)) continue; // free tools would run the check
+    const result = await client.callTool({ name: tool.name, arguments: example });
+    assert.ok(result.isError, tool.name);
+    assert.ok(Array.isArray(result.structuredContent && result.structuredContent.accepts), `${tool.name}: payment requirement, not an input error: ${JSON.stringify(result.content)}`);
+  }
+  await client.close();
+});
+
 test("free quick check: the verdict only", async () => {
   const client = await mcpClient();
   const green = JSON.parse((await client.callTool({ name: "presign_quick_check", arguments: APPROVAL })).content[0].text);
