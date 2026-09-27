@@ -18,6 +18,7 @@ import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
 import { readFileSync } from "node:fs";
 import { signPageRouter } from "./src/sign-page.js";
+import { trustProxyHops } from "./src/proxy.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -71,7 +72,7 @@ const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA);
 const SIGNER = createSigner();
 
 const app = express();
-app.set("trust proxy", 1);
+app.set("trust proxy", trustProxyHops());
 app.disable("x-powered-by");
 app.use(securityHeaders);
 app.use(nohumansClaim());
