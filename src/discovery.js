@@ -54,6 +54,11 @@ const RECEIPT_SCHEMA = {
         proof: { type: "string", enum: ["eip3009", "svm-transaction"] },
       },
     },
+    cert: {
+      type: "object",
+      description: "The payout wallet's certificate for this signing key: personal_sign by authority over 'fizzl receipt signer\\nservice: <service>\\nsigner: <signer>\\nvalid_from: <date>'. Pin the payout wallet and a rotated key still verifies.",
+      properties: { service: { type: "string" }, signer: { type: "string" }, valid_from: { type: "string" }, authority: { type: "string" }, signature: { type: "string" } },
+    },
     signed_at: { type: "string" },
     signer: { type: "string" },
     algorithm: { type: "string", enum: ["eip191-canonical-json-v1"] },

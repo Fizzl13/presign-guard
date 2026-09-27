@@ -15,7 +15,8 @@ import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
-import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM } from "./src/receipt.js";
+import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
+import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -98,18 +99,27 @@ app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
 
 // Who signs the verdicts, and how to check one (free).
-app.get("/.well-known/presign-guard-signer.json", (_req, res) => res.json({
+const AUTH = process.env.RECEIPT_AUTHORITY || AUTHORITY;
+app.get("/.well-known/presign-guard-signer.json", async (_req, res) => res.json({
   signing: Boolean(SIGNER),
   signers: SIGNER ? SIGNER.signers : [],
+  // The payout wallet authorises signing keys; clients can pin it instead of the keys.
+  authority: AUTH,
+  certificate: SIGNER ? await SIGNER.certificate() : null,
+  certificate_format: "personal_sign by the authority over: fizzl receipt signer\\nservice: <service>\\nsigner: <address>\\nvalid_from: <YYYY-MM-DD>",
+  sign_certificate: `${PUBLIC_URL}/sign-receipt-key`,
   algorithm: ALGORITHM,
   canonicalization: "JSON with keys sorted at every level, no whitespace, non-ASCII as \\uXXXX (Python: json.dumps(obj, sort_keys=True, separators=(',', ':'), ensure_ascii=True))",
   input_sha256: "sha256 of the canonical JSON of {route, input}: route like 'POST /v1/check' or 'mcp presign_check'; input = the JSON body (POST), the query parameters as strings (GET) or the tool arguments (MCP)",
   verify: `${PUBLIC_URL}/v1/verify`,
 }));
+const SIGN_PAGE = readFileSync(fileURLToPath(new URL("./public/sign-receipt-key.html", import.meta.url)), "utf8")
+  .replaceAll("{{SERVICE}}", SERVICE).replaceAll("{{AUTHORITY}}", AUTH).replaceAll("{{WELL_KNOWN}}", "/.well-known/presign-guard-signer.json");
+app.get("/sign-receipt-key", (_req, res) => res.type("html").send(SIGN_PAGE));
 app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
   const { response, route, input } = req.body || {};
   const body = response && typeof response === "object" ? response : req.body;
-  res.json(await verifyReceipt(body, { signers: SIGNER ? SIGNER.signers : [], route, input }));
+  res.json(await verifyReceipt(body, { signers: SIGNER ? SIGNER.signers : [], route, input, authority: AUTH }));
 });
 
 // Usage log: every check with what was sent, for the dashboard at

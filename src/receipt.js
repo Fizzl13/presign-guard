@@ -104,6 +104,44 @@ export function paymentFromHeaders(headers) {
   }
 }
 
+// Signer certificates: the owner's payout wallet (AUTHORITY, the payTo of
+// every payment) authorises a signing key once, with a personal_sign over a
+// short readable message (certMessage). RECEIPT_SIGNER_CERT holds
+// "YYYY-MM-DD:0x<signature>"; it is checked at startup and carried inside
+// every receipt, so a client that pins only the payout wallet can verify
+// receipts from a rotated key offline, with no package release. A wrong or
+// missing certificate is simply left out (the pinned signer lists still work).
+export const AUTHORITY = "0x6B0F4651eD42893ab58139938175E4a69f175F25";
+export const SERVICE = "presign-guard";
+
+export function certMessage({ service, signer, valid_from }) {
+  return `fizzl receipt signer\nservice: ${service}\nsigner: ${signer}\nvalid_from: ${valid_from}`;
+}
+
+export async function certValid(cert, { authority = AUTHORITY, service } = {}) {
+  try {
+    if (!cert || (service && cert.service !== service)) return false;
+    if (String(cert.authority).toLowerCase() !== authority.toLowerCase()) return false;
+    const recovered = await recoverMessageAddress({ message: certMessage(cert), signature: cert.signature });
+    return recovered.toLowerCase() === authority.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+export async function loadCert(env, service, signer) {
+  const raw = String(env.RECEIPT_SIGNER_CERT || "").trim();
+  if (!raw) return null;
+  const m = /^(\d{4}-\d{2}-\d{2}):(0x[0-9a-fA-F]{130})$/.exec(raw);
+  const authority = isAddress(String(env.RECEIPT_AUTHORITY || "")) ? getAddress(env.RECEIPT_AUTHORITY) : AUTHORITY;
+  const cert = m && { service, signer, valid_from: m[1], authority, signature: m[2] };
+  if (!cert || !(await certValid(cert, { authority, service }))) {
+    console.warn(`RECEIPT_SIGNER_CERT ignored: not a valid certificate by ${authority} for ${service} signer ${signer}`);
+    return null;
+  }
+  return cert;
+}
+
 // Older signer addresses stay published so old receipts still verify:
 // RECEIPT_RETIRED_SIGNERS="0xabc…:2026-09-27/2026-12-01,0xdef…:…/…".
 function retiredSigners(env) {
@@ -124,16 +162,20 @@ export function createSigner(env = process.env) {
   if (secret.length < 32) return null; // unset (or too short to be a real secret): no signing
   const account = privateKeyToAccount(keccak256(stringToBytes(`presign-guard receipt signer v1:${secret}`)));
   const retired = retiredSigners(env);
+  const certificate = loadCert(env, SERVICE, account.address);
   return {
     address: account.address,
+    certificate: () => certificate,
     signers: [{ address: account.address, status: "current", valid_from: env.RECEIPT_SIGNER_SINCE || null, valid_until: null }, ...retired.map((r) => ({ ...r, status: "retired" }))],
     // Returns the body with a signed receipt added; the verdict fields are untouched.
     async sign(body, { route, input, payment = null }) {
+      const cert = await certificate;
       const receipt = {
         request_id: randomUUID(),
         route,
         input_sha256: inputHash(route, input),
         ...(payment && { payment }),
+        ...(cert && { cert }),
         signed_at: new Date().toISOString(),
         signer: account.address,
         algorithm: "eip191-canonical-json-v1",
@@ -147,7 +189,7 @@ export function createSigner(env = process.env) {
 
 // Checks a signed body: the signature recovers to receipt.signer, and (with a
 // signer list) that address is one of ours. Optionally checks the input hash.
-export async function verifyReceipt(body, { signers = [], route, input } = {}) {
+export async function verifyReceipt(body, { signers = [], route, input, authority = AUTHORITY, service = SERVICE } = {}) {
   const r = body && body.receipt;
   if (!r || typeof r.signature !== "string") return { valid: false, reason: "no receipt.signature in the body" };
   const { signature, ...rest } = r;
@@ -160,10 +202,15 @@ export async function verifyReceipt(body, { signers = [], route, input } = {}) {
   if (!r.signer || recovered.toLowerCase() !== String(r.signer).toLowerCase()) {
     return { valid: false, reason: "signature does not match receipt.signer: the body or receipt was changed", recovered };
   }
-  const known = signers.find((s) => s.address.toLowerCase() === recovered.toLowerCase());
-  const out = { valid: true, signer: recovered, known_signer: signers.length ? Boolean(known) : null, signer_status: known ? known.status : null };
+  let known = signers.find((s) => s.address.toLowerCase() === recovered.toLowerCase());
+  // A rotated key the authority certified counts as ours too (for signatures made on or after valid_from).
+  if (!known && r.cert && String(r.cert.signer).toLowerCase() === recovered.toLowerCase()
+    && String(r.signed_at).slice(0, 10) >= r.cert.valid_from && (await certValid(r.cert, { authority, service }))) {
+    known = { address: recovered, status: "certified" };
+  }
+  const out = { valid: true, signer: recovered, known_signer: signers.length || r.cert ? Boolean(known) : null, signer_status: known ? known.status : null };
   if (route !== undefined && input !== undefined) out.input_matches = inputHash(route, input) === r.input_sha256;
-  if (signers.length && !known) return { ...out, valid: false, reason: "signed, but not by a presign-guard signer" };
+  if ((signers.length || r.cert) && !known) return { ...out, valid: false, reason: "signed, but not by a presign-guard signer" };
   if (out.input_matches === false) return { ...out, valid: false, reason: "signed, but for a different request input" };
   return out;
 }
