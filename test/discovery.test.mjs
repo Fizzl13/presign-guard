@@ -57,3 +57,20 @@ test("wallet approvals: $0.02 on Base, plus Solana when a Solana wallet is set, 
   assert.deepEqual(both.accepts.map((a) => [a.network, a.payTo]), [["eip155:8453", PAY_TO], [SOLANA.network, SOLANA.payTo]]);
   assert.deepEqual(both.extensions.bazaar.info.input.queryParams, { chain: "ethereum", address: "0x28c6c06298d514db089934071355e5743bf21d60" });
 });
+
+test("signed verdicts are advertised: receipt in every paid response schema, guidance and the signer link", () => {
+  const spec = openApi("https://x.test", "eip155:8453");
+  const schemas = [
+    spec.paths["/v1/check"].post.responses[200].content["application/json"].schema,
+    spec.paths["/v1/check/explain"].post.responses[200].content["application/json"].schema,
+    spec.paths["/v1/token"].get.responses[200].content["application/json"].schema,
+    spec.paths["/v1/approvals"].get.responses[200].content["application/json"].schema,
+  ];
+  for (const s of schemas) {
+    assert.equal(s.properties.receipt.properties.algorithm.enum[0], "eip191-canonical-json-v1");
+    assert.ok(!s.required.includes("receipt"), "optional: unsigned when no signer is configured");
+  }
+  assert.match(spec.info["x-guidance"], /presign-guard-signer\.json/);
+  assert.match(spec.info["x-guidance"], /POST \/v1\/verify/);
+  assert.equal(wellKnown("https://x.test").signer, "https://x.test/.well-known/presign-guard-signer.json");
+});

@@ -245,7 +245,7 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
       tool.name,
       {
         title: `${tool.title} (${price} via x402)`,
-        description: tool.description(price),
+        description: `${tool.description(price)} The answer carries a signed receipt (EIP-191, bound to your arguments) that proves later which verdict you got.`,
         inputSchema: tool.input,
         annotations: { readOnlyHint: true, openWorldHint: true },
       },
