@@ -15,9 +15,9 @@
 // verdict (503, nothing charged); RugCheck being down is reported and skipped.
 
 import express from "express";
-import { isAddress } from "viem";
+import { encodeFunctionData, isAddress, parseAbi, zeroAddress } from "viem";
 import {
-  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
+  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCall,
 } from "./presign-guard.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
@@ -254,11 +254,64 @@ function solanaHolders(sec, rug) {
   return null;
 }
 
-function evmReasons({ sec, market }, add) {
+// GoPlus leaves the control fields out for a proxy token (USDC, cbBTC, EURC, wstETH):
+// it only reports is_proxy and the owner. Then ask the token itself, through the
+// getters that the common issuer contracts expose (Circle's FiatToken, which cbBTC
+// also uses; OpenZeppelin Pausable and AccessControl; Tether's blacklist).
+const CONTROL_ABI = parseAbi([
+  "function paused() view returns (bool)",
+  "function pauser() view returns (address)",
+  "function PAUSER_ROLE() view returns (bytes32)",
+  "function blacklister() view returns (address)",
+  "function isBlacklisted(address) view returns (bool)",
+  "function isBlackListed(address) view returns (bool)",
+]);
+const CONTROL_CALLS = {
+  paused: encodeFunctionData({ abi: CONTROL_ABI, functionName: "paused" }),
+  pauser: encodeFunctionData({ abi: CONTROL_ABI, functionName: "pauser" }),
+  pauserRole: encodeFunctionData({ abi: CONTROL_ABI, functionName: "PAUSER_ROLE" }),
+  blacklister: encodeFunctionData({ abi: CONTROL_ABI, functionName: "blacklister" }),
+  isBlacklisted: encodeFunctionData({ abi: CONTROL_ABI, functionName: "isBlacklisted", args: [zeroAddress] }),
+  isBlackListed: encodeFunctionData({ abi: CONTROL_ABI, functionName: "isBlackListed", args: [zeroAddress] }),
+};
+const word = (r) => (typeof r === "string" && /^0x[0-9a-f]{64}$/i.test(r) ? r.toLowerCase() : null);
+const wordAddress = (r) => { const w = word(r); return w && /^0x0{24}/.test(w) ? `0x${w.slice(26)}` : null; };
+
+// { paused, pauser, blacklister, pausable, blacklist }, or null when the chain RPC can't be asked.
+export async function issuerControls(chainId, address) {
+  const entries = await Promise.all(Object.entries(CONTROL_CALLS).map(async ([name, data]) => {
+    try { return [name, await ethCall(chainId, address, data)]; } catch { return [name, undefined]; }
+  }));
+  if (entries.every(([, r]) => r === undefined)) return null;
+  const r = Object.fromEntries(entries);
+  const pauser = wordAddress(r.pauser);
+  const blacklister = wordAddress(r.blacklister);
+  const bool = (x) => (word(x) ? BigInt(x) === 1n : null);
+  return {
+    paused: bool(r.paused) === true,
+    pauser: pauser && pauser !== zeroAddress ? pauser : null,
+    blacklister: blacklister && blacklister !== zeroAddress ? blacklister : null,
+    pausable: Boolean((pauser && pauser !== zeroAddress) || word(r.pauserRole) || bool(r.paused) !== null),
+    blacklist: Boolean((blacklister && blacklister !== zeroAddress) || bool(r.isBlacklisted) !== null || bool(r.isBlackListed) !== null),
+  };
+}
+
+// Only asked when GoPlus has no answer for these fields, so a normal token costs no RPC calls.
+function controlReasons(controls, add) {
+  if (!controls) return;
+  if (controls.paused) add("TOKEN_PAUSED", "orange", { source: "onchain" });
+  if (controls.pausable) add("TOKEN_PAUSABLE", "info", { source: "onchain", ...(controls.pauser && { pauser: controls.pauser }) });
+  if (controls.blacklist) add("TOKEN_BLACKLIST", "info", { source: "onchain", ...(controls.blacklister && { blacklister: controls.blacklister }) });
+}
+
+const needsControlCheck = (sec) => sec && sec.transfer_pausable === undefined && sec.is_blacklisted === undefined;
+
+function evmReasons({ sec, market, controls }, add) {
   // The same GoPlus rules as the token part of /v1/check, without a subject. On a
   // trust-list token (USDT, USDC) the issuer's powers are context, as on Solana.
   const trusted = flag(sec?.trust_list);
   tokenReasons(null, sec, (code, severity, _subject, details) => add(code, trusted && severity === "orange" ? "info" : severity, details));
+  controlReasons(controls, add);
   if (flag(sec?.cannot_buy)) add("TOKEN_CANNOT_BUY", "orange");
   const lp = Array.isArray(sec?.lp_holders) ? sec.lp_holders : [];
   const lpLockedPct = lp.length
@@ -302,6 +355,7 @@ const PHRASES = {
   FREEZE_AUTHORITY_ACTIVE: () => "holders can be frozen",
   BALANCE_MUTABLE: () => "balances can be changed",
   TOKEN_OWNER_CAN_CHANGE_BALANCES: () => "owner can change balances",
+  TOKEN_PAUSED: () => "transfers are paused",
   HIGH_TRANSFER_FEE: (d) => `${d.feePct}% transfer fee`,
   TRANSFER_FEE: (d) => `${d.feePct}% transfer fee`,
   TOKEN_HIGH_TAX: (d) => `${pct1(Math.max(d.buyTax, d.sellTax) * 100)}% tax`,
@@ -322,6 +376,13 @@ export function oneLiner({ grade, reasons, market }) {
     const facts = market ? [`${usd(market.liquidityUsd)} liquidity`, market.ageSeconds !== null && `${age(market.ageSeconds)} old`].filter(Boolean) : [];
     phrases.push(["no red flags", ...facts].join(", "));
   }
+  // Context, not a warning: a stablecoin issuer that can freeze you is worth knowing
+  // before you accept it as payment.
+  const powers = [
+    reasons.some((r) => r.code === "TOKEN_PAUSABLE") && "pause transfers",
+    reasons.some((r) => r.code === "TOKEN_BLACKLIST") && "blacklist holders",
+  ].filter(Boolean);
+  if (powers.length && !serious.length) phrases.push(`issuer can ${powers.join(" and ")}`);
   let line = `${grade}: ${phrases.slice(0, 3).join("; ")}`;
   if (phrases.length > 3) line += ` (+${phrases.length - 3} more)`;
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
@@ -340,10 +401,13 @@ export async function tokenVerdict({ chain, address }, now = Date.now()) {
     if (rug && !rug.error) sources.push("rugcheck");
     solanaReasons({ sec: sec.data, rug, market }, add);
   } else {
-    const [sec, pairs] = await Promise.all([getTokenSecurity(TOKEN_CHAINS[chain].chainId, address), getMarket(chain, address)]);
+    const { chainId } = TOKEN_CHAINS[chain];
+    const [sec, pairs] = await Promise.all([getTokenSecurity(chainId, address), getMarket(chain, address)]);
     market = summarizeMarket(pairs, chain, address, now);
     partial = sec.partial;
-    evmReasons({ sec: sec.data, market }, add);
+    const controls = needsControlCheck(sec.data) ? await issuerControls(chainId, address) : null;
+    if (controls) sources.push("chain");
+    evmReasons({ sec: sec.data, market, controls }, add);
   }
 
   const order = { red: 0, orange: 1, info: 2 };

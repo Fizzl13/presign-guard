@@ -197,6 +197,28 @@ function getStorageAt(chainId, address, slot) {
   });
 }
 
+// A read-only contract call. Returns the raw result, or null when the call reverts
+// (the contract has no such function). Throws UpstreamError when the RPC can't be asked.
+function ethCall(chainId, to, data) {
+  return cached(`call:${chainId}:${to}:${data}`, async () => {
+    let res;
+    try {
+      res = await fetch(process.env[`RPC_URL_${chainId}`] || RPC_URLS[chainId], {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new UpstreamError(`Chain RPC unreachable (${err.name})`);
+    }
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    if (body?.error) return null; // execution reverted
+    if (typeof body?.result !== "string") throw new UpstreamError(`Chain RPC error${res.ok ? "" : ` (HTTP ${res.status})`}`);
+    return body.result;
+  });
+}
+
 // GoPlus approval_security sometimes calls a plain contract a proxy (DEGEN on
 // Base: a full 11.6 KB contract with no proxy slot set, while token_security
 // says is_proxy=0). Confirm on-chain against the standard layouts; the first
@@ -273,7 +295,7 @@ function tokenReasons(token, t, add) {
 }
 
 // Shared with the token verdict (token-verdict.js).
-export { ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons };
+export { ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCall };
 
 // ---------- input helpers ----------
 
