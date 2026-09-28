@@ -211,7 +211,7 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
       _meta: examplesMeta(INPUT_EXAMPLE),
     },
     async (args) => {
-      if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use presign_check ($0.01 USDC via x402) or POST https://presign-guard.onrender.com/v1/check.`);
+      if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use presign_check ($0.01 USDC via x402) or POST https://presign-guard.fizzl.eu/v1/check.`);
       const checked = validate(args);
       if (checked.error) return toolError(checked.error);
       try {
@@ -234,7 +234,7 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
       _meta: examplesMeta(TOKEN_INPUT_EXAMPLE),
     },
     async (args) => {
-      if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use token_verdict ($0.01 USDC via x402) or GET https://presign-guard.onrender.com/v1/token.`);
+      if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use token_verdict ($0.01 USDC via x402) or GET https://presign-guard.fizzl.eu/v1/token.`);
       const checked = validateToken(args);
       if (checked.error) return toolError(checked.error);
       try {

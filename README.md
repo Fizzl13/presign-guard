@@ -2,11 +2,11 @@
 
 A pre-sign risk check for AI agents. Before an agent signs a transaction, approval, or EIP-712 signature, it pays a few cents per call over [x402](https://x402.org) and gets back a **green / orange / red** verdict with machine-readable reason codes. Optionally, it also gets a plain-language explanation in Dutch or English.
 
-**Watch the 1-minute explainer:** [presign-guard.onrender.com/media/explainer.mp4](https://presign-guard.onrender.com/media/explainer.mp4)
+**Watch the 1-minute explainer:** [presign-guard.fizzl.eu/media/explainer.mp4](https://presign-guard.fizzl.eu/media/explainer.mp4)
 
-[![presign-guard explainer video](public/media/explainer.jpg)](https://presign-guard.onrender.com/media/explainer.mp4)
+[![presign-guard explainer video](public/media/explainer.jpg)](https://presign-guard.fizzl.eu/media/explainer.mp4)
 
-**New: the token verdict in 45 seconds:** [presign-guard.onrender.com/media/token.mp4](https://presign-guard.onrender.com/media/token.mp4)
+**New: the token verdict in 45 seconds:** [presign-guard.fizzl.eu/media/token.mp4](https://presign-guard.fizzl.eu/media/token.mp4)
 
 Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL AI](https://fizzl.eu).
 
@@ -27,7 +27,7 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict a
 
 ## MCP
 
-`https://presign-guard.onrender.com/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
+`https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
 
 | Tool | Price | Returns |
 |---|---|---|
@@ -42,7 +42,7 @@ The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta[
 
 ## Token verdict
 
-[![Token verdict video](public/media/token.jpg)](https://presign-guard.onrender.com/media/token.mp4)
+[![Token verdict video](public/media/token.jpg)](https://presign-guard.fizzl.eu/media/token.mp4)
 
 `GET /v1/token?chain=solana&address=<mint>` (or `chain=base|ethereum|arbitrum|optimism|polygon|bsc` with a `0x` token contract) answers one question before an agent buys, holds or accepts a token: is the token itself a trap?
 
@@ -167,7 +167,7 @@ Every paid answer (HTTP and MCP) carries a `receipt` signed by presign-guard, so
 - **What is signed:** the whole response with `receipt.signature` left out, as canonical JSON (profile `js-json-stringify-sorted-utf16-ascii-v1`: keys sorted by UTF-16 code units at every level, no whitespace, every code unit from U+007F up escaped as lowercase `\uXXXX`, numbers spelled as JavaScript's `JSON.stringify` writes them — `1.0` → `1`, `0.000001` → `0.000001`, `1e21` → `1e+21` — then UTF-8 bytes). Python's `json.dumps` matches only for ASCII keys and integers (it writes `1.0` and `1e-06`); use [`examples/canonical.py`](examples/canonical.py), with EIP-191 `personal_sign`. Flipping the verdict, or moving it to another request id, breaks the signature.
 - **`input_sha256`** is the SHA-256 of the canonical JSON of `{"route": …, "input": …}`, where `input` is your JSON body (POST), your query parameters as strings (GET), or the tool arguments (MCP, route `mcp <tool>`). Recompute it to prove the verdict answers *your* request.
 - **`payment`** ties the verdict to the payment that bought it, from your x402 payment payload. On Base: the payer and the EIP-3009 nonce, so anyone can find the settlement on-chain as the USDC contract's `AuthorizationUsed(payer, nonce)` event without trusting us. On Solana: the payer and a SHA-256 of the signed transaction you sent (the facilitator adds its fee-payer signature at settlement, so the final transaction id is not known when we sign).
-- **Signer addresses:** [`/.well-known/presign-guard-signer.json`](https://presign-guard.onrender.com/.well-known/presign-guard-signer.json). Retired signers stay listed with their dates, so old receipts keep verifying.
+- **Signer addresses:** [`/.well-known/presign-guard-signer.json`](https://presign-guard.fizzl.eu/.well-known/presign-guard-signer.json). Retired signers stay listed with their dates, so old receipts keep verifying.
 - **Check one for free:** `POST /v1/verify` with `{"response": <the signed answer>, "route": "POST /v1/check", "input": <what you sent>}` returns `valid`, `signer`, `known_signer` and `input_matches`.
 
 Verify it yourself (Node, viem):

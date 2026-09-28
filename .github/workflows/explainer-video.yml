@@ -62,7 +62,7 @@ jobs:
           npm i --no-save playwright@1.63.0
           npx playwright install --with-deps chromium
       - name: Wake the live service (for the price shown)
-        run: curl -s -o /dev/null --retry 6 --retry-delay 10 --retry-all-errors --max-time 90 https://presign-guard.onrender.com/health || true
+        run: curl -s -o /dev/null --retry 6 --retry-delay 10 --retry-all-errors --max-time 90 https://presign-guard.fizzl.eu/health || true
       - name: Record
         run: |
           node engine.mjs &
