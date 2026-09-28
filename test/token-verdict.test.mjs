@@ -21,6 +21,8 @@ const DEGEN = "0x4ed4e862860bed51a9570b96d89af5e1b0efefed";
 const HONEY = "0x1111111111111111111111111111111111111111";
 const NOMARKET = "0x2222222222222222222222222222222222222222";
 const WETH = "0x4200000000000000000000000000000000000006";
+const CBBTC = "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf";
+const PAUSED = "0x6666666666666666666666666666666666666666";
 
 const off = { status: "0" };
 const on = { status: "1" };
@@ -64,6 +66,8 @@ const FIXTURES = {
     [HONEY]: [pair(HONEY, { liq: 80000, createdDaysAgo: 0.5 })],
     [NOMARKET]: [],
     [WETH]: [pair(WETH, { liq: 20000, createdDaysAgo: 5, symbol: "WETH" })],
+    [CBBTC]: [pair(CBBTC, { liq: 5e7, createdDaysAgo: 700, symbol: "cbBTC" })],
+    [PAUSED]: [pair(PAUSED, { liq: 2e6, createdDaysAgo: 400, symbol: "PSD" })],
   },
   goplusEvm: {
     [DEGEN]: { is_open_source: "1", is_honeypot: "0", buy_tax: "0", sell_tax: "0", holder_count: "900000",
@@ -73,15 +77,29 @@ const FIXTURES = {
     [NOMARKET]: { is_open_source: "0" },
     [WETH]: { is_open_source: "1", trust_list: "1", owner_change_balance: "1", holders: [{ address: "0xw", percent: "0.25", is_contract: 0 }],
       lp_holders: [{ address: "0xlp", percent: "1", is_locked: 0 }] },
+    // A proxy token: GoPlus reports is_proxy and the owner, and no control fields (as for cbBTC and EURC on Base).
+    [CBBTC]: { is_proxy: "1", is_open_source: "1", trust_list: "1", owner_address: "0x5e8114643966b7fd7d5cfdd8695ffc5c51ff32c0" },
+    [PAUSED]: { is_proxy: "1", is_open_source: "1" },
+  },
+  // eth_call answers by token and 4-byte selector; anything else reverts (no such function).
+  rpc: {
+    [CBBTC]: {
+      "0x5c975abb": "0x" + "0".repeat(64), // paused() → false
+      "0x9fd0506d": "0x" + "0".repeat(24) + "1ac78dfcae082e9fe286d1ccb12c17a3e906b906", // pauser()
+      "0xbd102430": "0x" + "0".repeat(24) + "158cfa498b1f72f458acf8df993c709efca11e31", // blacklister()
+      "0xfe575a87": "0x" + "0".repeat(64), // isBlacklisted(0x0) → false
+    },
+    [PAUSED]: { "0x5c975abb": "0x" + "0".repeat(63) + "1" },
   },
 };
 
 const realFetch = globalThis.fetch;
 const calls = [];
+const rpcCalls = [];
 let down = new Set();
 
 before(() => {
-  globalThis.fetch = async (url) => {
+  globalThis.fetch = async (url, init) => {
     const u = new URL(String(url));
     calls.push(u.hostname);
     if (down.has(u.hostname)) return new Response("busy", { status: 503 });
@@ -95,6 +113,15 @@ before(() => {
       if (mint === DOWN_SOL) return new Response("rate limited", { status: 429 });
       return FIXTURES.rugcheck[mint] ? Response.json(FIXTURES.rugcheck[mint]) : new Response("not found", { status: 404 });
     }
+    if (u.hostname === "base-rpc.publicnode.com") {
+      if (down.has("rpc")) throw new TypeError("fetch failed");
+      // One JSON-RPC batch per token.
+      return Response.json(JSON.parse(init.body).map(({ id, params: [{ to, data }] }) => {
+        rpcCalls.push(data.slice(0, 10));
+        const result = FIXTURES.rpc[to]?.[data.slice(0, 10)];
+        return result ? { jsonrpc: "2.0", id, result } : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } };
+      }));
+    }
     if (u.hostname === "api.dexscreener.com") {
       return Response.json(FIXTURES.dex[u.pathname.split("/").pop()] ?? []);
     }
@@ -102,7 +129,7 @@ before(() => {
   };
 });
 after(() => { globalThis.fetch = realFetch; });
-beforeEach(() => { calls.length = 0; down = new Set(); });
+beforeEach(() => { calls.length = 0; rpcCalls.length = 0; down = new Set(); });
 
 const codes = (r, severity) => r.reasons.filter((x) => !severity || x.severity === severity).map((x) => x.code).sort();
 
@@ -180,6 +207,42 @@ test("Base, trusted token: issuer powers, thin DexScreener liquidity and LP lock
   const r = await tokenVerdict({ chain: "base", address: WETH }, NOW);
   assert.deepEqual(codes(r, "orange"), ["TOP_HOLDERS_CONCENTRATED"]);
   for (const code of ["LOW_LIQUIDITY", "LP_NOT_LOCKED", "TOKEN_OWNER_CAN_CHANGE_BALANCES"]) assert.ok(codes(r, "info").includes(code), code);
+});
+
+test("Base, proxy token (cbBTC): GoPlus is silent on controls, so the chain is asked; pause and blacklist powers are context", async () => {
+  const r = await tokenVerdict({ chain: "base", address: CBBTC }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
+  const byCode = Object.fromEntries(r.reasons.map((x) => [x.code, x]));
+  assert.deepEqual(byCode.TOKEN_PAUSABLE, { code: "TOKEN_PAUSABLE", severity: "info", details: { source: "onchain", pauser: "0x1ac78dfcae082e9fe286d1ccb12c17a3e906b906" } });
+  assert.deepEqual(byCode.TOKEN_BLACKLIST, { code: "TOKEN_BLACKLIST", severity: "info", details: { source: "onchain", blacklister: "0x158cfa498b1f72f458acf8df993c709efca11e31" } });
+  assert.ok(!byCode.TOKEN_PAUSED);
+  assert.ok(r.sources.includes("chain"));
+  assert.equal(r.one_liner, "SAFE: no red flags, on the GoPlus trust list; issuer can pause transfers and blacklist holders");
+});
+
+test("Base, a token paused right now: orange, whatever else it looks like", async () => {
+  const r = await tokenVerdict({ chain: "base", address: PAUSED }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["orange", "CAUTION"]);
+  assert.deepEqual(codes(r, "orange"), ["TOKEN_PAUSED"]);
+  assert.ok(codes(r, "info").includes("TOKEN_PAUSABLE"));
+  assert.match(r.one_liner, /^CAUTION: transfers are paused/);
+});
+
+test("Base, controls: no RPC calls when GoPlus answers; RPC down means no control reasons, still a verdict", async () => {
+  const answered = "0x5555555555555555555555555555555555555555";
+  FIXTURES.goplusEvm[answered] = { is_open_source: "1", transfer_pausable: "0", is_blacklisted: "0" };
+  FIXTURES.dex[answered] = [pair(answered, { liq: 2e6, createdDaysAgo: 400 })];
+  await tokenVerdict({ chain: "base", address: answered }, NOW);
+  assert.equal(rpcCalls.length, 0);
+
+  down = new Set(["rpc"]);
+  const silent = "0x4444444444444444444444444444444444444444";
+  FIXTURES.goplusEvm[silent] = { is_proxy: "1", is_open_source: "1" };
+  FIXTURES.dex[silent] = [pair(silent, { liq: 2e6, createdDaysAgo: 400 })];
+  const r = await tokenVerdict({ chain: "base", address: silent }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
+  assert.ok(!r.reasons.some((x) => ["TOKEN_PAUSABLE", "TOKEN_BLACKLIST", "TOKEN_PAUSED"].includes(x.code)));
+  assert.ok(!r.sources.includes("chain"));
 });
 
 test("Base, honeypot: red, AVOID, and the GoPlus token rules from /v1/check apply", async () => {
