@@ -3,7 +3,7 @@
   "name": "io.github.Fizzl13/presign-guard",
   "title": "presign-guard",
   "description": "Pre-sign, token and approval checks for agents: green/orange/red for signatures, tokens, wallets.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "repository": {
     "url": "https://github.com/Fizzl13/presign-guard",
     "source": "github"
