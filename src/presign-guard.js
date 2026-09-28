@@ -197,25 +197,33 @@ function getStorageAt(chainId, address, slot) {
   });
 }
 
-// A read-only contract call. Returns the raw result, or null when the call reverts
-// (the contract has no such function). Throws UpstreamError when the RPC can't be asked.
-function ethCall(chainId, to, data) {
-  return cached(`call:${chainId}:${to}:${data}`, async () => {
+// Read-only contract calls, sent as one JSON-RPC batch (public RPCs rate-limit
+// bursts of single requests). Returns one raw result per call, or null where the
+// call reverts (the contract has no such function). Throws UpstreamError when the
+// RPC can't be asked.
+function ethCalls(chainId, to, datas) {
+  return cached(`calls:${chainId}:${to}:${datas.join(",")}`, async () => {
     let res;
     try {
       res = await fetch(process.env[`RPC_URL_${chainId}`] || RPC_URLS[chainId], {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+        body: JSON.stringify(datas.map((data, id) => ({ jsonrpc: "2.0", id, method: "eth_call", params: [{ to, data }, "latest"] }))),
         signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
       });
     } catch (err) {
       throw new UpstreamError(`Chain RPC unreachable (${err.name})`);
     }
     const body = res.ok ? await res.json().catch(() => null) : null;
-    if (body?.error) return null; // execution reverted
-    if (typeof body?.result !== "string") throw new UpstreamError(`Chain RPC error${res.ok ? "" : ` (HTTP ${res.status})`}`);
-    return body.result;
+    if (!Array.isArray(body)) throw new UpstreamError(`Chain RPC error${res.ok ? "" : ` (HTTP ${res.status})`}`);
+    const results = datas.map((_, id) => {
+      const answer = body.find((x) => x?.id === id);
+      if (typeof answer?.result === "string") return answer.result;
+      if (answer?.error && /revert/i.test(String(answer.error.message))) return null;
+      return undefined; // no answer (rate limit, RPC error): unknown
+    });
+    if (results.every((x) => x === undefined)) throw new UpstreamError("Chain RPC error (no answers)"); // not cached
+    return results;
   });
 }
 
@@ -295,7 +303,7 @@ function tokenReasons(token, t, add) {
 }
 
 // Shared with the token verdict (token-verdict.js).
-export { ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCall };
+export { ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCalls };
 
 // ---------- input helpers ----------
 

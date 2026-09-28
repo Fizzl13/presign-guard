@@ -17,7 +17,7 @@
 import express from "express";
 import { encodeFunctionData, isAddress, parseAbi, zeroAddress } from "viem";
 import {
-  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCall,
+  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCalls,
 } from "./presign-guard.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
@@ -279,10 +279,10 @@ const wordAddress = (r) => { const w = word(r); return w && /^0x0{24}/.test(w) ?
 
 // { paused, pauser, blacklister, pausable, blacklist }, or null when the chain RPC can't be asked.
 export async function issuerControls(chainId, address) {
-  const entries = await Promise.all(Object.entries(CONTROL_CALLS).map(async ([name, data]) => {
-    try { return [name, await ethCall(chainId, address, data)]; } catch { return [name, undefined]; }
-  }));
-  if (entries.every(([, r]) => r === undefined)) return null;
+  const names = Object.keys(CONTROL_CALLS);
+  let results;
+  try { results = await ethCalls(chainId, address, Object.values(CONTROL_CALLS)); } catch { return null; }
+  const entries = names.map((name, i) => [name, results[i]]);
   const r = Object.fromEntries(entries);
   const pauser = wordAddress(r.pauser);
   const blacklister = wordAddress(r.blacklister);

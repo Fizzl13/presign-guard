@@ -115,10 +115,12 @@ before(() => {
     }
     if (u.hostname === "mainnet.base.org") {
       if (down.has("rpc")) throw new TypeError("fetch failed");
-      const { params: [{ to, data }] } = JSON.parse(init.body);
-      rpcCalls.push(data.slice(0, 10));
-      const result = FIXTURES.rpc[to]?.[data.slice(0, 10)];
-      return Response.json(result ? { jsonrpc: "2.0", id: 1, result } : { jsonrpc: "2.0", id: 1, error: { code: 3, message: "execution reverted" } });
+      // One JSON-RPC batch per token.
+      return Response.json(JSON.parse(init.body).map(({ id, params: [{ to, data }] }) => {
+        rpcCalls.push(data.slice(0, 10));
+        const result = FIXTURES.rpc[to]?.[data.slice(0, 10)];
+        return result ? { jsonrpc: "2.0", id, result } : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } };
+      }));
     }
     if (u.hostname === "api.dexscreener.com") {
       return Response.json(FIXTURES.dex[u.pathname.split("/").pop()] ?? []);
