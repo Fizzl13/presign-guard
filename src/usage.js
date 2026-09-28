@@ -2,7 +2,7 @@
 // the dashboard at x402-doctor.fizzl.eu/admin/usage. Null = not logged.
 import usageLog from "./usage-log.cjs";
 
-export const { createUsageLog } = usageLog;
+export const { createUsageLog, agentOf } = usageLog;
 
 const ROUTES = { "/v1/check": "check", "/v1/check/explain": "check + explain" };
 
@@ -18,6 +18,7 @@ function typedDataOf(body) {
 function describeMcpCall(req, body) {
   const call = usageLog.mcpToolCall(req.body);
   if (!call) return null; // initialize, tools/list
+  if (call.tool === "feedback") return null; // feedback.cjs logs it itself, with the full message
   const reply = (Array.isArray(body) ? body : [body]).find((r) => r && r.result) || {};
   const text = reply.result && reply.result.content && reply.result.content[0] && reply.result.content[0].text;
   if (reply.result && reply.result.isError && /payment|402/i.test(String(text))) return null; // the price, not a call
