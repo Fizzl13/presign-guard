@@ -113,7 +113,7 @@ before(() => {
       if (mint === DOWN_SOL) return new Response("rate limited", { status: 429 });
       return FIXTURES.rugcheck[mint] ? Response.json(FIXTURES.rugcheck[mint]) : new Response("not found", { status: 404 });
     }
-    if (u.hostname === "mainnet.base.org") {
+    if (u.hostname === "base-rpc.publicnode.com") {
       if (down.has("rpc")) throw new TypeError("fetch failed");
       // One JSON-RPC batch per token.
       return Response.json(JSON.parse(init.body).map(({ id, params: [{ to, data }] }) => {

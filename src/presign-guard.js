@@ -37,7 +37,7 @@ const RPC_URLS = {
   10: "https://optimism-rpc.publicnode.com",
   56: "https://bsc-rpc.publicnode.com",
   137: "https://polygon-bor-rpc.publicnode.com",
-  8453: "https://mainnet.base.org",
+  8453: "https://base-rpc.publicnode.com",
   42161: "https://arb1.arbitrum.io/rpc",
 };
 // EIP-7702: a plain wallet with delegated code. Its private key still controls it.
