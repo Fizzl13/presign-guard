@@ -182,7 +182,7 @@ async function caption(page, text) {
 
 const zoomPage = (page) => page.evaluate((z) => { document.documentElement.style.zoom = String(z); }, ZOOM);
 const center = (page, selector) => page.evaluate((s) => document.querySelector(s).scrollIntoView({ behavior: "smooth", block: "center" }), selector);
-const glow = (page, selector, color = "rgba(167,139,250,.55)") =>
+const glow = (page, selector, color = "rgba(97,245,195,.55)") =>
   page.evaluate(({ selector, color }) => {
     const el = document.querySelector(selector);
     el.style.transition = "box-shadow .3s";
