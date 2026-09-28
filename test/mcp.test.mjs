@@ -18,6 +18,10 @@ import { x402Client } from "@x402/core/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { createMcpRouter, FREE_CALLS_PER_HOUR } from "../src/mcp.js";
 import { createSigner, verifyReceipt } from "../src/receipt.js";
+import feedbackModule from "../src/feedback.cjs";
+
+const feedbackEvents = [];
+const feedback = feedbackModule.createFeedback({ service: "presign", record: (e) => feedbackEvents.push(e), log: { log() {}, error() {} } });
 
 const SIGNER = createSigner({ RECEIPT_SIGNER_SECRET: "mcp-test-secret-that-is-long-enough-0123" });
 
@@ -111,7 +115,7 @@ before(async () => {
   const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: `http://127.0.0.1:${fac.address().port}` })).register(BASE, new ServerEvmScheme())
     .register(SOLANA, new ServerSvmScheme());
   const app = express();
-  app.use(createMcpRouter({ resourceServer, network: BASE, payTo: PAY_TO, solana: { network: SOLANA, payTo: PAY_TO_SOLANA }, signer: SIGNER }));
+  app.use(createMcpRouter({ resourceServer, network: BASE, payTo: PAY_TO, solana: { network: SOLANA, payTo: PAY_TO_SOLANA }, signer: SIGNER, feedback }));
   const s = await new Promise((resolve) => { const x = app.listen(0, "127.0.0.1", () => resolve(x)); });
   servers.push(s);
   baseUrl = `http://127.0.0.1:${s.address().port}`;
@@ -125,10 +129,20 @@ async function mcpClient() {
   return client;
 }
 
+test("feedback tool: free, answers with an id and records the report via mcp", async () => {
+  const client = await mcpClient();
+  const result = await client.callTool({ name: "feedback", arguments: { type: "feature", message: "Support Arbitrum in token_verdict", endpoint: "token_verdict" } });
+  assert.ok(!result.isError);
+  assert.equal(JSON.parse(result.content[0].text).service, "presign");
+  assert.equal(feedbackEvents.at(-1).via, "mcp");
+  assert.equal(feedbackEvents.at(-1).feedback.endpoint, "token_verdict");
+  await client.close();
+});
+
 test("lists the free quick checks and the paid tools with their prices", async () => {
   const client = await mcpClient();
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["presign_check", "presign_check_explain", "presign_quick_check", "token_quick_verdict", "token_verdict", "wallet_approvals"]);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["feedback", "presign_check", "presign_check_explain", "presign_quick_check", "token_quick_verdict", "token_verdict", "wallet_approvals"]);
   assert.match(tools.find((t) => t.name === "token_verdict").description, /\$0\.01/);
   assert.match(tools.find((t) => t.name === "wallet_approvals").description, /\$0\.02/);
   assert.deepEqual(tools.find((t) => t.name === "wallet_approvals").inputSchema.required.sort(), ["address", "chain"]);
@@ -145,7 +159,7 @@ test("every tool lists valid example arguments in _meta.examples: paid tools ans
     const example = tool._meta && tool._meta.examples && tool._meta.examples[0];
     assert.ok(example && typeof example === "object", `${tool.name} has an example`);
     for (const key of tool.inputSchema.required || []) assert.ok(key in example, `${tool.name} example has ${key}`);
-    if (/quick/.test(tool.name)) continue; // free tools would run the check
+    if (/quick|feedback/.test(tool.name)) continue; // free tools would run the check or file a report
     const result = await client.callTool({ name: tool.name, arguments: example });
     assert.ok(result.isError, tool.name);
     assert.ok(Array.isArray(result.structuredContent && result.structuredContent.accepts), `${tool.name}: payment requirement, not an input error: ${JSON.stringify(result.content)}`);

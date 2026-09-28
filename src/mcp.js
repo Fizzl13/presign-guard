@@ -197,7 +197,7 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, tool }) {
   };
 }
 
-function buildServer({ paidWrappers, allowFree, signer = null }) {
+function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {} }) {
   const server = new McpServer({ name: "presign-guard", version: VERSION });
 
   server.registerTool(
@@ -280,16 +280,30 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
       }
     );
   }
+  if (feedback) {
+    server.registerTool(
+      feedback.mcpTool.name,
+      {
+        title: feedback.mcpTool.title,
+        description: feedback.mcpTool.description,
+        inputSchema: feedback.mcpShape(z),
+        annotations: { readOnlyHint: false, openWorldHint: false },
+        // Marked as an example, so a checker that sends it is easy to spot in the log.
+        _meta: examplesMeta({ type: "other", message: "Example report from the tool listing: please ignore." }),
+      },
+      async (args) => feedback.mcpCall(args, caller)
+    );
+  }
   return server;
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000) }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, tool })]));
 
   router.post("/mcp", express.json({ limit: "64kb" }), async (req, res) => {
-    const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip), signer });
+    const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] } });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();

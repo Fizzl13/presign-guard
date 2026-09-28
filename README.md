@@ -19,6 +19,7 @@ Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval, its spender, and which to revoke (see below) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
+| `POST /feedback` | free | Report a bug or a missing feature: see [Feedback](#feedback) |
 | `GET /health` | free | Liveness |
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
 | `GET /.well-known/x402` | free | x402 discovery manifest |
@@ -37,6 +38,7 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict a
 | `token_quick_verdict` | free, shares the 10 calls/hour | The token verdict and grade only |
 | `token_verdict` | $0.01 USDC via x402 | The full token verdict, as `GET /v1/token` |
 | `wallet_approvals` | $0.02 USDC via x402 | The wallet approval audit, as `GET /v1/approvals` |
+| `feedback` | free | Report a bug or a missing feature, as `POST /feedback` |
 
 The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` and `wallet_approvals` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
@@ -205,6 +207,18 @@ The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it h
 ### Not covered
 
 `eth_sign` and `personal_sign` messages, and transaction simulation. Treat a green verdict as "no known risk signals", not as a guarantee.
+
+## Feedback
+
+Found a bug, or missing something? Send it with `POST /feedback` (free, no payment) or the MCP tool `feedback`:
+
+```bash
+curl -X POST https://presign-guard.fizzl.eu/feedback \
+  -H 'content-type: application/json' \
+  -d '{"type": "feature", "message": "Support Arbitrum in /v1/token", "endpoint": "/v1/token"}'
+```
+
+`type` is `bug`, `feature` or `other`; `message` is required (up to 2000 characters); `endpoint` and `contact` are optional. The answer is `202` with an id. At most 10 reports per hour per caller. Reports go to the usage log, and a person reads every one; nothing in a report is run or changed automatically. `GET /feedback` shows the schema.
 
 ## Run locally
 

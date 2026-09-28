@@ -9,7 +9,8 @@ import { HTTPFacilitatorClient } from "@x402/core/server";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
-import { createUsageLog, describePresignCall } from "./src/usage.js";
+import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
+import feedbackModule from "./src/feedback.cjs";
 import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
 import { createTokenQuickRouter } from "./src/token-quick.js";
 import { fizzlCors } from "./src/fizzl-cors.js";
@@ -89,6 +90,7 @@ app.get("/", (_req, res) => res.json({
   docs: "https://github.com/Fizzl13/presign-guard",
   paid: Object.keys(ROUTES),
   mcp: `${PUBLIC_URL}/mcp`,
+  feedback: `POST ${PUBLIC_URL}/feedback`,
   // Directory listings, also here: crawlers that ask for */* get this JSON, not the page.
   listings: {
     smithery: "https://smithery.ai/servers/frits-zwager/presign-guard",
@@ -136,12 +138,18 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 // Usage log: every check with what was sent, for the dashboard at
 // x402-doctor.fizzl.eu/admin/usage. Does nothing without USAGE_LOG_TOKEN.
 // req.body is filled in by the check router before the call is logged.
-app.use(createUsageLog({ service: "presign" }).middleware(describePresignCall));
+const usageLog = createUsageLog({ service: "presign" });
+app.use(usageLog.middleware(describePresignCall));
+
+// POST /feedback (and the MCP tool feedback): agents report a bug or a missing
+// feature. Free; it lands in the usage log and a person reads it (src/feedback.cjs).
+const feedback = feedbackModule.createFeedback({ service: "presign", record: usageLog.record, agentOf });
+app.use(feedback.router(express));
 
 // MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
 // One free limit per IP for the free MCP tools and GET /v1/token/quick together.
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, signer: SIGNER, limiter: freeLimiter }));
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, signer: SIGNER, limiter: freeLimiter, feedback }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
