@@ -1,5 +1,5 @@
 // What each presign-guard call was about, for the usage log (usage-log.cjs):
-// the dashboard at x402-doctor.onrender.com/admin/usage. Null = not logged.
+// the dashboard at x402-doctor.fizzl.eu/admin/usage. Null = not logged.
 import usageLog from "./usage-log.cjs";
 
 export const { createUsageLog } = usageLog;

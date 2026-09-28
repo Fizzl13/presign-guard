@@ -23,7 +23,7 @@ import { trustProxyHops } from "./src/proxy.js";
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
 const MAINNET = NETWORK === "eip155:8453";
-const PUBLIC_URL = (process.env.PUBLIC_URL ?? "https://presign-guard.onrender.com").replace(/\/$/, "");
+const PUBLIC_URL = (process.env.PUBLIC_URL ?? "https://presign-guard.fizzl.eu").replace(/\/$/, "");
 
 // Trimmed: a stray space or newline pasted into the dashboard makes every 402 unpayable.
 const PAY_TO = process.env.PAY_TO?.trim();
@@ -117,7 +117,7 @@ app.get("/.well-known/presign-guard-signer.json", async (_req, res) => res.json(
 }));
 // Certificate signing page, also for Doctor (?service=x402-doctor): the payout
 // wallet signs on this one site.
-const DOCTOR_URL = (process.env.DOCTOR_URL ?? "https://x402-doctor.onrender.com").replace(/\/$/, "");
+const DOCTOR_URL = (process.env.DOCTOR_URL ?? "https://x402-doctor.fizzl.eu").replace(/\/$/, "");
 app.use(signPageRouter({
   page: readFileSync(fileURLToPath(new URL("./public/sign-receipt-key.html", import.meta.url)), "utf8"),
   authority: AUTH,
@@ -132,7 +132,7 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 });
 
 // Usage log: every check with what was sent, for the dashboard at
-// x402-doctor.onrender.com/admin/usage. Does nothing without USAGE_LOG_TOKEN.
+// x402-doctor.fizzl.eu/admin/usage. Does nothing without USAGE_LOG_TOKEN.
 // req.body is filled in by the check router before the call is logged.
 app.use(createUsageLog({ service: "presign" }).middleware(describePresignCall));
 

@@ -18,8 +18,8 @@ jobs:
       # listing look dead to the first visitors; wake it and check /mcp.
       - name: Check the live MCP endpoint
         run: |
-          curl -s -o /dev/null --retry 5 --retry-delay 10 --max-time 90 https://presign-guard.onrender.com/
-          curl -sf --max-time 60 https://presign-guard.onrender.com/mcp \
+          curl -s -o /dev/null --retry 5 --retry-delay 10 --max-time 90 https://presign-guard.fizzl.eu/
+          curl -sf --max-time 60 https://presign-guard.fizzl.eu/mcp \
             -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | tee tools.json
           grep -q token_quick_verdict tools.json

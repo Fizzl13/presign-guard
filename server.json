@@ -8,11 +8,11 @@
     "url": "https://github.com/Fizzl13/presign-guard",
     "source": "github"
   },
-  "websiteUrl": "https://presign-guard.onrender.com",
+  "websiteUrl": "https://presign-guard.fizzl.eu",
   "remotes": [
     {
       "type": "streamable-http",
-      "url": "https://presign-guard.onrender.com/mcp"
+      "url": "https://presign-guard.fizzl.eu/mcp"
     }
   ]
 }
