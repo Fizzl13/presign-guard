@@ -18,7 +18,7 @@ import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
   approvalsBazaarExtension, approvalsServiceMetadata,
 } from "./discovery.js";
-import { decodeFunctionData, isAddress, isHex, maxUint256, parseAbi } from "viem";
+import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
 import { screenSanctions, domainAge, hostnameReputation, originHost, NEW_DOMAIN_DAYS } from "./pg1.js";
 import { metamaskSiteScan } from "./site-scan.js";
 
@@ -302,8 +302,64 @@ function tokenReasons(token, t, add) {
   if (flag(t.trust_list)) add("TOKEN_ON_TRUST_LIST", "info", token);
 }
 
+// GoPlus leaves the control fields out for a proxy token (USDC, cbBTC, EURC, wstETH):
+// it only reports is_proxy and the owner. Then ask the token itself, through the
+// getters that the common issuer contracts expose (Circle's FiatToken, which cbBTC
+// also uses; OpenZeppelin Pausable and AccessControl; Tether's blacklist).
+const CONTROL_ABI = parseAbi([
+  "function paused() view returns (bool)",
+  "function pauser() view returns (address)",
+  "function PAUSER_ROLE() view returns (bytes32)",
+  "function blacklister() view returns (address)",
+  "function isBlacklisted(address) view returns (bool)",
+  "function isBlackListed(address) view returns (bool)",
+]);
+const CONTROL_CALLS = {
+  paused: encodeFunctionData({ abi: CONTROL_ABI, functionName: "paused" }),
+  pauser: encodeFunctionData({ abi: CONTROL_ABI, functionName: "pauser" }),
+  pauserRole: encodeFunctionData({ abi: CONTROL_ABI, functionName: "PAUSER_ROLE" }),
+  blacklister: encodeFunctionData({ abi: CONTROL_ABI, functionName: "blacklister" }),
+  isBlacklisted: encodeFunctionData({ abi: CONTROL_ABI, functionName: "isBlacklisted", args: [zeroAddress] }),
+  isBlackListed: encodeFunctionData({ abi: CONTROL_ABI, functionName: "isBlackListed", args: [zeroAddress] }),
+};
+const word = (r) => (typeof r === "string" && /^0x[0-9a-f]{64}$/i.test(r) ? r.toLowerCase() : null);
+const wordAddress = (r) => { const w = word(r); return w && /^0x0{24}/.test(w) ? `0x${w.slice(26)}` : null; };
+
+// { paused, pauser, blacklister, pausable, blacklist }, or null when the chain RPC can't be asked.
+async function issuerControls(chainId, address) {
+  const names = Object.keys(CONTROL_CALLS);
+  let results;
+  try { results = await ethCalls(chainId, address, Object.values(CONTROL_CALLS)); } catch { return null; }
+  const entries = names.map((name, i) => [name, results[i]]);
+  const r = Object.fromEntries(entries);
+  const pauser = wordAddress(r.pauser);
+  const blacklister = wordAddress(r.blacklister);
+  const bool = (x) => (word(x) ? BigInt(x) === 1n : null);
+  return {
+    paused: bool(r.paused) === true,
+    pauser: pauser && pauser !== zeroAddress ? pauser : null,
+    blacklister: blacklister && blacklister !== zeroAddress ? blacklister : null,
+    pausable: Boolean((pauser && pauser !== zeroAddress) || word(r.pauserRole) || bool(r.paused) !== null),
+    blacklist: Boolean((blacklister && blacklister !== zeroAddress) || bool(r.isBlacklisted) !== null || bool(r.isBlackListed) !== null),
+  };
+}
+
+// Only asked when GoPlus has no answer for these fields, so a normal token costs no RPC calls.
+// add(code, severity, details).
+function controlReasons(controls, add) {
+  if (!controls) return;
+  if (controls.paused) add("TOKEN_PAUSED", "orange", { source: "onchain" });
+  if (controls.pausable) add("TOKEN_PAUSABLE", "info", { source: "onchain", ...(controls.pauser && { pauser: controls.pauser }) });
+  if (controls.blacklist) add("TOKEN_BLACKLIST", "info", { source: "onchain", ...(controls.blacklister && { blacklister: controls.blacklister }) });
+}
+
+const needsControlCheck = (sec) => sec && sec.transfer_pausable === undefined && sec.is_blacklisted === undefined;
+
 // Shared with the token verdict (token-verdict.js).
-export { ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCalls };
+export {
+  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
+  issuerControls, controlReasons, needsControlCheck,
+};
 
 // ---------- input helpers ----------
 
@@ -610,10 +666,16 @@ export async function analyze(req) {
 
   // The tokens being approved, permitted or paid (not NFT approve-for-all).
   const tokens = [...new Set(req.grants.filter((g) => !g.allForAll && g.token).map((g) => g.token))];
-  const tokenLookups = await Promise.all(tokens.map(async (token) => [token, await getTokenSecurity(req.chainId, token)]));
-  for (const [token, { data, partial }] of tokenLookups) {
+  // A proxy token (USDC, cbBTC, EURC) gets no pause or blacklist fields from GoPlus:
+  // then the token is asked on-chain, as in the token verdict.
+  const tokenLookups = await Promise.all(tokens.map(async (token) => {
+    const sec = await getTokenSecurity(req.chainId, token);
+    return [token, sec, needsControlCheck(sec.data) ? await issuerControls(req.chainId, token) : null];
+  }));
+  for (const [token, { data, partial }, controls] of tokenLookups) {
     if (partial) add("PARTIAL_SOURCE_DATA", "info", token);
     tokenReasons(token, data, add);
+    controlReasons(controls, (code, severity, details) => add(code, severity, token, details));
   }
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);

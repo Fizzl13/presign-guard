@@ -15,9 +15,10 @@
 // verdict (503, nothing charged); RugCheck being down is reported and skipped.
 
 import express from "express";
-import { encodeFunctionData, isAddress, parseAbi, zeroAddress } from "viem";
+import { isAddress } from "viem";
 import {
-  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons, ethCalls,
+  ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
+  issuerControls, controlReasons, needsControlCheck,
 } from "./presign-guard.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
@@ -253,58 +254,6 @@ function solanaHolders(sec, rug) {
   }
   return null;
 }
-
-// GoPlus leaves the control fields out for a proxy token (USDC, cbBTC, EURC, wstETH):
-// it only reports is_proxy and the owner. Then ask the token itself, through the
-// getters that the common issuer contracts expose (Circle's FiatToken, which cbBTC
-// also uses; OpenZeppelin Pausable and AccessControl; Tether's blacklist).
-const CONTROL_ABI = parseAbi([
-  "function paused() view returns (bool)",
-  "function pauser() view returns (address)",
-  "function PAUSER_ROLE() view returns (bytes32)",
-  "function blacklister() view returns (address)",
-  "function isBlacklisted(address) view returns (bool)",
-  "function isBlackListed(address) view returns (bool)",
-]);
-const CONTROL_CALLS = {
-  paused: encodeFunctionData({ abi: CONTROL_ABI, functionName: "paused" }),
-  pauser: encodeFunctionData({ abi: CONTROL_ABI, functionName: "pauser" }),
-  pauserRole: encodeFunctionData({ abi: CONTROL_ABI, functionName: "PAUSER_ROLE" }),
-  blacklister: encodeFunctionData({ abi: CONTROL_ABI, functionName: "blacklister" }),
-  isBlacklisted: encodeFunctionData({ abi: CONTROL_ABI, functionName: "isBlacklisted", args: [zeroAddress] }),
-  isBlackListed: encodeFunctionData({ abi: CONTROL_ABI, functionName: "isBlackListed", args: [zeroAddress] }),
-};
-const word = (r) => (typeof r === "string" && /^0x[0-9a-f]{64}$/i.test(r) ? r.toLowerCase() : null);
-const wordAddress = (r) => { const w = word(r); return w && /^0x0{24}/.test(w) ? `0x${w.slice(26)}` : null; };
-
-// { paused, pauser, blacklister, pausable, blacklist }, or null when the chain RPC can't be asked.
-export async function issuerControls(chainId, address) {
-  const names = Object.keys(CONTROL_CALLS);
-  let results;
-  try { results = await ethCalls(chainId, address, Object.values(CONTROL_CALLS)); } catch { return null; }
-  const entries = names.map((name, i) => [name, results[i]]);
-  const r = Object.fromEntries(entries);
-  const pauser = wordAddress(r.pauser);
-  const blacklister = wordAddress(r.blacklister);
-  const bool = (x) => (word(x) ? BigInt(x) === 1n : null);
-  return {
-    paused: bool(r.paused) === true,
-    pauser: pauser && pauser !== zeroAddress ? pauser : null,
-    blacklister: blacklister && blacklister !== zeroAddress ? blacklister : null,
-    pausable: Boolean((pauser && pauser !== zeroAddress) || word(r.pauserRole) || bool(r.paused) !== null),
-    blacklist: Boolean((blacklister && blacklister !== zeroAddress) || bool(r.isBlacklisted) !== null || bool(r.isBlackListed) !== null),
-  };
-}
-
-// Only asked when GoPlus has no answer for these fields, so a normal token costs no RPC calls.
-function controlReasons(controls, add) {
-  if (!controls) return;
-  if (controls.paused) add("TOKEN_PAUSED", "orange", { source: "onchain" });
-  if (controls.pausable) add("TOKEN_PAUSABLE", "info", { source: "onchain", ...(controls.pauser && { pauser: controls.pauser }) });
-  if (controls.blacklist) add("TOKEN_BLACKLIST", "info", { source: "onchain", ...(controls.blacklister && { blacklister: controls.blacklister }) });
-}
-
-const needsControlCheck = (sec) => sec && sec.transfer_pausable === undefined && sec.is_blacklisted === undefined;
 
 function evmReasons({ sec, market, controls }, add) {
   // The same GoPlus rules as the token part of /v1/check, without a subject. On a
