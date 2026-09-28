@@ -72,6 +72,11 @@ function describeApprovalsCall(req, body) {
 export function describePresignCall(req, _res, body) {
   if (req.method === "POST" && req.path === "/mcp") return describeMcpCall(req, body);
   if (req.method === "GET" && req.path === "/v1/token") return describeTokenCall(req, body);
+  if (req.method === "GET" && req.path === "/v1/token/quick") {
+    const q = req.query || {};
+    const b = body || {};
+    return { route: "token_quick", via: req.get && req.get("origin") ? "web" : "api", input: { chain: q.chain, address: typeof q.address === "string" ? q.address.slice(0, 64) : undefined }, result: { verdict: b.verdict, grade: b.grade, error: b.error } };
+  }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method !== "POST" || !ROUTES[req.path]) return null;
   const input = req.body || {};

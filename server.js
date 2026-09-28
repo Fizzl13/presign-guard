@@ -10,7 +10,9 @@ import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, describePresignCall } from "./src/usage.js";
-import { createMcpRouter } from "./src/mcp.js";
+import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
+import { createTokenQuickRouter } from "./src/token-quick.js";
+import { fizzlCors } from "./src/fizzl-cors.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
@@ -137,7 +139,12 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 app.use(createUsageLog({ service: "presign" }).middleware(describePresignCall));
 
 // MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, signer: SIGNER }));
+// One free limit per IP for the free MCP tools and GET /v1/token/quick together.
+const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, signer: SIGNER, limiter: freeLimiter }));
+// Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
+app.use("/v1/token/quick", fizzlCors);
+app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
 
 app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);

@@ -284,10 +284,9 @@ function buildServer({ paidWrappers, allowFree, signer = null }) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, signer = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000) }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, tool })]));
-  const limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
 
   router.post("/mcp", express.json({ limit: "64kb" }), async (req, res) => {
     const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip), signer });
