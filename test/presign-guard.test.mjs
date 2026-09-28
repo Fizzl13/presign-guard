@@ -29,6 +29,7 @@ const HONEY = "0x7777000000000000000000000000000000000001";   // honeypot token
 const FAKE_USDC = "0x7777000000000000000000000000000000000002"; // impersonates USDC
 const TAXED = "0x7777000000000000000000000000000000000003";   // 12% buy / 15% sell tax
 const MINTABLE = "0x7777000000000000000000000000000000000004"; // mintable, otherwise normal (like DEGEN)
+const PAUSED_TOKEN = "0x7777000000000000000000000000000000000009"; // proxy token, transfers paused
 const SANCTIONED = "0x098b716b8aaf21512996dc57eb0615e2383e2f96"; // Lazarus (Ronin hack), OFAC SDN
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
@@ -97,9 +98,23 @@ async function mockPg1(opts) {
 
 const EIP1967_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 let rpcMethods = [];
+// Issuer control getters by token and selector (sent as one batch); anything else reverts.
+const word = (hex) => "0x" + hex.padStart(64, "0");
+const CONTROLS = {
+  [TOKEN]: { "0x5c975abb": word("0"), "0x9fd0506d": word("1ac78dfcae082e9fe286d1ccb12c17a3e906b906"), "0xbd102430": word("158cfa498b1f72f458acf8df993c709efca11e31"), "0xfe575a87": word("0") },
+  [PAUSED_TOKEN]: { "0x5c975abb": word("1") },
+};
 function mockRpc(opts) {
   if (rpcDown) return new Response("down", { status: 502 });
-  const { method, params } = JSON.parse(opts.body);
+  const body = JSON.parse(opts.body);
+  if (Array.isArray(body)) {
+    return new Response(JSON.stringify(body.map(({ id, method, params: [{ to, data }] }) => {
+      rpcMethods.push(method);
+      const result = CONTROLS[to.toLowerCase()]?.[data.slice(0, 10)];
+      return result ? { jsonrpc: "2.0", id, result } : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } };
+    })));
+  }
+  const { method, params } = body;
   rpcMethods.push(method);
   const address = params[0].toLowerCase();
   if (method === "eth_getStorageAt") {
@@ -120,7 +135,8 @@ const TOKEN_DATA = {
   [HONEY]: { token_symbol: "HONEY", is_open_source: "1", is_honeypot: "1", sell_tax: "1" },
   [FAKE_USDC]: { token_symbol: "USDC", is_open_source: "1", fake_token: { true_token_address: TOKEN, value: 1 } },
   [TAXED]: { token_symbol: "TAX", is_open_source: "1", buy_tax: "0.12", sell_tax: "0.15" },
-  [MINTABLE]: { token_symbol: "DEGEN", is_open_source: "1", is_mintable: "1", buy_tax: "0", sell_tax: "0" },
+  [MINTABLE]: { token_symbol: "DEGEN", is_open_source: "1", is_mintable: "1", transfer_pausable: "0", is_blacklisted: "0", buy_tax: "0", sell_tax: "0" },
+  [PAUSED_TOKEN]: { token_symbol: "PSD", is_open_source: "1", is_proxy: "1", buy_tax: "0", sell_tax: "0" },
 };
 
 function mockGoplus(url) {
@@ -462,6 +478,22 @@ test("USDC-like token: issuer controls are reported as info, the verdict stays g
   assert.ok(codes(r).includes("TOKEN_ON_TRUST_LIST"));
   assert.ok(codes(r).includes("TOKEN_UPGRADEABLE"));
   assert.equal(r.body.reasons.find((x) => x.code === "TOKEN_UPGRADEABLE").severity, "info");
+  // GoPlus has no control fields for this proxy token, so the chain is asked.
+  const pausable = r.body.reasons.find((x) => x.code === "TOKEN_PAUSABLE");
+  assert.deepEqual(pausable, { code: "TOKEN_PAUSABLE", severity: "info", subject: TOKEN, details: { source: "onchain", pauser: "0x1ac78dfcae082e9fe286d1ccb12c17a3e906b906" } });
+  assert.equal(r.body.reasons.find((x) => x.code === "TOKEN_BLACKLIST").details.blacklister, "0x158cfa498b1f72f458acf8df993c709efca11e31");
+});
+
+test("paying or approving a token whose transfers are paused right now is orange", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: PAUSED_TOKEN, spender: GOOD, amount: "1000000" });
+  assert.equal(r.body.verdict, "orange");
+  assert.equal(r.body.reasons.find((x) => x.code === "TOKEN_PAUSED").subject, PAUSED_TOKEN);
+});
+
+test("a token GoPlus answers for costs no eth_call", async () => {
+  rpcMethods = [];
+  await check({ type: "approval", chainId: 8453, token: MINTABLE, spender: GOOD, amount: "1000000" });
+  assert.ok(!rpcMethods.includes("eth_call"), rpcMethods.join(","));
 });
 
 test("approving a honeypot token is red, even for an exact amount to a verified contract", async () => {
