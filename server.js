@@ -94,7 +94,7 @@ app.get("/", (_req, res) => res.json({
   // Directory listings, also here: crawlers that ask for */* get this JSON, not the page.
   listings: {
     smithery: "https://smithery.ai/servers/frits-zwager/presign-guard",
-    agentic_market: "https://agentic.market/services/presign-guard-onrender-com",
+    agentic_market: "https://agentic.market/services/presign-guard-fizzl-eu",
   },
   openapi: `${PUBLIC_URL}/openapi.json`,
   signer: `${PUBLIC_URL}/.well-known/presign-guard-signer.json`,
