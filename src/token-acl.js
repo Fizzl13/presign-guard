@@ -13,11 +13,10 @@
 
 import { address, getAddressDecoder, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
 import { cached } from "./presign-guard.js";
+import { solanaRpc as rpc } from "./solana-rpc.js";
 
 export const TOKEN_ACL_PROGRAM = "TACLkU6CiCdkQN2MjoyDkVg2yAH9zkxiHDsiztQ52TP";
 export const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
-const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
-const RPC_TIMEOUT_MS = 4000;
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 
 export async function mintConfigAddress(mint) {
@@ -44,18 +43,6 @@ export function decodeMintConfig(bytes) {
   };
 }
 
-async function rpc(method, params) {
-  const res = await fetch(SOLANA_RPC_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-  });
-  if (!res.ok) throw new Error(`Solana RPC HTTP ${res.status}`);
-  const body = await res.json();
-  if (body.error) throw new Error(`Solana RPC ${body.error.message ?? "error"}`);
-  return body.result?.value ?? null;
-}
 
 const extension = (info, name) => (info?.extensions ?? []).find((e) => e?.extension === name)?.state ?? null;
 
