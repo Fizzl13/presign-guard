@@ -8,6 +8,8 @@ import {
   tokenVerdict, parseTokenRequest, summarizeMarket, gradeOf, oneLiner,
   validateTokenQuery, createTokenRouter,
 } from "../src/token-verdict.js";
+import { mintConfigAddress, decodeMintConfig, TOKEN_2022_PROGRAM, TOKEN_ACL_PROGRAM } from "../src/token-acl.js";
+import { getAddressDecoder, getAddressEncoder } from "@solana/kit";
 
 const NOW = Date.UTC(2026, 8, 25, 12);
 const DAY = 86400e3;
@@ -17,6 +19,14 @@ const RUGGED = "Rug1111111111111111111111111111111111111111";
 const USDC_SOL = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const UNKNOWN_SOL = "Unkn111111111111111111111111111111111111111";
 const DOWN_SOL = "Down111111111111111111111111111111111111111";
+// Token ACL (sRFC 37) mints: Token-2022, frozen by default, a MintConfig PDA as freeze authority.
+const solAddress = (n) => getAddressDecoder().decode(new Uint8Array(32).fill(n));
+const ACL = solAddress(11);
+const ACL_DELEGATE = solAddress(12);
+const FROZEN_WALLET = solAddress(13); // freeze authority is a plain wallet
+const FROZEN_WALLET_2 = solAddress(14);
+const GATE = solAddress(15);
+const ISSUER = solAddress(16);
 const DEGEN = "0x4ed4e862860bed51a9570b96d89af5e1b0efefed";
 const HONEY = "0x1111111111111111111111111111111111111111";
 const NOMARKET = "0x2222222222222222222222222222222222222222";
@@ -49,6 +59,10 @@ const FIXTURES = {
     [RUGGED]: solSec({ mintable: on, freezable: on }),
     [USDC_SOL]: solSec({ mintable: on, freezable: on, trusted_token: 1 }),
     [DOWN_SOL]: solSec(),
+    [ACL]: solSec({ freezable: on, default_account_state_upgradable: on }),
+    [ACL_DELEGATE]: solSec({ freezable: on }),
+    [FROZEN_WALLET]: solSec({ freezable: on }),
+    [FROZEN_WALLET_2]: solSec({ freezable: on }),
   },
   rugcheck: {
     [BONK]: { rugged: false, risks: [], markets: [{ lp: { lpLockedPct: 0 } }] },
@@ -62,6 +76,10 @@ const FIXTURES = {
     [USDC_SOL]: [pair(USDC_SOL, { liq: 5e7, createdDaysAgo: 900, symbol: "USDC" })],
     [UNKNOWN_SOL]: [],
     [DOWN_SOL]: [pair(DOWN_SOL, { liq: 1e6, createdDaysAgo: 100 })],
+    [ACL]: [pair(ACL, { liq: 2e6, createdDaysAgo: 200, symbol: "RWA" })],
+    [ACL_DELEGATE]: [pair(ACL_DELEGATE, { liq: 2e6, createdDaysAgo: 200, symbol: "RWA2" })],
+    [FROZEN_WALLET]: [pair(FROZEN_WALLET, { liq: 2e6, createdDaysAgo: 200, symbol: "FRZ" })],
+    [FROZEN_WALLET_2]: [pair(FROZEN_WALLET_2, { liq: 2e6, createdDaysAgo: 200, symbol: "FRZ2" })],
     [DEGEN]: [pair(DEGEN, { liq: 3e6, createdDaysAgo: 900, symbol: "DEGEN" })],
     [HONEY]: [pair(HONEY, { liq: 80000, createdDaysAgo: 0.5 })],
     [NOMARKET]: [],
@@ -93,12 +111,37 @@ const FIXTURES = {
   },
 };
 
+// Solana RPC getAccountInfo answers, filled in before() (the PDAs need async derivation).
+const solanaAccounts = {};
+const enc = getAddressEncoder();
+function mintConfigBytes({ mint, thaw = true, gate = GATE }) {
+  const b = new Uint8Array(100);
+  b.set([1, 255, thaw ? 1 : 0, 0]);
+  b.set(enc.encode(mint), 4);
+  b.set(enc.encode(ISSUER), 36);
+  b.set(enc.encode(gate), 68);
+  return b;
+}
+const token2022Mint = (freezeAuthority, extensions) => ({
+  owner: TOKEN_2022_PROGRAM,
+  data: { parsed: { type: "mint", info: { freezeAuthority, mintAuthority: null, extensions } }, program: "spl-token-2022" },
+});
+
 const realFetch = globalThis.fetch;
 const calls = [];
 const rpcCalls = [];
 let down = new Set();
 
-before(() => {
+before(async () => {
+  for (const mint of [ACL, ACL_DELEGATE]) {
+    const pda = await mintConfigAddress(mint);
+    solanaAccounts[mint] = token2022Mint(pda, [
+      { extension: "defaultAccountState", state: { accountState: "frozen" } },
+      ...(mint === ACL_DELEGATE ? [{ extension: "permanentDelegate", state: { delegate: ISSUER } }] : []),
+    ]);
+    solanaAccounts[pda] = { owner: TOKEN_ACL_PROGRAM, data: [Buffer.from(mintConfigBytes({ mint })).toString("base64"), "base64"] };
+  }
+  solanaAccounts[FROZEN_WALLET] = token2022Mint(ISSUER, [{ extension: "defaultAccountState", state: { accountState: "initialized" } }]);
   globalThis.fetch = async (url, init) => {
     const u = new URL(String(url));
     calls.push(u.hostname);
@@ -121,6 +164,11 @@ before(() => {
         const result = FIXTURES.rpc[to]?.[data.slice(0, 10)];
         return result ? { jsonrpc: "2.0", id, result } : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } };
       }));
+    }
+    if (u.hostname === "api.mainnet-beta.solana.com") {
+      if (down.has("solana-rpc")) throw new TypeError("fetch failed");
+      const { id, params: [account] } = JSON.parse(init.body);
+      return Response.json({ jsonrpc: "2.0", id, result: { context: { slot: 1 }, value: solanaAccounts[account] ?? null } });
     }
     if (u.hostname === "api.dexscreener.com") {
       return Response.json(FIXTURES.dex[u.pathname.split("/").pop()] ?? []);
@@ -179,6 +227,56 @@ test("Solana, trusted issuer (USDC): mint and freeze authority are context, not 
   assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
   assert.deepEqual(codes(r, "info"), ["FREEZE_AUTHORITY_ACTIVE", "MINT_AUTHORITY_ACTIVE", "TOKEN_ON_TRUST_LIST"]);
   assert.equal(r.one_liner, "SAFE: no red flags, on the GoPlus trust list");
+});
+
+test("Solana, permissioned token (Token ACL): one reason that says what it means for a buyer, not \"holders can be frozen\"", async () => {
+  const r = await tokenVerdict({ chain: "solana", address: ACL }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["orange", "CAUTION"]);
+  assert.deepEqual(codes(r, "orange"), ["PERMISSIONED_TOKEN"]);
+  assert.ok(!codes(r).includes("FREEZE_AUTHORITY_ACTIVE"));
+  const reason = r.reasons.find((x) => x.code === "PERMISSIONED_TOKEN");
+  assert.deepEqual(reason.details, { standard: "token-acl", defaultFrozen: true, gateProgram: GATE, configAuthority: ISSUER, permissionlessThaw: true, pausable: false });
+  assert.equal(r.permissioned.mintConfig, await mintConfigAddress(ACL));
+  assert.equal(r.permissioned.permanentDelegate, null);
+  assert.ok(r.sources.includes("chain"));
+  assert.equal(r.one_liner, "CAUTION: permissioned: only approved wallets can hold or send it");
+});
+
+test("Solana, permissioned token with a permanent delegate: the issuer can also move balances", async () => {
+  const r = await tokenVerdict({ chain: "solana", address: ACL_DELEGATE }, NOW);
+  assert.deepEqual(codes(r, "orange"), ["BALANCE_MUTABLE", "PERMISSIONED_TOKEN"]);
+  assert.deepEqual(r.reasons.find((x) => x.code === "BALANCE_MUTABLE").details, { permanentDelegate: ISSUER });
+});
+
+test("Solana, a Token-2022 freeze authority that is a plain wallet is not Token ACL; RPC down keeps the old reason", async () => {
+  const r = await tokenVerdict({ chain: "solana", address: FROZEN_WALLET }, NOW);
+  assert.deepEqual(codes(r, "orange"), ["FREEZE_AUTHORITY_ACTIVE"]);
+  assert.equal(r.permissioned, undefined);
+  assert.ok(!r.sources.includes("chain"));
+
+  down.add("solana-rpc");
+  const r2 = await tokenVerdict({ chain: "solana", address: FROZEN_WALLET_2 }, NOW);
+  assert.ok(codes(r2, "info").includes("PERMISSION_CHECK_UNAVAILABLE"));
+});
+
+test("Solana, the chain is only asked when GoPlus reports a freeze authority, and never for a trust-list token", async () => {
+  await tokenVerdict({ chain: "solana", address: BONK }, NOW);
+  await tokenVerdict({ chain: "solana", address: USDC_SOL }, NOW);
+  assert.ok(!calls.includes("api.mainnet-beta.solana.com"));
+});
+
+test("MintConfig PDA: seeds [\"MINT_CONFIG\", mint], as on Solana mainnet (the sRFC text says MINT_CFG)", async () => {
+  // Real mainnet pairs (Token ACL program accounts, 29 Sep 2026): mint → its freeze authority.
+  assert.equal(await mintConfigAddress("Gy3Z9BuZAXHgtcXTyViwPu1dSvps82G3PSBaCRbFSRgz"), "CC7XEhUUko1saNtEAXxo4jTSeDrDQ7ovT3NqVNihaUf");
+  assert.equal(await mintConfigAddress("u6ckpYSMLF57AZupbc7jq1cz4ZqvaFDj2TGxGadQ2QY"), "yu3xt9cktk9nYor6eY2zrYzHtoRdR7AFrY7o5WvkU5U");
+});
+
+test("MintConfig layout (program/src/state.rs): flags, mint, authority, gate; no gate is null", () => {
+  const cfg = decodeMintConfig(mintConfigBytes({ mint: ACL, thaw: false }));
+  assert.deepEqual(cfg, { permissionlessThaw: false, permissionlessFreeze: false, mint: ACL, authority: ISSUER, gateProgram: GATE });
+  assert.equal(decodeMintConfig(mintConfigBytes({ mint: ACL, gate: "11111111111111111111111111111111" })).gateProgram, null);
+  assert.equal(decodeMintConfig(new Uint8Array(100)), null, "wrong discriminator");
+  assert.equal(decodeMintConfig(new Uint8Array(20)), null, "too short");
 });
 
 test("unknown token: no data is orange, never red", async () => {
