@@ -21,6 +21,7 @@ import {
   issuerControls, controlReasons, needsControlCheck,
 } from "./presign-guard.js";
 import { permissionedToken } from "./token-acl.js";
+import { launchEscrows } from "./launch-escrow.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1";
@@ -187,7 +188,7 @@ function holderReasons(c, add) {
 
 const statusOn = (v) => v && typeof v === "object" && flag(v.status);
 
-function solanaReasons({ sec, rug, market, permissioned }, add) {
+function solanaReasons({ sec, rug, market, permissioned, holders, escrowPct }, add) {
   const trusted = flag(sec?.trusted_token);
   if (!sec) add("NO_SECURITY_DATA", "info");
 
@@ -232,7 +233,8 @@ function solanaReasons({ sec, rug, market, permissioned }, add) {
 
   const lpLockedPct = rug && !rug.error ? lpLocked(rug) : null;
   marketReasons(market, add, { lpLockedPct, trusted });
-  holderReasons(solanaHolders(sec, rug), add);
+  holderReasons(holders ? concentration(holders) : null, add);
+  if (escrowPct) add("GENESIS_LAUNCH_ESCROW", "info", { pct: pct1(escrowPct) });
 
   if (rug?.error) add("RUGCHECK_UNAVAILABLE", "info", { message: rug.error });
   const danger = (rug?.risks ?? []).filter((r) => r?.level === "danger").map((r) => r.name).filter(Boolean);
@@ -253,19 +255,31 @@ function lpLocked(rug) {
 }
 
 // GoPlus first (it tags pool and locked accounts); RugCheck's list otherwise.
+// owner: the wallet or program account that owns the token account.
 function solanaHolders(sec, rug) {
   if (Array.isArray(sec?.holders) && sec.holders.length) {
-    return concentration(sec.holders.map((h) => ({
-      address: h.account, pct: num(h.percent) * 100, excluded: flag(h.is_locked) || Boolean(h.tag),
-    })));
+    return sec.holders.map((h) => ({
+      address: h.account, owner: h.account, pct: num(h.percent) * 100, excluded: flag(h.is_locked) || Boolean(h.tag),
+    }));
   }
   if (Array.isArray(rug?.topHolders) && rug.topHolders.length) {
     const pools = new Set((rug.markets ?? []).flatMap((m) => [m?.liquidityA, m?.liquidityB, m?.pubkey]).filter(Boolean));
-    return concentration(rug.topHolders.map((h) => ({
-      address: h.address ?? h.owner, pct: num(h.pct), excluded: pools.has(h.address) || pools.has(h.owner),
-    })));
+    return rug.topHolders.map((h) => ({
+      address: h.address ?? h.owner, owner: h.owner ?? h.address, pct: num(h.pct), excluded: pools.has(h.address) || pools.has(h.owner),
+    }));
   }
   return null;
+}
+
+// Too concentrated? Then leave out Genesis launch buckets (one chain read) first.
+async function withoutLaunchEscrows(holders) {
+  const c = holders && concentration(holders);
+  if (!c || (c.top1Pct <= TOP_HOLDER_MAX_PCT && c.top10Pct <= TOP10_MAX_PCT)) return { holders, escrowPct: 0 };
+  const top = holders.filter((h) => !h.excluded && Number.isFinite(h.pct)).sort((a, b) => b.pct - a.pct).slice(0, 10);
+  const escrows = await launchEscrows(top.map((h) => h.owner));
+  if (!escrows.size) return { holders, escrowPct: 0 };
+  const escrowPct = top.filter((h) => escrows.has(h.owner)).reduce((sum, h) => sum + h.pct, 0);
+  return { holders: holders.map((h) => (escrows.has(h.owner) ? { ...h, excluded: true } : h)), escrowPct };
 }
 
 function evmReasons({ sec, market, controls }, add) {
@@ -370,7 +384,9 @@ export async function tokenVerdict({ chain, address }, now = Date.now()) {
     const permissioned = ask ? await permissionedToken(address) : null;
     if (permissioned?.standard) { sources.push("chain"); permissionedInfo = permissioned; }
     if (permissioned?.error) add("PERMISSION_CHECK_UNAVAILABLE", "info", { message: permissioned.error });
-    solanaReasons({ sec: sec.data, rug, market, permissioned }, add);
+    const { holders, escrowPct } = await withoutLaunchEscrows(solanaHolders(sec.data, rug));
+    if (escrowPct && !sources.includes("chain")) sources.push("chain");
+    solanaReasons({ sec: sec.data, rug, market, permissioned, holders, escrowPct }, add);
   } else {
     const { chainId } = TOKEN_CHAINS[chain];
     const [sec, pairs] = await Promise.all([getTokenSecurity(chainId, address), getMarket(chain, address)]);

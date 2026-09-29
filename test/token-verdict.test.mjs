@@ -9,6 +9,7 @@ import {
   validateTokenQuery, createTokenRouter,
 } from "../src/token-verdict.js";
 import { mintConfigAddress, decodeMintConfig, TOKEN_2022_PROGRAM, TOKEN_ACL_PROGRAM } from "../src/token-acl.js";
+import { GENESIS_PROGRAM } from "../src/launch-escrow.js";
 import { getAddressDecoder, getAddressEncoder } from "@solana/kit";
 
 const NOW = Date.UTC(2026, 8, 25, 12);
@@ -27,6 +28,11 @@ const FROZEN_WALLET = solAddress(13); // freeze authority is a plain wallet
 const FROZEN_WALLET_2 = solAddress(14);
 const GATE = solAddress(15);
 const ISSUER = solAddress(16);
+// Mid-launch Genesis token (as H6H8…PLEX on 29 Sep 2026): 96.9% sits in a Genesis bucket.
+const LAUNCH = solAddress(17);
+const BUCKET = solAddress(18);
+const WHALE_LAUNCH = solAddress(19); // the same shape, but the big holder is a plain wallet
+const BIG_WALLET = solAddress(20);
 const DEGEN = "0x4ed4e862860bed51a9570b96d89af5e1b0efefed";
 const HONEY = "0x1111111111111111111111111111111111111111";
 const NOMARKET = "0x2222222222222222222222222222222222222222";
@@ -68,6 +74,10 @@ const FIXTURES = {
     [BONK]: { rugged: false, risks: [], markets: [{ lp: { lpLockedPct: 0 } }] },
     [FRESH]: { rugged: false, risks: [{ name: "Top 10 holders high ownership", level: "danger" }], markets: [{ lp: { lpLockedPct: 100 } }] },
     [RUGGED]: { rugged: true, risks: [], markets: [{ lp: { lpLockedPct: 0 } }] },
+    [LAUNCH]: { rugged: false, risks: [{ name: "Single holder ownership", level: "danger" }], markets: [],
+      topHolders: [{ address: "ta1", owner: BUCKET, pct: 96.86 }, { address: "ta2", owner: ISSUER, pct: 3.14 }] },
+    [WHALE_LAUNCH]: { rugged: false, risks: [], markets: [],
+      topHolders: [{ address: "ta3", owner: BIG_WALLET, pct: 96.86 }, { address: "ta4", owner: ISSUER, pct: 3.14 }] },
   },
   dex: {
     [BONK]: [pair(BONK, { liq: 422000, createdDaysAgo: 1000, symbol: "Bonk" })],
@@ -80,6 +90,8 @@ const FIXTURES = {
     [ACL_DELEGATE]: [pair(ACL_DELEGATE, { liq: 2e6, createdDaysAgo: 200, symbol: "RWA2" })],
     [FROZEN_WALLET]: [pair(FROZEN_WALLET, { liq: 2e6, createdDaysAgo: 200, symbol: "FRZ" })],
     [FROZEN_WALLET_2]: [pair(FROZEN_WALLET_2, { liq: 2e6, createdDaysAgo: 200, symbol: "FRZ2" })],
+    [LAUNCH]: [pair(LAUNCH, { liq: 2e6, createdDaysAgo: 200, symbol: "PLEX" })],
+    [WHALE_LAUNCH]: [pair(WHALE_LAUNCH, { liq: 2e6, createdDaysAgo: 200, symbol: "WHL" })],
     [DEGEN]: [pair(DEGEN, { liq: 3e6, createdDaysAgo: 900, symbol: "DEGEN" })],
     [HONEY]: [pair(HONEY, { liq: 80000, createdDaysAgo: 0.5 })],
     [NOMARKET]: [],
@@ -141,6 +153,8 @@ before(async () => {
     ]);
     solanaAccounts[pda] = { owner: TOKEN_ACL_PROGRAM, data: [Buffer.from(mintConfigBytes({ mint })).toString("base64"), "base64"] };
   }
+  solanaAccounts[BUCKET] = { owner: GENESIS_PROGRAM, data: ["", "base64"] };
+  solanaAccounts[BIG_WALLET] = { owner: "11111111111111111111111111111111", data: ["", "base64"] };
   solanaAccounts[FROZEN_WALLET] = token2022Mint(ISSUER, [{ extension: "defaultAccountState", state: { accountState: "initialized" } }]);
   globalThis.fetch = async (url, init) => {
     const u = new URL(String(url));
@@ -167,8 +181,9 @@ before(async () => {
     }
     if (u.hostname === "api.mainnet-beta.solana.com") {
       if (down.has("solana-rpc")) throw new TypeError("fetch failed");
-      const { id, params: [account] } = JSON.parse(init.body);
-      return Response.json({ jsonrpc: "2.0", id, result: { context: { slot: 1 }, value: solanaAccounts[account] ?? null } });
+      const { id, method, params: [account] } = JSON.parse(init.body);
+      const value = method === "getMultipleAccounts" ? account.map((a) => solanaAccounts[a] ?? null) : solanaAccounts[account] ?? null;
+      return Response.json({ jsonrpc: "2.0", id, result: { context: { slot: 1 }, value } });
     }
     if (u.hostname === "api.dexscreener.com") {
       return Response.json(FIXTURES.dex[u.pathname.split("/").pop()] ?? []);
@@ -263,6 +278,25 @@ test("Solana, the chain is only asked when GoPlus reports a freeze authority, an
   await tokenVerdict({ chain: "solana", address: BONK }, NOW);
   await tokenVerdict({ chain: "solana", address: USDC_SOL }, NOW);
   assert.ok(!calls.includes("api.mainnet-beta.solana.com"));
+});
+
+test("Solana, mid-launch Genesis token: the launch bucket is not a whale, and the verdict says so", async () => {
+  const r = await tokenVerdict({ chain: "solana", address: LAUNCH }, NOW);
+  assert.ok(!codes(r).includes("TOP_HOLDERS_CONCENTRATED"));
+  assert.deepEqual(r.reasons.find((x) => x.code === "GENESIS_LAUNCH_ESCROW").details, { pct: 96.9 });
+  assert.ok(r.sources.includes("chain"));
+
+  const w = await tokenVerdict({ chain: "solana", address: WHALE_LAUNCH }, NOW);
+  assert.ok(codes(w, "orange").includes("TOP_HOLDERS_CONCENTRATED"), "a wallet holding 97% still counts");
+  assert.ok(!codes(w).includes("GENESIS_LAUNCH_ESCROW"));
+});
+
+test("Solana, launch-bucket check: only asked when holders look concentrated; RPC down keeps the warning", async () => {
+  await tokenVerdict({ chain: "solana", address: BONK }, NOW);
+  assert.ok(!calls.includes("api.mainnet-beta.solana.com"), "BONK is not concentrated");
+  down.add("solana-rpc");
+  const r = await tokenVerdict({ chain: "solana", address: WHALE_LAUNCH }, NOW);
+  assert.ok(codes(r, "orange").includes("TOP_HOLDERS_CONCENTRATED"));
 });
 
 test("MintConfig PDA: seeds [\"MINT_CONFIG\", mint], as on Solana mainnet (the sRFC text says MINT_CFG)", async () => {
