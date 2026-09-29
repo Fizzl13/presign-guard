@@ -20,6 +20,7 @@ import {
   ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
   issuerControls, controlReasons, needsControlCheck,
 } from "./presign-guard.js";
+import { permissionedToken } from "./token-acl.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1";
@@ -186,7 +187,7 @@ function holderReasons(c, add) {
 
 const statusOn = (v) => v && typeof v === "object" && flag(v.status);
 
-function solanaReasons({ sec, rug, market }, add) {
+function solanaReasons({ sec, rug, market, permissioned }, add) {
   const trusted = flag(sec?.trusted_token);
   if (!sec) add("NO_SECURITY_DATA", "info");
 
@@ -203,7 +204,19 @@ function solanaReasons({ sec, rug, market }, add) {
     // A trusted issuer (USDC, USDT) keeps these powers on purpose: context, not a warning.
     const power = trusted ? "info" : "orange";
     if (statusOn(sec.mintable)) add("MINT_AUTHORITY_ACTIVE", power);
-    if (statusOn(sec.freezable)) add("FREEZE_AUTHORITY_ACTIVE", power);
+    // A permissioned token (Token ACL) freezes by design: one reason that says what it
+    // means for a buyer, instead of "holders can be frozen".
+    if (permissioned?.standard) {
+      add("PERMISSIONED_TOKEN", power, {
+        standard: permissioned.standard,
+        defaultFrozen: permissioned.defaultFrozen,
+        gateProgram: permissioned.gateProgram,
+        configAuthority: permissioned.configAuthority,
+        permissionlessThaw: permissioned.permissionlessThaw,
+        pausable: permissioned.pausable,
+      });
+      if (permissioned.permanentDelegate) add("BALANCE_MUTABLE", power, { permanentDelegate: permissioned.permanentDelegate });
+    } else if (statusOn(sec.freezable)) add("FREEZE_AUTHORITY_ACTIVE", power);
     if (statusOn(sec.balance_mutable_authority)) add("BALANCE_MUTABLE", power);
     if (statusOn(sec.closable)) add("CLOSABLE", power);
     if (statusOn(sec.transfer_hook_upgradable) || (Array.isArray(sec.transfer_hook) && sec.transfer_hook.length)) add("TRANSFER_HOOK", power);
@@ -302,6 +315,7 @@ const PHRASES = {
   MALICIOUS_AUTHORITY: () => "authority address flagged malicious",
   MINT_AUTHORITY_ACTIVE: () => "supply can still be minted",
   FREEZE_AUTHORITY_ACTIVE: () => "holders can be frozen",
+  PERMISSIONED_TOKEN: () => "permissioned: only approved wallets can hold or send it",
   BALANCE_MUTABLE: () => "balances can be changed",
   TOKEN_OWNER_CAN_CHANGE_BALANCES: () => "owner can change balances",
   TOKEN_PAUSED: () => "transfers are paused",
@@ -342,13 +356,21 @@ export async function tokenVerdict({ chain, address }, now = Date.now()) {
   const sources = ["goplus", "dexscreener"];
   let partial = false;
   let market;
+  let permissionedInfo = null;
 
   if (chain === "solana") {
     const [sec, rug, pairs] = await Promise.all([getSolanaSecurity(address), getRugcheck(address), getMarket(chain, address)]);
     market = summarizeMarket(pairs, chain, address, now);
     partial = sec.partial;
     if (rug && !rug.error) sources.push("rugcheck");
-    solanaReasons({ sec: sec.data, rug, market }, add);
+    // Frozen by default and a program as freeze authority: a permissioned token.
+    // Only asked when GoPlus reports a freeze authority (or knows nothing), and not
+    // for trust-list tokens such as USDC.
+    const ask = !sec.data || (statusOn(sec.data.freezable) && !flag(sec.data.trusted_token));
+    const permissioned = ask ? await permissionedToken(address) : null;
+    if (permissioned?.standard) { sources.push("chain"); permissionedInfo = permissioned; }
+    if (permissioned?.error) add("PERMISSION_CHECK_UNAVAILABLE", "info", { message: permissioned.error });
+    solanaReasons({ sec: sec.data, rug, market, permissioned }, add);
   } else {
     const { chainId } = TOKEN_CHAINS[chain];
     const [sec, pairs] = await Promise.all([getTokenSecurity(chainId, address), getMarket(chain, address)]);
@@ -370,6 +392,7 @@ export async function tokenVerdict({ chain, address }, now = Date.now()) {
     reasons,
     token: { chain, address, name: market?.name ?? null, symbol: market?.symbol ?? null },
     market,
+    ...(permissionedInfo && { permissioned: permissionedInfo }),
     ...(partial && { partial: true }),
     sources,
     checkedAt: new Date(now).toISOString(),
