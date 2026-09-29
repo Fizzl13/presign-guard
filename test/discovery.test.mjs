@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { x402Routes } from "../src/presign-guard.js";
-import { openApi, wellKnown } from "../src/discovery.js";
+import { agentRegistration, openApi, wellKnown } from "../src/discovery.js";
 
 const PAY_TO = "0x6B0F4651eD42893ab58139938175E4a69f175F25";
 const SOLANA = { network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", payTo: "ATWJ82T8nRdQwZnaysB68N5EpaSvLRsQP4h6eWmaJBH9" };
@@ -73,4 +73,12 @@ test("signed verdicts are advertised: receipt in every paid response schema, gui
   assert.match(spec.info["x-guidance"], /presign-guard-signer\.json/);
   assert.match(spec.info["x-guidance"], /POST \/v1\/verify/);
   assert.equal(wellKnown("https://x.test").signer, "https://x.test/.well-known/presign-guard-signer.json");
+});
+
+test("agent registration (ERC-8004, Metaplex Agent Registry): web and MCP on the given origin", () => {
+  const a = agentRegistration("https://presign-guard.fizzl.eu");
+  assert.equal(a.type, "https://eips.ethereum.org/EIPS/eip-8004#registration-v1");
+  assert.deepEqual(a.services.map((x) => [x.name, x.endpoint]), [["web", "https://presign-guard.fizzl.eu/"], ["MCP", "https://presign-guard.fizzl.eu/mcp"]]);
+  assert.equal(a.image, "https://presign-guard.fizzl.eu/media/og.jpg");
+  assert.equal(a.active, true);
 });

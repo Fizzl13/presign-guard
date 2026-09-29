@@ -362,3 +362,22 @@ export function wellKnown(origin) {
     docs: "https://github.com/Fizzl13/presign-guard",
   };
 }
+
+// Agent registration (ERC-8004 format) for the Metaplex Agent Registry on Solana:
+// the document the registered agent points to. registrations gets the asset
+// address once the agent is minted.
+export function agentRegistration(origin) {
+  return {
+    type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
+    name: "presign-guard",
+    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens) and wallet approval audits. Signed answers, paid per call over x402 in USDC on Base or Solana.",
+    image: `${origin}/media/og.jpg`,
+    services: [
+      { name: "web", endpoint: `${origin}/` },
+      { name: "MCP", endpoint: `${origin}/mcp`, version: "2025-06-18" },
+    ],
+    active: true,
+    registrations: [],
+    supportedTrust: [],
+  };
+}
