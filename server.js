@@ -8,7 +8,7 @@ import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
-import { mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
+import { agentRegistration, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
 import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
@@ -103,6 +103,7 @@ app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.
 app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])])));
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
+app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
 
 // Who signs the verdicts, and how to check one (free).
 const AUTH = process.env.RECEIPT_AUTHORITY || AUTHORITY;
