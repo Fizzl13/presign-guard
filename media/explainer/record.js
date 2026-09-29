@@ -16,7 +16,7 @@ import { chromium } from "playwright";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = process.env.OUT || path.join(HERE, "out");
 const SITE = (process.env.SITE_URL || "http://127.0.0.1:3100").replace(/\/$/, "");
-const LIVE = "https://presign-guard.onrender.com";
+const LIVE = "https://presign-guard.fizzl.eu";
 const W = 1920;
 const H = 1080;
 const ZOOM = 2.0;
@@ -26,16 +26,23 @@ const durations = JSON.parse(fs.readFileSync(path.join(OUT, "durations.json"), "
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 
+// Load a generated page and wait for its web fonts, so no frame shows a fallback font.
+async function setPage(page, html, opts = {}) {
+  await page.setContent(html, opts);
+  await page.evaluate(() => document.fonts && document.fonts.ready).catch(() => {});
+}
+
 const THEME = `
-  :root { --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --text:#f3f4f6; --soft:#9ca3af; --bull:#6ee7b7; --red:#fca5a5; --accent:#a78bfa; --warn:#fcd34d; }
-  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,'Segoe UI',sans-serif; }
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  :root { --bg:#020708; --panel:#041212; --line:rgba(97,245,195,.16); --text:#f4f8f7; --soft:#a8b5b2; --bull:#6ee7b7; --red:#fca5a5; --accent:#61f5c3; --warn:#fcd34d; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:'DM Sans',system-ui,sans-serif; }
 `;
 
 function cardHtml({ title, sub, note }) {
   return `<!doctype html><html><head><style>${THEME}
     body { display:flex; align-items:center; justify-content:center; }
     .c { text-align:center; animation: in .6s ease-out both; padding: 0 120px; }
-    h1 { font-size: 120px; margin: 0 0 24px; letter-spacing: -0.02em; }
+    h1 { font-family: 'Space Grotesk','DM Sans',sans-serif; font-size: 120px; margin: 0 0 24px; letter-spacing: -0.02em; }
     p { font-size: 52px; color: var(--soft); margin: 0; }
     .note { font-family: ui-monospace, 'DejaVu Sans Mono', monospace; font-size: 30px; margin-top: 44px; color: var(--accent); }
     @keyframes in { from { opacity:0; transform: translateY(24px);} to { opacity:1; transform:none; } }
@@ -46,7 +53,7 @@ function terminalHtml(label, lines) {
   return `<!doctype html><html><head><style>${THEME}
     body { display:flex; align-items:center; justify-content:center; }
     .t { width: 1560px; background: var(--panel); border:1px solid var(--line); border-radius: 18px; padding: 36px 44px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
-    .bar { display:flex; gap:10px; margin-bottom: 26px; } .bar i { width:16px; height:16px; border-radius:50%; background:#30363d; display:block; }
+    .bar { display:flex; gap:10px; margin-bottom: 26px; } .bar i { width:16px; height:16px; border-radius:50%; background:#10302b; display:block; }
     .label { color: var(--soft); font-size: 24px; margin: -8px 0 22px; }
     pre { margin:0; font: 29px/1.55 ui-monospace, 'DejaVu Sans Mono', monospace; white-space: pre-wrap; }
     .l { opacity: 0; transition: opacity .35s; } .l.on { opacity: 1; }
@@ -123,7 +130,7 @@ function verdictHtml(r) {
     .v { width: 1500px; background: var(--panel); border:1px solid var(--line); border-radius: 22px; padding: 44px 56px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
     .req { font: 26px ui-monospace, 'DejaVu Sans Mono', monospace; color: var(--soft); margin-bottom: 30px; }
     .top { display:flex; align-items:center; gap: 28px; }
-    h1 { font-size: 64px; margin: 0; } .chain { color: var(--soft); font-size: 30px; }
+    h1 { font-family: 'Space Grotesk','DM Sans',sans-serif; font-size: 64px; margin: 0; } .chain { color: var(--soft); font-size: 30px; }
     .badge { margin-left:auto; font-size: 44px; font-weight: 800; padding: 10px 30px; border-radius: 14px; color:#0f1115; background:${BADGE[r.grade]}; }
     .one { font-size: 36px; margin: 26px 0 26px; color: var(--text); }
     ul { list-style:none; padding:0; margin:0 0 30px; font: 28px/1.7 ui-monospace, 'DejaVu Sans Mono', monospace; }
@@ -161,7 +168,7 @@ async function caption(page, text) {
         el = document.createElement('div');
         el.id = '__cap';
         el.style.cssText = 'position:fixed;left:50%;bottom:48px;transform:translateX(-50%);max-width:1500px;z-index:2147483647;' +
-          'background:rgba(0,0,0,.8);color:#fff;font:600 38px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif;' +
+          'background:rgba(2,7,8,.88);border:1px solid rgba(97,245,195,.35);color:#f4f8f7;font:600 38px/1.35 "DM Sans",system-ui,sans-serif;' +
           'padding:14px 28px;border-radius:14px;text-align:center;';
         document.body.appendChild(el);
       }
@@ -175,7 +182,7 @@ async function caption(page, text) {
 
 const zoomPage = (page) => page.evaluate((z) => { document.documentElement.style.zoom = String(z); }, ZOOM);
 const center = (page, selector) => page.evaluate((s) => document.querySelector(s).scrollIntoView({ behavior: "smooth", block: "center" }), selector);
-const glow = (page, selector, color = "rgba(167,139,250,.55)") =>
+const glow = (page, selector, color = "rgba(97,245,195,.55)") =>
   page.evaluate(({ selector, color }) => {
     const el = document.querySelector(selector);
     el.style.transition = "box-shadow .3s";
@@ -232,7 +239,7 @@ async function main() {
   const price = tokenVideo ? await liveTokenPrice() : await livePrice();
   const tokens = tokenVideo ? await tokenData() : null;
   const agentLines = [
-    { cls: "", text: "$ POST presign-guard.onrender.com/v1/check   { what the agent is about to sign }" },
+    { cls: "", text: "$ POST presign-guard.fizzl.eu/v1/check   { what the agent is about to sign }" },
     { cls: "in", text: `\u2190 402 Payment Required: ${price}` },
     { cls: "dim", text: "\u2192 agent signs the payment and retries" },
     { cls: "ok", text: "\u2190 200 OK" },
@@ -253,7 +260,7 @@ async function main() {
   const timeline = [];
 
   const lines = async (label, list, ms, share) => {
-    await page.setContent(terminalHtml(label, list), { waitUntil: "load" });
+    await setPage(page, terminalHtml(label, list), { waitUntil: "load" });
     for (let i = 0; i < list.length; i++) {
       await page.evaluate((i) => document.getElementById(`l${i}`).classList.add("on"), i);
       await sleep(Math.max(250, (ms * share) / list.length));
@@ -262,7 +269,7 @@ async function main() {
   };
 
   const tokenAgentLines = tokens && [
-    { cls: "", text: `$ GET presign-guard.onrender.com/v1/token?chain=solana&address=${BONK.slice(0, 6)}…` },
+    { cls: "", text: `$ GET presign-guard.fizzl.eu/v1/token?chain=solana&address=${BONK.slice(0, 6)}…` },
     { cls: "in", text: `\u2190 402 Payment Required: ${price}` },
     { cls: "dim", text: "\u2192 agent pays and retries" },
     { cls: "ok", text: `\u2190 200 OK  { "verdict": "${tokens.safe.verdict}", "grade": "${tokens.safe.grade}",` },
@@ -291,21 +298,21 @@ async function main() {
       await sleep(ms * 0.35);
       await glow(page, "#token-card");
     },
-    async "prepare:tokenSafe"() { await page.setContent(verdictHtml(tokens.safe), { waitUntil: "load" }); },
-    async "prepare:tokenRisky"() { await page.setContent(verdictHtml(tokens.risky), { waitUntil: "load" }); },
-    async "prepare:tokenTrusted"() { await page.setContent(verdictHtml(tokens.trusted), { waitUntil: "load" }); },
+    async "prepare:tokenSafe"() { await setPage(page, verdictHtml(tokens.safe), { waitUntil: "load" }); },
+    async "prepare:tokenRisky"() { await setPage(page, verdictHtml(tokens.risky), { waitUntil: "load" }); },
+    async "prepare:tokenTrusted"() { await setPage(page, verdictHtml(tokens.trusted), { waitUntil: "load" }); },
     async tokenSafe(seg, ms) { await reveal(".r", ms, 0.6); },
     async tokenRisky(seg, ms) { await reveal(".r", ms, 0.6); },
     async tokenTrusted(seg, ms) { await reveal(".r", ms, 0.6); },
     async "prepare:tokenAgents"() {
-      await page.setContent(terminalHtml("An AI agent checking a token before it buys", tokenAgentLines), { waitUntil: "load" });
+      await setPage(page, terminalHtml("An AI agent checking a token before it buys", tokenAgentLines), { waitUntil: "load" });
     },
     async tokenAgents(seg, ms) {
       await reveal(".l", ms, 0.8);
       await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
     },
     async card(seg) {
-      await page.setContent(cardHtml(seg.card), { waitUntil: "load" });
+      await setPage(page, cardHtml(seg.card), { waitUntil: "load" });
     },
     async "prepare:hero"() {
       await page.goto(SITE, { waitUntil: "networkidle", timeout: 90000 });
