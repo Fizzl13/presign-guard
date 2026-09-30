@@ -14,6 +14,8 @@ const DOMAIN_TTL_MS = 24 * 60 * 60 * 1000;   // PG1 caches RDAP answers for 24 h
 const REPUTATION_TTL_MS = 60 * 60 * 1000;    // the lists sync daily; new phishing sites appear fast
 const RATE_LIMIT_PAUSE_MS = 5 * 60 * 1000;
 export const NEW_DOMAIN_DAYS = 30;
+const WALLET_AGE_TTL_MS = 10 * 60 * 1000;    // a brand-new wallet can get history any moment
+const CHAIN_NAMES = { 1: "ethereum", 10: "optimism", 56: "bsc", 137: "polygon", 8453: "base", 42161: "arbitrum" };
 
 const cache = new Map();
 async function cached(key, ttl, fn) {
@@ -152,6 +154,24 @@ export function hostnameReputation(host) {
     if (!r || !["listed", "lookalike", "allowlisted", "not_listed"].includes(r.verdict)) return null;
     const source = Array.isArray(r.sources) ? r.sources[0] : null;
     return { verdict: r.verdict, matchType: source?.match_type ?? null, lookalikeOf: r.lookalike_of ?? null, listSynced: r.list_synced_at ?? null };
+  });
+}
+
+// First-seen age of a plain wallet (PG1 check_wallet_age, from its on-chain
+// transfer history): { found: true, ageDays, firstSeen, approximate } for a
+// wallet with history (approximate: PG1 notes it may be older than shown),
+// { found: false } for a wallet with no history at all, or null when the
+// lookup did not finish (never read as "no history").
+export function walletAge(address, chainId) {
+  const chain = CHAIN_NAMES[chainId];
+  if (!chain) return Promise.resolve(null);
+  return cached(`age:${chainId}:${address.toLowerCase()}`, WALLET_AGE_TTL_MS, async () => {
+    const r = await callTool("check_wallet_age", { address, chain });
+    if (!r || typeof r.found !== "boolean") return null;
+    if (!r.found) return { found: false };
+    const ageDays = Number(r.age_days);
+    if (!Number.isFinite(ageDays)) return null;
+    return { found: true, ageDays, firstSeen: r.first_seen ?? null, approximate: r.note != null && r.note !== "" };
   });
 }
 

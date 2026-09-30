@@ -31,6 +31,13 @@ const TAXED = "0x7777000000000000000000000000000000000003";   // 12% buy / 15% s
 const MINTABLE = "0x7777000000000000000000000000000000000004"; // mintable, otherwise normal (like DEGEN)
 const PAUSED_TOKEN = "0x7777000000000000000000000000000000000009"; // proxy token, transfers paused
 const SANCTIONED = "0x098b716b8aaf21512996dc57eb0615e2383e2f96"; // Lazarus (Ronin hack), OFAC SDN
+// Plain wallets for the wallet-age tests (GoPlus: not a contract).
+const FRESH = "0xbad0000000000000000000000000000000000011";      // first seen 3 days ago
+const BRAND_NEW = "0xbad0000000000000000000000000000000000012";  // first seen hours ago
+const NO_HISTORY = "0xbad0000000000000000000000000000000000013"; // never seen on-chain
+const APPROX = "0xbad0000000000000000000000000000000000014";     // 2 days, but PG1 notes the age is approximate
+const AGE_TIMEOUT = "0xbad0000000000000000000000000000000000015"; // the lookup times out
+const AGE_WALLETS = [FRESH, BRAND_NEW, NO_HISTORY, APPROX, AGE_TIMEOUT];
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
 const MAX160 = (2n ** 160n - 1n).toString();
@@ -52,6 +59,14 @@ const DOMAINS = {
   "claim-usdc-drop.xyz": { available: true, domain: "claim-usdc-drop.xyz", registration_date: "2026-09-22T10:00:00Z", age_days: 3 },
   "fizzl.eu": { available: false, domain: "fizzl.eu", reason: "No RDAP server registered for the '.eu' TLD in the IANA bootstrap file." },
 };
+// check_wallet_age, shaped like the live answers (the default: a wallet with 600 days of history).
+const WALLET_AGES = {
+  [FRESH]: { age_days: 3, first_seen: "2026-09-27T10:00:00.000Z" },
+  [BRAND_NEW]: { age_days: 0.2, first_seen: "2026-09-30T08:00:00.000Z" },
+  [NO_HISTORY]: { found: false, first_seen: null, age_days: null, note: "No transactions found for this address." },
+  [APPROX]: { age_days: 2, note: "Estimated from the earliest block found; the wallet may be older." },
+};
+const WALLET_AGE_TIMEOUT = new Set([AGE_TIMEOUT]);
 // check_hostname_reputation, shaped like the live answers.
 const REPUTATION = {
   "002271coinbase.com": { verdict: "listed", sources: [{ name: "MetaMask eth-phishing-detect", match_type: "exact" }], lookalike_of: null },
@@ -85,6 +100,10 @@ async function mockPg1(opts) {
     const listed = params.arguments.address.toLowerCase() === SANCTIONED;
     out = { address: params.arguments.address, listed, list_last_synced: "2026-09-25T20:10:41Z",
       matches: listed ? [{ sdn_name: "LAZARUS GROUP", currency: "ETH", programs: ["DPRK3"], sdn_uid: "27307" }] : [] };
+  } else if (params.name === "check_wallet_age") {
+    const a = params.arguments.address.toLowerCase();
+    if (WALLET_AGE_TIMEOUT.has(a)) return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: JSON.stringify({ error: true, code: "upstream_unavailable", message: "Wallet age lookup timed out after 2500ms." }) }] } }));
+    out = { address: a, chain: params.arguments.chain, found: true, first_seen: "2025-01-01T00:00:00.000Z", age_days: 600, is_contract: false, note: null, ...WALLET_AGES[a] };
   } else if (params.name === "check_hostname_reputation") {
     if (reputationDown) return new Response("db unreachable", { status: 503 });
     const h = params.arguments.hostname;
@@ -153,7 +172,7 @@ function mockGoplus(url) {
     return new Response(JSON.stringify({ code: 1, message: "OK", result }));
   }
   if (u.includes(PARTIAL)) return new Response(JSON.stringify({ code: 2, message: "partial data obtained", result: {} }));
-  const isEoa = u.includes(EOA);
+  const isEoa = [EOA, ...AGE_WALLETS].some((w) => u.includes(w));
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
     ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
@@ -197,6 +216,56 @@ const approveData = (spender, amount) =>
   "0x095ea7b3" + spender.slice(2).padStart(64, "0") + BigInt(amount).toString(16).padStart(64, "0");
 
 // ---------- approvals and transactions ----------
+
+// ---------- wallet age (PG1 check_wallet_age) ----------
+const ageReason = (r, code) => r.body.reasons.find((x) => x.code === code);
+
+test("wallet age: approving a wallet first seen 3 days ago is orange, with the age", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: FRESH, amount: "1000000" });
+  assert.equal(r.body.verdict, "orange");
+  const hit = ageReason(r, "NEW_WALLET_SPENDER");
+  assert.equal(hit.severity, "orange");
+  assert.equal(hit.subject, FRESH);
+  assert.equal(hit.details.ageDays, 3);
+});
+
+test("wallet age: a spender wallet under a day old or with no history is red", async () => {
+  for (const spender of [BRAND_NEW, NO_HISTORY]) {
+    const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender, amount: "1000000" });
+    assert.equal(r.body.verdict, "red", spender);
+    assert.equal(ageReason(r, "NEW_WALLET_SPENDER").severity, "red");
+  }
+  const none = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: NO_HISTORY, amount: "1000000" });
+  assert.equal(ageReason(none, "NEW_WALLET_SPENDER").details.history, "none");
+});
+
+test("wallet age: an old wallet is context only; an approximate age is never a warning", async () => {
+  const old = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: EOA, amount: "1000000" });
+  assert.equal(ageReason(old, "WALLET_AGE").severity, "info");
+  assert.equal(ageReason(old, "WALLET_AGE").details.ageDays, 600);
+  assert.ok(!codes(old).includes("NEW_WALLET_SPENDER"));
+  const approx = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: APPROX, amount: "1000000" });
+  assert.ok(!codes(approx).includes("NEW_WALLET_SPENDER"));
+  assert.equal(ageReason(approx, "WALLET_AGE").details.approximate, true);
+});
+
+test("wallet age: a lookup that times out is info and the check still answers", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: AGE_TIMEOUT, amount: "1000000" });
+  assert.equal(r.status, 200);
+  assert.ok(codes(r).includes("WALLET_AGE_UNAVAILABLE"));
+  assert.ok(!codes(r).includes("NEW_WALLET_SPENDER"));
+});
+
+test("wallet age: an x402 payment to a brand-new wallet is not judged by its age", async () => {
+  const r = await check(payment(BRAND_NEW, "20000"));
+  assert.equal(r.body.verdict, "green");
+  assert.ok(!codes(r).some((c) => c.startsWith("NEW_WALLET") || c.startsWith("WALLET_AGE")));
+});
+
+test("wallet age: contract spenders are not looked up", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" });
+  assert.ok(!codes(r).some((c) => c.startsWith("NEW_WALLET") || c.startsWith("WALLET_AGE")));
+});
 
 test("exact approval to a verified contract is green", async () => {
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000" });
@@ -731,7 +800,8 @@ test("PG1 slow start: one 503 is tried again, the address is still screened, and
   assert.equal(r.body.verdict, "red");
   assert.ok(codes(r).includes("SANCTIONED_ADDRESS"));
   assert.ok(!codes(r).includes("SANCTIONS_SCREEN_UNAVAILABLE"));
-  assert.ok(lines.some((l) => l === "PG1 check_wallet_sanctions: HTTP 503, retry ok"), lines.join("\n"));
+  // The 503 hits whichever PG1 call goes first: the sanctions screen or the wallet age.
+  assert.ok(lines.some((l) => /^PG1 check_wallet_(sanctions|age): HTTP 503, retry ok$/.test(l)), lines.join("\n"));
   assert.ok(!lines.some((l) => l.includes("secret-member-key")), "the key is never logged");
   resetPg1();
 });
@@ -754,7 +824,7 @@ test("PG1 rate_limited is not tried again", async () => {
   resetPg1();
   pg1RateLimited = true;
   const lines = await warnings(() => check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1" }));
-  assert.ok(lines.length >= 1 && lines.every((l) => l === "PG1 check_wallet_sanctions: rate_limited, paused 5 min"), lines.join("\n"));
+  assert.ok(lines.length >= 1 && lines.every((l) => /^PG1 check_wallet_(sanctions|age): rate_limited, paused 5 min$/.test(l)), lines.join("\n"));
   assert.equal(pg1Calls, lines.length, "one call per screened address, no retry");
   resetPg1();
 });
