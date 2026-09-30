@@ -377,6 +377,7 @@ export function agentRegistration(origin) {
       { name: "MCP", endpoint: `${origin}/mcp`, version: "2025-06-18" },
     ],
     active: true,
+    x402Support: true,
     registrations: [],
     supportedTrust: [],
   };
