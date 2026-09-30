@@ -10,6 +10,19 @@ A pre-sign risk check for AI agents. Before an agent signs a transaction, approv
 
 Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL AI](https://fizzl.eu).
 
+## Use it in a few lines: `presign-guard-wallet`
+
+For agents on [viem](https://viem.sh), the npm package [`presign-guard-wallet`](https://www.npmjs.com/package/presign-guard-wallet) wraps the wallet so every `sendTransaction`, `writeContract` and `signTypedData` is checked first: green signs, orange stops (or asks), red never signs. Each verdict's signed receipt is verified before the wallet acts.
+
+```js
+import { guardWallet } from "presign-guard-wallet";
+
+const wallet = guardWallet(walletClient, { pay, onOrange: "stop" }); // pay = an x402 fetch, $0.01 per check
+await wallet.writeContract({ address: token, abi, functionName: "approve", args: [spender, amount] });
+```
+
+`npm install presign-guard-wallet viem @x402/fetch @x402/evm` · [source and options](https://github.com/Fizzl13/x402-examples/tree/main/guard-wallet)
+
 ## Endpoints
 
 | Route | Price | Returns |
