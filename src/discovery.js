@@ -378,7 +378,7 @@ export function agentRegistration(origin) {
     ],
     active: true,
     x402Support: true,
-    registrations: [],
+    registrations: [{ agentId: "9NN5M9jSUv2opiU47huXeRunHvJa1DdEAtapLtrJbnG4", agentRegistry: "solana:101:metaplex" }],
     supportedTrust: [],
   };
 }
