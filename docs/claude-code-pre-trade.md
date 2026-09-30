@@ -69,6 +69,19 @@ Paying needs an MCP client that supports x402 payments (a wallet with USDC). Wit
 
 The same checks are also plain HTTP endpoints (`GET https://presign-guard.fizzl.eu/v1/token`, `GET https://ichimoku-signal.fizzl.eu/signal/{pair}`) for scripts with an x402 client.
 
+## 5. In your own agent code: check every signature
+
+The rule above works inside Claude Code. If your agent signs with [viem](https://viem.sh) in its own code, the npm package [`presign-guard-wallet`](https://www.npmjs.com/package/presign-guard-wallet) makes the check automatic: every transaction, contract write and typed-data signature (approvals, Permit2, x402 payments) goes past presign-guard first, and a red verdict is never signed.
+
+```js
+import { guardWallet } from "presign-guard-wallet";
+
+const wallet = guardWallet(walletClient, { pay, onOrange: "stop" }); // $0.01 per check over x402
+await wallet.sendTransaction(tx); // checked, then signed
+```
+
+Before paying an unknown x402 API, [`x402-safe-fetch`](https://www.npmjs.com/package/x402-safe-fetch) does the same for payments: a $0.001 preflight from x402 Doctor, and a diagnosis when a payment still fails.
+
 ## Notes
 
 - The Ichimoku signal is a technical indicator, not financial advice. A green token verdict means no known trap was found, not that a token is a good investment.
