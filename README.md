@@ -30,6 +30,8 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict a
 
 `https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
 
+Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agents](docs/claude-code-pre-trade.md): a token check and an Ichimoku trend check before every order, with a ready-made `CLAUDE.md` rule.
+
 | Tool | Price | Returns |
 |---|---|---|
 | `presign_quick_check` | free, 10 calls/hour | The verdict only (green, orange or red) |
