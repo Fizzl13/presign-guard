@@ -377,7 +377,8 @@ export function agentRegistration(origin) {
       { name: "MCP", endpoint: `${origin}/mcp`, version: "2025-06-18" },
     ],
     active: true,
-    registrations: [],
+    x402Support: true,
+    registrations: [{ agentId: "9NN5M9jSUv2opiU47huXeRunHvJa1DdEAtapLtrJbnG4", agentRegistry: "solana:101:metaplex" }],
     supportedTrust: [],
   };
 }

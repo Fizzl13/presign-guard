@@ -81,4 +81,6 @@ test("agent registration (ERC-8004, Metaplex Agent Registry): web and MCP on the
   assert.deepEqual(a.services.map((x) => [x.name, x.endpoint]), [["web", "https://presign-guard.fizzl.eu/"], ["MCP", "https://presign-guard.fizzl.eu/mcp"]]);
   assert.equal(a.image, "https://presign-guard.fizzl.eu/media/og.jpg");
   assert.equal(a.active, true);
+  assert.equal(a.x402Support, true);
+  assert.deepEqual(a.registrations, [{ agentId: "9NN5M9jSUv2opiU47huXeRunHvJa1DdEAtapLtrJbnG4", agentRegistry: "solana:101:metaplex" }]);
 });
