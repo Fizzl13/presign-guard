@@ -84,3 +84,9 @@ test("agent registration (ERC-8004, Metaplex Agent Registry): web and MCP on the
   assert.equal(a.x402Support, true);
   assert.deepEqual(a.registrations, [{ agentId: "9NN5M9jSUv2opiU47huXeRunHvJa1DdEAtapLtrJbnG4", agentRegistry: "solana:101:metaplex" }]);
 });
+
+test("usage log: reads of the agent registration are logged as discovery", async () => {
+  const { describePresignCall } = await import("../src/usage.js");
+  const d = describePresignCall({ method: "GET", path: "/.well-known/agent-registration.json", query: {}, get: () => undefined }, { statusCode: 200 }, {});
+  assert.deepEqual(d, { route: "agent registration", via: "discovery", input: {}, result: { status: 200 } });
+});

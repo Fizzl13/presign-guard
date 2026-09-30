@@ -103,7 +103,6 @@ app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.
 app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])])));
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
 app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
-app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
 
 // Who signs the verdicts, and how to check one (free).
 const AUTH = process.env.RECEIPT_AUTHORITY || AUTHORITY;
@@ -141,6 +140,8 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 // req.body is filled in by the check router before the call is logged.
 const usageLog = createUsageLog({ service: "presign" });
 app.use(usageLog.middleware(describePresignCall));
+// After the usage log, so reads of the registration are logged.
+app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
 
 // POST /feedback (and the MCP tool feedback): agents report a bug or a missing
 // feature. Free; it lands in the usage log and a person reads it (src/feedback.cjs).
