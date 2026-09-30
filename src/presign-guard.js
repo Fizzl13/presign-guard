@@ -19,7 +19,14 @@ import {
   approvalsBazaarExtension, approvalsServiceMetadata,
 } from "./discovery.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
-import { screenSanctions, domainAge, hostnameReputation, originHost, NEW_DOMAIN_DAYS } from "./pg1.js";
+import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, NEW_DOMAIN_DAYS } from "./pg1.js";
+
+// A plain wallet that receives an allowance or transfer right and has no
+// history, or only a day of it, is how drainers work: fresh wallets, used once.
+// Under a week old is a caution. (PG1 check_wallet_age; payments are not
+// screened this way: a new seller's payout wallet is normal.)
+export const NEW_WALLET_DAYS = 7;
+export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
@@ -630,6 +637,12 @@ export async function analyze(req) {
   // calls an EIP-7702 wallet a contract (it has code), so check the code ourselves.
   const spenders = new Set(req.grants.map((g) => g.spender));
 
+  // How old the wallets that would get an allowance or transfer right are (PG1),
+  // asked alongside GoPlus; only plain wallets are judged on it below.
+  const ageSubjects = [...new Set(req.grants.filter((g) => g.mode !== "payment").map((g) => g.spender))];
+  const ages = Promise.all(ageSubjects.map(async (address) => [address, await walletAge(address, req.chainId)]))
+    .then((list) => new Map(list));
+
   // PG1 (OFAC SDN and RDAP) runs alongside GoPlus; null = PG1 unavailable, never an error.
   const pg1 = Promise.all([
     Promise.all([...subjects].map(async (address) => [address, await screenSanctions(address)])),
@@ -769,6 +782,7 @@ export async function analyze(req) {
   }
 
   if (req.revoke) add("REVOKES_APPROVAL", "info", req.revokedSpender ?? req.target);
+  const walletAges = await ages;
 
   for (const g of req.grants) {
     const token = { token: g.token };
@@ -789,6 +803,12 @@ export async function analyze(req) {
       // Signatures granting a plain wallet access are almost always phishing.
       if (req.offchain) add("SIGNATURE_GRANT_TO_EOA", "red", g.spender);
       else add(g.unlimited ? "UNLIMITED_APPROVAL_TO_EOA" : "APPROVAL_TO_EOA", g.unlimited ? "red" : "orange", g.spender);
+      const age = walletAges.get(g.spender);
+      if (!age) add("WALLET_AGE_UNAVAILABLE", "info", g.spender);
+      else if (!age.found) add("NEW_WALLET_SPENDER", "red", g.spender, { ageDays: null, firstSeen: null, history: "none" });
+      else if (!age.approximate && age.ageDays < NEW_WALLET_DAYS) {
+        add("NEW_WALLET_SPENDER", age.ageDays < BRAND_NEW_WALLET_DAYS ? "red" : "orange", g.spender, { ageDays: age.ageDays, firstSeen: age.firstSeen });
+      } else add("WALLET_AGE", "info", g.spender, { ageDays: age.ageDays, firstSeen: age.firstSeen, ...(age.approximate ? { approximate: true } : {}) });
     }
 
     if (req.kind === "permit2_allowance" && g.expiresAt !== null && g.expiresAt - now > LONG_LIVED_SECONDS) {
