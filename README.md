@@ -31,6 +31,8 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval, its spender, and which to revoke (see below) |
+| `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
+| `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
 | `POST /feedback` | free | Report a bug or a missing feature: see [Feedback](#feedback) |
 | `GET /health` | free | Liveness |
@@ -38,6 +40,26 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /.well-known/x402` | free | x402 discovery manifest |
 
 Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict and the approval audit also on Solana). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+
+## Credit packs
+
+Agents that call presign-guard often can prepay: one x402 payment of **$0.80 for 100 credits** or **$7.00 for 1000 credits** (20% and 30% off), valid for a year. A credit is $0.01 of checks: `POST /v1/check` and `GET /v1/token` cost 1, `GET /v1/approvals` 2, `POST /v1/check/explain` 3.
+
+```bash
+# 1. Buy a pack (any x402 client); the answer holds your key
+GET /v1/credits/100   ->  { "credit_key": "pgc_…", "credits": 100, "expires_at": "…" }
+
+# 2. Send the key instead of paying; no new payment needed
+curl -X POST https://presign-guard.fizzl.eu/v1/check -H 'x-credit-key: pgc_…' -H 'content-type: application/json' -d '{…}'
+#    -> the verdict (signed as usual), with headers x-credit-status: paid and x-credits-remaining: 99
+
+# 3. Balance
+curl https://presign-guard.fizzl.eu/v1/credits -H 'x-credit-key: pgc_…'
+```
+
+A call that fails (400 or 5xx) gives its credits back. With no key, a malformed or unknown key, or too few credits, the call gets the normal 402 (`x-credit-status` says why), so a client can always fall back to paying per call. Keep the key secret: anyone who has it can spend the credits, and it cannot be recovered (only a SHA-256 of it is stored). Credits work over HTTP; MCP tools are paid per call.
+
+Packs are only offered when balances persist: set `CREDITS_REDIS_URL` (a persistent Redis, for example a free Upstash database; Render only). Without it the credit routes don't exist.
 
 ## MCP
 

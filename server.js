@@ -22,6 +22,7 @@ import { internalAccess, unlessInternal } from "./src/internal.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
 import { readFileSync } from "node:fs";
 import { signPageRouter } from "./src/sign-page.js";
+import { creditCosts, creditsRouter, packRoutes, payWithCredits, redisStore, CREDIT_HEADER } from "./src/credits.js";
 import { trustProxyHops } from "./src/proxy.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -72,6 +73,13 @@ const facilitators = MAINNET
 const resourceServer = new x402ResourceServer(facilitators).register(NETWORK, new ExactEvmScheme());
 if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
 const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA);
+// Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
+let creditStore = null;
+if (process.env.CREDITS_REDIS_URL) {
+  try { creditStore = await redisStore(process.env.CREDITS_REDIS_URL.trim()); } catch (err) { console.warn(`[credits] off: ${err.message}`); }
+}
+const CREDIT_COSTS = creditCosts(ROUTES);
+const PAYWALL_ROUTES = creditStore ? { ...ROUTES, ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
 // Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
 const SIGNER = createSigner();
 
@@ -90,6 +98,7 @@ app.get("/", (_req, res) => res.json({
   service: "presign-guard",
   docs: "https://github.com/Fizzl13/presign-guard",
   paid: Object.keys(ROUTES),
+  credits: creditStore ? { packs: `${PUBLIC_URL}/v1/credits`, header: CREDIT_HEADER, costs: CREDIT_COSTS } : null,
   mcp: `${PUBLIC_URL}/mcp`,
   feedback: `POST ${PUBLIC_URL}/feedback`,
   // Directory listings, also here: crawlers that ask for */* get this JSON, not the page.
@@ -142,7 +151,9 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 const usageLog = createUsageLog({ service: "presign" });
 app.use(usageLog.middleware((req, res, body) => {
   const d = describePresignCall(req, res, body);
-  return d && req.fizzlInternal ? { ...d, via: "internal" } : d;
+  if (d && req.fizzlInternal) return { ...d, via: "internal" };
+  if (d && req.fizzlCredits) return { ...d, via: "credits", credits: req.fizzlCredits.cost };
+  return d;
 }));
 // After the usage log, so reads of the registration are logged.
 app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
@@ -166,10 +177,14 @@ app.use(mirrorChallengeIntoBody);
 // Our own services (PlainText) skip the paywall with the internal key (src/internal.js).
 const isInternal = internalAccess();
 app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
-app.use(unlessInternal((req) => req.fizzlInternal === true, paymentMiddleware(ROUTES, resourceServer)));
+// A valid credit key with enough credits pays the call instead (src/credits.js).
+if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
+const paywall = unlessInternal((req) => req.fizzlInternal === true, paymentMiddleware(PAYWALL_ROUTES, resourceServer));
+app.use((req, res, next) => (req.fizzlCredits ? next() : paywall(req, res, next)));
 app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
 app.use(createTokenRouter());
 app.use(createApprovalsRouter());
+if (creditStore) app.use(creditsRouter(express, { store: creditStore, costs: CREDIT_COSTS, publicUrl: PUBLIC_URL }));
 
 app.listen(PORT, () => console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`));

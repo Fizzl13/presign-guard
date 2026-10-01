@@ -81,6 +81,9 @@ export function describePresignCall(req, _res, body) {
     return { route: "token_quick", via: req.get && req.get("origin") ? "web" : "api", input: { chain: q.chain, address: typeof q.address === "string" ? q.address.slice(0, 64) : undefined }, result: { verdict: b.verdict, grade: b.grade, error: b.error } };
   }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
+  // Credit packs: the purchase (never the key itself) and balance lookups.
+  const pack = req.method === "GET" && /^\/v1\/credits\/(\d+)$/.exec(req.path);
+  if (pack) return { route: "credits pack", via: "api", input: { pack: pack[1] }, result: { credits: (body || {}).credits, error: (body || {}).error } };
   if (req.method !== "POST" || !ROUTES[req.path]) return null;
   const input = req.body || {};
   const td = typedDataOf(input);
