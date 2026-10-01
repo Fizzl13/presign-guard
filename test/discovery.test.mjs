@@ -90,3 +90,15 @@ test("usage log: reads of the agent registration are logged as discovery", async
   const d = describePresignCall({ method: "GET", path: "/.well-known/agent-registration.json", query: {}, get: () => undefined }, { statusCode: 200 }, {});
   assert.deepEqual(d, { route: "agent registration", via: "discovery", input: {}, result: { status: 200 } });
 });
+
+test("credit packs show up in OpenAPI and /.well-known/x402 only when they are on", () => {
+  const off = openApi("https://pg.test", "eip155:8453");
+  assert.equal(off.paths["/v1/credits/100"], undefined);
+  assert.doesNotMatch(off.info["x-guidance"], /x-credit-key/);
+  const on = openApi("https://pg.test", "eip155:8453", ["eip155:8453"], { credits: true });
+  assert.equal(on.paths["/v1/credits/100"].get["x-payment-info"].price.amount, "0.80");
+  assert.equal(on.paths["/v1/credits/1000"].get["x-payment-info"].price.amount, "7.00");
+  assert.match(on.info["x-guidance"], /x-credit-key/);
+  assert.equal(wellKnown("https://pg.test").credits, undefined);
+  assert.equal(wellKnown("https://pg.test", { credits: true }).credits.header, "x-credit-key");
+});

@@ -266,7 +266,25 @@ export function mirrorChallengeIntoBody(_req, res, next) {
   next();
 }
 
-export function openApi(origin, network, tokenNetworks = [network]) {
+// Prepaid credit packs (src/credits.js), when they are on.
+const CREDITS_GUIDANCE = " Calling often? Buy prepaid credits once (GET /v1/credits/100 for $0.80 or /v1/credits/1000 for $7.00, 1 credit = $0.01) and send the returned key in the x-credit-key header instead of paying per call; GET /v1/credits shows prices and, with the header, your balance. When the credits run out you get the normal 402.";
+function creditPaths() {
+  const pack = (credits, price) => ({
+    get: {
+      operationId: `buyCredits${credits}`,
+      summary: `Buy ${credits} prepaid credits ($${price}); returns a credit key for the x-credit-key header`,
+      "x-payment-info": { price: { mode: "fixed", currency: "USD", amount: price }, protocols: ["x402"], asset: "USDC" },
+      responses: { 200: { description: "credit_key, credits, expires_at" }, 402: { description: "Payment Required" } },
+    },
+  });
+  return {
+    "/v1/credits": { get: { operationId: "credits", summary: "Free: pack prices, credit cost per call, and your balance with the x-credit-key header", responses: { 200: { description: "Prices and balance" }, 404: { description: "Unknown key" } } } },
+    "/v1/credits/100": pack(100, "0.80"),
+    "/v1/credits/1000": pack(1000, "7.00"),
+  };
+}
+
+export function openApi(origin, network, tokenNetworks = [network], { credits = false } = {}) {
   const paths = {};
   for (const [path, r] of Object.entries(ROUTES)) {
     paths[path] = {
@@ -337,15 +355,16 @@ export function openApi(origin, network, tokenNetworks = [network]) {
       title: "presign-guard",
       version: "2.4.0",
       description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature. Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, and GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke. Every paid answer carries a signed receipt (EIP-191) binding the verdict to your request, verifiable later.",
-      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke. Keep the receipt field of each answer: it is signed by the address at /.well-known/presign-guard-signer.json and proves which verdict you got for which request; POST /v1/verify checks one for free.",
+      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke. Keep the receipt field of each answer: it is signed by the address at /.well-known/presign-guard-signer.json and proves which verdict you got for which request; POST /v1/verify checks one for free." + (credits ? CREDITS_GUIDANCE : ""),
     },
     servers: [{ url: origin }],
-    paths,
+    paths: credits ? { ...paths, ...creditPaths() } : paths,
   };
 }
 
-export function wellKnown(origin) {
+export function wellKnown(origin, { credits = false } = {}) {
   return {
+    ...(credits ? { credits: { info: `${origin}/v1/credits`, packs: { 100: "$0.80", 1000: "$7.00" }, header: "x-credit-key" } } : {}),
     version: 1,
     resources: [...Object.keys(ROUTES), TOKEN_ROUTE.path, APPROVALS_ROUTE.path].map((p) => origin + p),
     x402Version: 2,

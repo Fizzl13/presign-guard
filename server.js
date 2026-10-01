@@ -79,7 +79,10 @@ if (process.env.CREDITS_REDIS_URL) {
   try { creditStore = await redisStore(process.env.CREDITS_REDIS_URL); } catch (err) { console.warn(`[credits] off: ${err.message}`); }
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
-const PAYWALL_ROUTES = creditStore ? { ...ROUTES, ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
+// With packs on, every paid route's description (also in the Bazaar) mentions them.
+const CREDITS_HINT = `Cheaper in bulk: prepaid credits, 100 checks for $0.80 or 1000 for $7.00 (GET ${PUBLIC_URL}/v1/credits, then the ${CREDIT_HEADER} header).`;
+const withCreditsHint = (routes) => Object.fromEntries(Object.entries(routes).map(([k, r]) => [k, { ...r, description: `${r.description.replace(/\.?$/, ".")} ${CREDITS_HINT}` }]));
+const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
 // Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
 const SIGNER = createSigner();
 
@@ -110,8 +113,8 @@ app.get("/", (_req, res) => res.json({
   signer: `${PUBLIC_URL}/.well-known/presign-guard-signer.json`,
 }));
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
-app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])])));
-app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL)));
+app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])], { credits: Boolean(creditStore) })));
+app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL, { credits: Boolean(creditStore) })));
 app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
 
 // Who signs the verdicts, and how to check one (free).
