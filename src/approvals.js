@@ -47,8 +47,9 @@ export function parseApprovalsRequest(query) {
 // ---------- source ----------
 
 // A busy wallet's approval list is a heavy GoPlus query; the 4 s used for
-// single lookups made it fail for wallets with a long history.
-const APPROVALS_TIMEOUT_MS = 15000;
+// single lookups made it fail for wallets with a long history, and a contract
+// with ~465 approvals still took GoPlus over 15 s (about 30 s).
+const APPROVALS_TIMEOUT_MS = 35000;
 
 function getApprovals(chainId, address) {
   return cached(`approvals:${chainId}:${address}`, async () => {
