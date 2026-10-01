@@ -747,6 +747,10 @@ export async function analyze(req) {
         list: "OFAC SDN", matches: sc.matches.map((m) => ({ name: m.sdnName, programs: m.programs })), listSynced: sc.listSynced,
         ...(goplusIdx !== -1 && { alsoFlaggedBy: ["goplus"] }),
       });
+    } else {
+      // A clean result names the list and its last sync too, inside the signed
+      // receipt: a buyer can show which version of the list it was screened against.
+      add("SANCTIONS_SCREENED", "info", address, { list: "OFAC SDN", listed: false, listSynced: sc.listSynced });
     }
   }
   if (req.origin) {

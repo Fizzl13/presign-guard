@@ -648,6 +648,15 @@ test("a sanctioned spender is red, with the SDN entry; PG1 is credited", async (
   assert.deepEqual(hit.details.alsoFlaggedBy, ["goplus"]);
 });
 
+test("a clean address says which list version it was screened against (info, signed)", async () => {
+  const CLEAN = "0x5eeded0000000000000000000000000000000002";
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: CLEAN, amount: "1" });
+  const s = r.body.reasons.find((x) => x.code === "SANCTIONS_SCREENED" && x.subject === CLEAN);
+  assert.equal(s.severity, "info");
+  assert.deepEqual(s.details, { list: "OFAC SDN", listed: false, listSynced: "2026-09-25T20:10:41Z" });
+  assert.ok(!r.body.reasons.some((x) => x.code === "SANCTIONS_SCREENED" && x.subject === SANCTIONED));
+});
+
 test("PG1 down: GoPlus's SANCTIONED flag still makes a sanctioned spender red", async () => {
   resetPg1(); // forget the cached PG1 answer from the test above
   pg1Down = true;
