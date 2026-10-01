@@ -18,6 +18,7 @@ import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
+import { internalAccess, unlessInternal } from "./src/internal.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
 import { readFileSync } from "node:fs";
 import { signPageRouter } from "./src/sign-page.js";
@@ -139,7 +140,10 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 // x402-doctor.fizzl.eu/admin/usage. Does nothing without USAGE_LOG_TOKEN.
 // req.body is filled in by the check router before the call is logged.
 const usageLog = createUsageLog({ service: "presign" });
-app.use(usageLog.middleware(describePresignCall));
+app.use(usageLog.middleware((req, res, body) => {
+  const d = describePresignCall(req, res, body);
+  return d && req.fizzlInternal ? { ...d, via: "internal" } : d;
+}));
 // After the usage log, so reads of the registration are logged.
 app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
 
@@ -159,7 +163,10 @@ app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
 app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);
 app.use(mirrorChallengeIntoBody);
-app.use(paymentMiddleware(ROUTES, resourceServer));
+// Our own services (PlainText) skip the paywall with the internal key (src/internal.js).
+const isInternal = internalAccess();
+app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
+app.use(unlessInternal((req) => req.fizzlInternal === true, paymentMiddleware(ROUTES, resourceServer)));
 app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
 app.use(createTokenRouter());
