@@ -23,6 +23,8 @@ services:
         sync: false
       - key: USAGE_LOG_TOKEN
         sync: false
+      - key: CREDITS_REDIS_URL # persistent Redis for prepaid credit packs (src/credits.js; e.g. Upstash rediss://…); unset = no packs
+        sync: false
       - key: PG1_API_KEY # PG1 membership key: exempt from PG1's anonymous rate limit (optional)
         sync: false
       - key: RECEIPT_SIGNER_SECRET # signs verdict receipts (src/receipt.js); holds no funds; unset = unsigned answers
