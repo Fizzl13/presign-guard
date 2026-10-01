@@ -65,11 +65,40 @@ local n = tonumber(ARGV[1])
 if b < n then return -2 - b end
 return redis.call('DECRBY', KEYS[1], n)`;
 
-export async function redisStore(url) {
+// Forgiving about what gets pasted into the dashboard: surrounding quotes or
+// spaces, a whole "redis-cli --tls -u redis://…" or new Redis("…") line, or
+// redis:// for an Upstash host (which needs TLS, so rediss://).
+export function normalizeRedisUrl(raw) {
+  const text = String(raw ?? "").trim();
+  const m = /rediss?:\/\/[^\s"'`)]+/.exec(text);
+  if (!m) return null;
+  let url = m[0];
+  try {
+    const u = new URL(url);
+    if (u.protocol === "redis:" && /\.upstash\.io$/i.test(u.hostname)) url = "rediss:" + url.slice("redis:".length);
+    return url;
+  } catch { return null; }
+}
+
+// For logs: protocol and host only, never the password.
+export const describeRedisUrl = (url) => { try { const u = new URL(url); return `${u.protocol}//${u.hostname}:${u.port || 6379}${u.password ? " (with password)" : " (NO password)"}`; } catch { return "unparseable"; } };
+
+export async function redisStore(rawUrl, { timeoutMs = 10_000 } = {}) {
+  const url = normalizeRedisUrl(rawUrl);
+  if (!url) throw new Error("CREDITS_REDIS_URL is not a redis:// or rediss:// URL (expected rediss://default:<password>@<host>:6379)");
   const { createClient } = await import("redis");
   const client = createClient({ url, socket: { reconnectStrategy: (tries) => Math.min(tries * 200, 5000) } });
   client.on("error", (err) => console.warn(`[credits] redis: ${err.message}`));
-  await client.connect();
+  // Never hold up the server's start: give up after timeoutMs.
+  let timer;
+  try {
+    await Promise.race([client.connect(), new Promise((_, no) => { timer = setTimeout(() => no(new Error(`no connection to ${describeRedisUrl(url)} within ${timeoutMs / 1000}s`)), timeoutMs); })]);
+    await client.ping();
+  } catch (err) {
+    client.destroy?.();
+    throw err;
+  } finally { clearTimeout(timer); }
+  console.log(`[credits] on: ${describeRedisUrl(url)}`);
   const k = (hash) => `credits:${hash}`;
   return {
     persistent: true,
