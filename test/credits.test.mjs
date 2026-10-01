@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import express from "express";
-import { creditCosts, creditsRouter, describeRedisUrl, normalizeRedisUrl, hashKey, isKey, memoryStore, newKey, packRoutes, payWithCredits, redisStore, CREDIT_HEADER, PACKS } from "../src/credits.js";
+import { withCreditsHint, CDP_DESCRIPTION_MAX, creditCosts, creditsRouter, describeRedisUrl, normalizeRedisUrl, hashKey, isKey, memoryStore, newKey, packRoutes, payWithCredits, redisStore, CREDIT_HEADER, PACKS } from "../src/credits.js";
 import { x402Routes } from "../src/presign-guard.js";
 
 const PAY_TO = "0x6B0F4651eD42893ab58139938175E4a69f175F25";
@@ -144,4 +144,13 @@ test("redis store gives up quickly when it cannot connect", async () => {
   const t = Date.now();
   await assert.rejects(redisStore("redis://127.0.0.1:1", { timeoutMs: 1500 }), /no connection|ECONNREFUSED/);
   assert.ok(Date.now() - t < 5000);
+});
+
+test("credit hint never pushes a route description over the CDP limit", () => {
+  const routes = { ...x402Routes(PAY_TO, "eip155:8453"), ...packRoutes("eip155:8453", PAY_TO) };
+  routes["GET /long"] = { description: "x".repeat(470) };
+  const hinted = withCreditsHint(routes);
+  for (const [k, r] of Object.entries(hinted)) assert.ok([...r.description].length <= CDP_DESCRIPTION_MAX, `${k} is ${r.description.length}`);
+  assert.match(hinted["POST /v1/check"].description, /\/v1\/credits/);
+  assert.equal(hinted["GET /long"].description, "x".repeat(470));
 });
