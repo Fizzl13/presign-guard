@@ -125,14 +125,15 @@ async function cached(key, fn, ttlMs = CACHE_TTL_MS) {
 
 // version: "v1" for most endpoints, "v2" for token_approval_security.
 // emptyOk: a null result means "nothing found" (a wallet without approvals), not an error.
-async function goplus(path, { version = "v1", emptyOk = false } = {}) {
+// timeoutMs: longer for heavy lookups such as a busy wallet's full approval list.
+async function goplus(path, { version = "v1", emptyOk = false, timeoutMs = GOPLUS_TIMEOUT_MS } = {}) {
   const headers = { accept: "application/json" };
   // Check GoPlus docs for the exact auth header format on your plan.
   if (process.env.GOPLUS_ACCESS_TOKEN) headers.Authorization = process.env.GOPLUS_ACCESS_TOKEN;
 
   let res;
   try {
-    res = await fetch(`${GOPLUS_BASE}/${version}${path}`, { headers, signal: AbortSignal.timeout(GOPLUS_TIMEOUT_MS) });
+    res = await fetch(`${GOPLUS_BASE}/${version}${path}`, { headers, signal: AbortSignal.timeout(timeoutMs) });
   } catch (err) {
     throw new UpstreamError(`GoPlus unreachable (${err.name})`);
   }
