@@ -158,20 +158,39 @@ export function hostnameReputation(host) {
 }
 
 // First-seen age of a plain wallet (PG1 check_wallet_age, from its on-chain
-// transfer history): { found: true, ageDays, firstSeen, approximate } for a
-// wallet with history (approximate: PG1 notes it may be older than shown),
+// transfer history): { found: true, ageDays, firstSeen, chain, minimum } for a
+// wallet with history (minimum: PG1 could not finish its internal-transfer
+// check, so the wallet can only be older than shown, never younger),
 // { found: false } for a wallet with no history at all, or null when the
 // lookup did not finish (never read as "no history").
-export function walletAge(address, chainId) {
+//
+// Age is per chain: a wallet used on Ethereum for years looks brand new on an
+// L2 it never touched. So when the wallet looks new (no history or under
+// CROSS_CHECK_DAYS) on another chain, Ethereum is asked too and the older
+// first-seen wins.
+export const CROSS_CHECK_DAYS = 7;
+export async function walletAge(address, chainId) {
   const chain = CHAIN_NAMES[chainId];
-  if (!chain) return Promise.resolve(null);
-  return cached(`age:${chainId}:${address.toLowerCase()}`, WALLET_AGE_TTL_MS, async () => {
+  if (!chain) return null;
+  const home = await chainAge(address, chain);
+  if (!home || chain === "ethereum" || (home.found && home.ageDays >= CROSS_CHECK_DAYS)) return home;
+  const mainnet = await chainAge(address, "ethereum");
+  if (!mainnet?.found) return home;
+  return !home.found || mainnet.ageDays > home.ageDays ? mainnet : home;
+}
+
+function chainAge(address, chain) {
+  return cached(`age:${chain}:${address.toLowerCase()}`, WALLET_AGE_TTL_MS, async () => {
     const r = await callTool("check_wallet_age", { address, chain });
     if (!r || typeof r.found !== "boolean") return null;
-    if (!r.found) return { found: false };
+    // PG1's reason codes are stable (its note wording may change); the note
+    // is only the fallback for answers without them.
+    const codes = Array.isArray(r.reasons) ? r.reasons.map((x) => x?.code) : null;
+    if (!r.found || codes?.includes("WALLET_NO_HISTORY")) return { found: false };
     const ageDays = Number(r.age_days);
     if (!Number.isFinite(ageDays)) return null;
-    return { found: true, ageDays, firstSeen: r.first_seen ?? null, approximate: r.note != null && r.note !== "" };
+    const minimum = codes ? codes.includes("WALLET_AGE_PARTIAL") : r.note != null && r.note !== "";
+    return { found: true, ageDays, firstSeen: r.first_seen ?? null, chain, minimum };
   });
 }
 

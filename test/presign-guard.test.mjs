@@ -35,9 +35,10 @@ const SANCTIONED = "0x098b716b8aaf21512996dc57eb0615e2383e2f96"; // Lazarus (Ron
 const FRESH = "0xbad0000000000000000000000000000000000011";      // first seen 3 days ago
 const BRAND_NEW = "0xbad0000000000000000000000000000000000012";  // first seen hours ago
 const NO_HISTORY = "0xbad0000000000000000000000000000000000013"; // never seen on-chain
-const APPROX = "0xbad0000000000000000000000000000000000014";     // 2 days, but PG1 notes the age is approximate
+const APPROX = "0xbad0000000000000000000000000000000000014";     // 2 days, but only a minimum (WALLET_AGE_PARTIAL)
 const AGE_TIMEOUT = "0xbad0000000000000000000000000000000000015"; // the lookup times out
-const AGE_WALLETS = [FRESH, BRAND_NEW, NO_HISTORY, APPROX, AGE_TIMEOUT];
+const OLD_ON_ETH = "0xbad0000000000000000000000000000000000016"; // new to Base, years on Ethereum
+const AGE_WALLETS = [FRESH, BRAND_NEW, NO_HISTORY, APPROX, AGE_TIMEOUT, OLD_ON_ETH];
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
 const MAX160 = (2n ** 160n - 1n).toString();
@@ -63,9 +64,13 @@ const DOMAINS = {
 const WALLET_AGES = {
   [FRESH]: { age_days: 3, first_seen: "2026-09-27T10:00:00.000Z" },
   [BRAND_NEW]: { age_days: 0.2, first_seen: "2026-09-30T08:00:00.000Z" },
-  [NO_HISTORY]: { found: false, first_seen: null, age_days: null, note: "No transactions found for this address." },
-  [APPROX]: { age_days: 2, note: "Estimated from the earliest block found; the wallet may be older." },
+  [NO_HISTORY]: { found: false, first_seen: null, age_days: null, note: "No transactions found for this address.", reasons: [{ code: "WALLET_NO_HISTORY" }] },
+  [APPROX]: { age_days: 2, note: "The internal-transfer check did not finish.", reasons: [{ code: "WALLET_AGE_PARTIAL" }] },
+  [OLD_ON_ETH]: { found: false, first_seen: null, age_days: null, note: "No transfer history on base." },
 };
+// Ethereum answers where they differ from the chain asked about.
+const WALLET_AGES_ETH = { [OLD_ON_ETH]: { found: true, age_days: 1400, first_seen: "2022-11-20T00:00:00.000Z", note: null } };
+const ageChains = [];
 const WALLET_AGE_TIMEOUT = new Set([AGE_TIMEOUT]);
 // check_hostname_reputation, shaped like the live answers.
 const REPUTATION = {
@@ -103,7 +108,8 @@ async function mockPg1(opts) {
   } else if (params.name === "check_wallet_age") {
     const a = params.arguments.address.toLowerCase();
     if (WALLET_AGE_TIMEOUT.has(a)) return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: JSON.stringify({ error: true, code: "upstream_unavailable", message: "Wallet age lookup timed out after 2500ms." }) }] } }));
-    out = { address: a, chain: params.arguments.chain, found: true, first_seen: "2025-01-01T00:00:00.000Z", age_days: 600, is_contract: false, note: null, ...WALLET_AGES[a] };
+    out = { address: a, chain: params.arguments.chain, found: true, first_seen: "2025-01-01T00:00:00.000Z", age_days: 600, is_contract: false, note: null, ...WALLET_AGES[a], ...(params.arguments.chain === "ethereum" ? WALLET_AGES_ETH[a] : {}) };
+    ageChains.push(`${params.arguments.chain}:${a}`);
   } else if (params.name === "check_hostname_reputation") {
     if (reputationDown) return new Response("db unreachable", { status: 503 });
     const h = params.arguments.hostname;
@@ -239,14 +245,26 @@ test("wallet age: a spender wallet under a day old or with no history is red", a
   assert.equal(ageReason(none, "NEW_WALLET_SPENDER").details.history, "none");
 });
 
-test("wallet age: an old wallet is context only; an approximate age is never a warning", async () => {
+test("wallet age: an old wallet is context only; a minimum age under 7 days is orange, never red", async () => {
   const old = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: EOA, amount: "1000000" });
   assert.equal(ageReason(old, "WALLET_AGE").severity, "info");
   assert.equal(ageReason(old, "WALLET_AGE").details.ageDays, 600);
   assert.ok(!codes(old).includes("NEW_WALLET_SPENDER"));
   const approx = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: APPROX, amount: "1000000" });
-  assert.ok(!codes(approx).includes("NEW_WALLET_SPENDER"));
-  assert.equal(ageReason(approx, "WALLET_AGE").details.approximate, true);
+  const hit = ageReason(approx, "NEW_WALLET_SPENDER");
+  assert.equal(hit.severity, "orange");
+  assert.equal(hit.details.minimum, true);
+});
+
+test("wallet age: a wallet new to Base but old on Ethereum is not new; Base wallets with history skip the second lookup", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: OLD_ON_ETH, amount: "1000000" });
+  assert.ok(!codes(r).includes("NEW_WALLET_SPENDER"));
+  const age = ageReason(r, "WALLET_AGE");
+  assert.equal(age.details.chain, "ethereum");
+  assert.equal(age.details.ageDays, 1400);
+  ageChains.length = 0;
+  await check({ type: "approval", chainId: 8453, token: TOKEN, spender: EOA, amount: "1" });
+  assert.ok(!ageChains.some((c) => c.startsWith("ethereum:")), ageChains.join());
 });
 
 test("wallet age: a lookup that times out is info and the check still answers", async () => {

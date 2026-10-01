@@ -806,9 +806,12 @@ export async function analyze(req) {
       const age = walletAges.get(g.spender);
       if (!age) add("WALLET_AGE_UNAVAILABLE", "info", g.spender);
       else if (!age.found) add("NEW_WALLET_SPENDER", "red", g.spender, { ageDays: null, firstSeen: null, history: "none" });
-      else if (!age.approximate && age.ageDays < NEW_WALLET_DAYS) {
-        add("NEW_WALLET_SPENDER", age.ageDays < BRAND_NEW_WALLET_DAYS ? "red" : "orange", g.spender, { ageDays: age.ageDays, firstSeen: age.firstSeen });
-      } else add("WALLET_AGE", "info", g.spender, { ageDays: age.ageDays, firstSeen: age.firstSeen, ...(age.approximate ? { approximate: true } : {}) });
+      else {
+        const seen = { ageDays: age.ageDays, firstSeen: age.firstSeen, chain: age.chain, ...(age.minimum ? { minimum: true } : {}) };
+        // A minimum age under the threshold can't tell new from old: orange, never red.
+        if (age.ageDays < NEW_WALLET_DAYS) add("NEW_WALLET_SPENDER", age.ageDays < BRAND_NEW_WALLET_DAYS && !age.minimum ? "red" : "orange", g.spender, seen);
+        else add("WALLET_AGE", "info", g.spender, seen);
+      }
     }
 
     if (req.kind === "permit2_allowance" && g.expiresAt !== null && g.expiresAt - now > LONG_LIVED_SECONDS) {
