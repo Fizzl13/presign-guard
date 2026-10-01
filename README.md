@@ -160,7 +160,7 @@ An x402 payment moves one fixed amount to one recipient and grants no allowance,
 }
 ```
 
-Every token that is approved, permitted or paid is also checked with GoPlus token security (honeypot, impersonation, owner powers, taxes). The verdict is the most severe reason: any `red` makes it red, otherwise any `orange` makes it orange. `info` reasons never change the verdict.
+Every token that is approved, permitted or paid is also checked with GoPlus token security (honeypot, impersonation, owner powers, taxes). Each grant in `subject.grants` carries `tokenSymbol` and `tokenName` when GoPlus knows the token. The verdict is the most severe reason: any `red` makes it red, otherwise any `orange` makes it orange. `info` reasons never change the verdict.
 
 ### Reason codes
 

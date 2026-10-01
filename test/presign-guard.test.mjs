@@ -360,6 +360,8 @@ test("Permit2 batch checks every token and flags long expirations", async () => 
     spender: GOOD, sigDeadline: FAR,
   }));
   assert.equal(r.body.subject.grants.length, 2);
+  assert.equal(r.body.subject.grants[0].tokenSymbol, "USDC");
+  assert.equal(r.body.subject.grants[1].tokenSymbol, undefined); // no GoPlus token record
   assert.equal(r.body.verdict, "orange");
   assert.ok(codes(r).includes("LONG_LIVED_PERMISSION"));
 });
