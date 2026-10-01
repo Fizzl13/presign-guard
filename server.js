@@ -22,7 +22,7 @@ import { internalAccess, unlessInternal } from "./src/internal.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
 import { readFileSync } from "node:fs";
 import { signPageRouter } from "./src/sign-page.js";
-import { creditCosts, creditsRouter, packRoutes, payWithCredits, redisStore, CREDIT_HEADER } from "./src/credits.js";
+import { creditCosts, creditsRouter, packRoutes, payWithCredits, redisStore, withCreditsHint, CREDIT_HEADER } from "./src/credits.js";
 import { trustProxyHops } from "./src/proxy.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -80,8 +80,6 @@ if (process.env.CREDITS_REDIS_URL) {
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
-const CREDITS_HINT = `Cheaper in bulk: prepaid credits, 100 checks for $0.80 or 1000 for $7.00 (GET ${PUBLIC_URL}/v1/credits, then the ${CREDIT_HEADER} header).`;
-const withCreditsHint = (routes) => Object.fromEntries(Object.entries(routes).map(([k, r]) => [k, { ...r, description: `${r.description.replace(/\.?$/, ".")} ${CREDITS_HINT}` }]));
 const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
 // Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
 const SIGNER = createSigner();

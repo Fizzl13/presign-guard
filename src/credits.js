@@ -192,3 +192,13 @@ export function payWithCredits({ store, costs }) {
     next();
   };
 }
+
+// A short "cheaper in bulk" hint on each paid route's description (shown in
+// the 402 and the Bazaar), only where it fits: the CDP facilitator rejects a
+// payment whose resource description is over 500 characters.
+export const CDP_DESCRIPTION_MAX = 500;
+export const CREDITS_HINT = "Bulk: 100 checks for $0.80 via /v1/credits.";
+export const withCreditsHint = (routes) => Object.fromEntries(Object.entries(routes).map(([k, r]) => {
+  const longer = `${r.description.replace(/\.?$/, ".")} ${CREDITS_HINT}`;
+  return [k, [...longer].length <= CDP_DESCRIPTION_MAX - 20 ? { ...r, description: longer } : r];
+}));
