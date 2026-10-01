@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import express from "express";
-import { creditCosts, creditsRouter, hashKey, isKey, memoryStore, newKey, packRoutes, payWithCredits, redisStore, CREDIT_HEADER, PACKS } from "../src/credits.js";
+import { creditCosts, creditsRouter, describeRedisUrl, normalizeRedisUrl, hashKey, isKey, memoryStore, newKey, packRoutes, payWithCredits, redisStore, CREDIT_HEADER, PACKS } from "../src/credits.js";
 import { x402Routes } from "../src/presign-guard.js";
 
 const PAY_TO = "0x6B0F4651eD42893ab58139938175E4a69f175F25";
@@ -125,4 +125,23 @@ test("credits flow against a real Redis", { skip: !hasRedis && "redis-server not
     assert.deepEqual(both.map((x) => x.ok).sort(), [false, true]);
     await store.close?.();
   } finally { proc.kill(); }
+});
+
+test("redis URL: forgiving about what gets pasted, never logs the password", () => {
+  const good = "rediss://default:abc123@exact-chipmunk-1.upstash.io:6379";
+  assert.equal(normalizeRedisUrl(good), good);
+  assert.equal(normalizeRedisUrl(` "${good}" \n`), good);
+  assert.equal(normalizeRedisUrl(`redis-cli --tls -u redis://default:abc123@exact-chipmunk-1.upstash.io:6379`), good);
+  assert.equal(normalizeRedisUrl(`new Redis("${good}")`), good);
+  assert.equal(normalizeRedisUrl("redis://127.0.0.1:6399"), "redis://127.0.0.1:6399");
+  assert.equal(normalizeRedisUrl("https://exact-chipmunk-1.upstash.io"), null);
+  assert.equal(normalizeRedisUrl("gQAAAAtoken"), null);
+  assert.equal(describeRedisUrl(good), "rediss://exact-chipmunk-1.upstash.io:6379 (with password)");
+  assert.doesNotMatch(describeRedisUrl(good), /abc123/);
+});
+
+test("redis store gives up quickly when it cannot connect", async () => {
+  const t = Date.now();
+  await assert.rejects(redisStore("redis://127.0.0.1:1", { timeoutMs: 1500 }), /no connection|ECONNREFUSED/);
+  assert.ok(Date.now() - t < 5000);
 });

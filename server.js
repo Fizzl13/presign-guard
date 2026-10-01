@@ -76,7 +76,7 @@ const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
-  try { creditStore = await redisStore(process.env.CREDITS_REDIS_URL.trim()); } catch (err) { console.warn(`[credits] off: ${err.message}`); }
+  try { creditStore = await redisStore(process.env.CREDITS_REDIS_URL); } catch (err) { console.warn(`[credits] off: ${err.message}`); }
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 const PAYWALL_ROUTES = creditStore ? { ...ROUTES, ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
