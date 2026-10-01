@@ -685,6 +685,11 @@ export async function analyze(req) {
     const sec = await getTokenSecurity(req.chainId, token);
     return [token, sec, needsControlCheck(sec.data) ? await issuerControls(req.chainId, token) : null];
   }));
+  // Symbol and name from the same GoPlus record, so callers can name the token.
+  const tokenMeta = new Map(tokenLookups.map(([token, { data }]) => [token, {
+    ...(typeof data?.token_symbol === "string" && data.token_symbol && { symbol: data.token_symbol.slice(0, 32) }),
+    ...(typeof data?.token_name === "string" && data.token_name && { name: data.token_name.slice(0, 64) }),
+  }]));
   for (const [token, { data, partial }, controls] of tokenLookups) {
     if (partial) add("PARTIAL_SOURCE_DATA", "info", token);
     tokenReasons(token, data, add);
@@ -849,6 +854,8 @@ export async function analyze(req) {
       ...(req.primaryType && { primaryType: req.primaryType }),
       grants: req.grants.map((g) => ({
         token: g.token,
+        ...(tokenMeta.get(g.token)?.symbol && { tokenSymbol: tokenMeta.get(g.token).symbol }),
+        ...(tokenMeta.get(g.token)?.name && { tokenName: tokenMeta.get(g.token).name }),
         spender: g.spender,
         amount: g.amount === null ? null : g.amount.toString(),
         unlimited: g.unlimited,
