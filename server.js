@@ -3,6 +3,7 @@ import { securityHeaders } from "./src/security-headers.js";
 import { nohumansClaim } from "./src/nohumans-claim.js";
 import { fileURLToPath } from "node:url";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
+import { onPublicHost } from "./src/public-host.js";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -182,7 +183,8 @@ const isInternal = internalAccess();
 app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
 // A valid credit key with enough credits pays the call instead (src/credits.js).
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
-const paywall = unlessInternal((req) => req.fizzlInternal === true, paymentMiddleware(PAYWALL_ROUTES, resourceServer));
+// Challenges (and so the Bazaar listing) name presign-guard.fizzl.eu, also when called on the Render address.
+const paywall = unlessInternal((req) => req.fizzlInternal === true, onPublicHost(PUBLIC_URL, paymentMiddleware(PAYWALL_ROUTES, resourceServer)));
 app.use((req, res, next) => (req.fizzlCredits ? next() : paywall(req, res, next)));
 app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
