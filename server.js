@@ -111,6 +111,8 @@ app.get("/", (_req, res) => res.json({
   signer: `${PUBLIC_URL}/.well-known/presign-guard-signer.json`,
 }));
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
+// Instructions an AI agent can read and follow ("Connect to presign-guard.fizzl.eu/skill.md").
+app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
 app.get("/openapi.json", (_req, res) => res.json(openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])], { credits: Boolean(creditStore) })));
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL, { credits: Boolean(creditStore) })));
 app.get("/.well-known/x402-trust.txt", x402TrustTxtRoute());
