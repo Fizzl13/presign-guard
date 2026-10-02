@@ -238,9 +238,12 @@ export const bazaarExtension = () => declareDiscoveryExtension({
   output: { schema: OUTPUT_SCHEMA, example: OUTPUT_EXAMPLE },
 });
 
-export const serviceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "pre-sign", "approvals", "agents"] };
-export const tokenServiceMetadata = { serviceName: "presign-guard", tags: ["token-security", "due-diligence", "solana", "base", "agents"] };
-export const approvalsServiceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "approvals", "revoke", "agents"] };
+// Service metadata on every paid route (the x402 Bazaar indexes serviceName, tags and iconUrl).
+export const ICON_URL = "https://presign-guard.fizzl.eu/media/icon.png";
+export const CATEGORY = "security";
+export const serviceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "agents"], iconUrl: ICON_URL };
+export const tokenServiceMetadata = { serviceName: "presign-guard", tags: ["token-security", "due-diligence", "solana", "base", "agents"], iconUrl: ICON_URL };
+export const approvalsServiceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "approvals", "revoke", "agents"], iconUrl: ICON_URL };
 
 // @x402/express puts the v2 challenge only in the PAYMENT-REQUIRED header and
 // sends an empty {} body; some clients read accepts[] from the body.
@@ -370,6 +373,10 @@ export function wellKnown(origin, { credits = false } = {}) {
     x402Version: 2,
     kind: "resource-server",
     name: "presign-guard",
+    serviceName: "presign-guard",
+    category: CATEGORY,
+    iconUrl: `${origin}/media/icon.png`,
+    tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "agents"],
     description: "Pre-sign risk verdicts (green/orange/red) for EVM transactions, approvals and signatures, token verdicts for Solana and EVM tokens, and wallet approval audits. Every paid answer is signed (verifiable receipt).",
     signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
