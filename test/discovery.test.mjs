@@ -102,3 +102,16 @@ test("credit packs show up in OpenAPI and /.well-known/x402 only when they are o
   assert.equal(wellKnown("https://pg.test").credits, undefined);
   assert.equal(wellKnown("https://pg.test", { credits: true }).credits.header, "x-credit-key");
 });
+
+test("Bazaar curation metadata: serviceName, category, iconUrl and tags in /.well-known/x402 and on every paid route", () => {
+  const w = wellKnown("https://presign-guard.fizzl.eu");
+  assert.equal(w.serviceName, "presign-guard");
+  assert.equal(w.category, "security");
+  assert.equal(w.iconUrl, "https://presign-guard.fizzl.eu/media/icon.png");
+  assert.ok(w.tags.includes("sanctions"));
+  for (const [route, config] of Object.entries(x402Routes("0x6B0F4651eD42893ab58139938175E4a69f175F25", "eip155:8453", null))) {
+    assert.equal(config.serviceName, "presign-guard", route);
+    assert.equal(config.iconUrl, "https://presign-guard.fizzl.eu/media/icon.png", route);
+    assert.ok(config.tags.length > 0, route);
+  }
+});
