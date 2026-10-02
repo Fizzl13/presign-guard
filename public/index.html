@@ -47,6 +47,9 @@
   .brand small em { color: var(--mint); font-style: normal; font-weight: 700; }
   .live { font: 600 12px/1 var(--mono); color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; white-space: nowrap; }
   .live::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); margin-right: 8px; }
+  .top-right { display: flex; align-items: center; gap: 10px; }
+  .wallet-link { font: 600 12px/1 var(--mono); color: var(--green); border: 1px solid var(--green); border-radius: 999px; padding: 8px 12px; white-space: nowrap; text-decoration: none; }
+  .wallet-link:hover, .wallet-link:focus-visible { background: var(--green-bg); }
   .dots { display: inline-flex; align-items: flex-end; gap: 4px; margin-right: 10px; vertical-align: middle; }
   .dots i { display: block; border-radius: 50%; background: var(--mint); }
   .dots i:nth-child(1) { width: 9px; height: 9px; } .dots i:nth-child(2) { width: 6px; height: 6px; margin-bottom: 5px; } .dots i:nth-child(3) { width: 4px; height: 4px; margin-bottom: 10px; }
@@ -102,7 +105,7 @@
 <div class="wrap">
   <header class="topbar">
     <a class="brand" href="/"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect x="1.5" y="1.5" width="125" height="125" rx="29" fill="#020708" stroke="#61f5c3" stroke-opacity=".4" stroke-width="3"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#f4f8f7" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#f4f8f7" stroke-width="16" stroke-linecap="round"/><g fill="#61f5c3"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>presign-guard</b><small>by <em>fizzl</em> · pay-per-call tools for AI agents</small></span></a>
-    <span class="live">ONLINE · BASE + SOLANA</span>
+    <span class="top-right"><a class="wallet-link" href="https://wallet.fizzl.eu/" title="Fizzl Agent Wallet: spending limits and approvals for your agents">Agent Wallet ↗</a><span class="live">ONLINE · BASE + SOLANA</span></span>
   </header>
   <div class="eyebrow"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>x402 · Base · for AI agents</div>
   <h1>Check it <em>before</em> your agent signs it.</h1>
