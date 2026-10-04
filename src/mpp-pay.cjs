@@ -193,7 +193,24 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, now = () 
   return { middleware, challengeFor, header, readCredential };
 }
 
+// MPP discovery (paymentauth.org draft-payment-discovery, read by MPPScan): adds the evm offer to
+// every operation whose x-payment-info has a fixed USD price, next to the x402 fields, and the
+// service metadata at the root. Changes and returns spec.
+// include(path, method) limits it to the operations MPP really sells.
+function addMppOffers(spec, { categories = [], docs = {}, include = () => true } = {}) {
+  spec['x-service-info'] = { categories, docs };
+  for (const [path, methods] of Object.entries(spec.paths || {})) {
+    for (const [method, op] of Object.entries(methods)) {
+      if (!include(path, method.toUpperCase())) continue;
+      const info = op && op['x-payment-info'];
+      if (!info || !info.price || info.price.mode !== 'fixed' || info.price.amount === undefined) continue;
+      info.offers = [{ amount: atomicUsdc(info.price.amount), currency: BASE_USDC, description: op.summary || op.description || '', intent: INTENT, method: METHOD }];
+    }
+  }
+  return spec;
+}
+
 // Skips the x402 paywall for a request already paid over MPP.
 const unlessMppPaid = (paywall) => (req, res, next) => (req.mppPaid ? next() : paywall(req, res, next));
 
-module.exports = { createMppPay, unlessMppPaid, atomicUsdc, canonical, BASE_USDC };
+module.exports = { createMppPay, unlessMppPaid, addMppOffers, atomicUsdc, canonical, BASE_USDC };
