@@ -404,7 +404,11 @@ export function agentRegistration(origin) {
     ],
     active: true,
     x402Support: true,
-    registrations: [{ agentId: "9NN5M9jSUv2opiU47huXeRunHvJa1DdEAtapLtrJbnG4", agentRegistry: "solana:101:metaplex" }],
+    registrations: [
+      { agentId: "9NN5M9jSUv2opiU47huXeRunHvJa1DdEAtapLtrJbnG4", agentRegistry: "solana:101:metaplex" },
+      // ERC-8004 Identity Registry on Base (registered 4 Oct 2026; tokenURI = this file)
+      { agentId: 97520, agentRegistry: "eip155:8453:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432" },
+    ],
     supportedTrust: [],
   };
 }
