@@ -1,6 +1,6 @@
 ---
 name: presign-guard
-description: Check before an agent signs or buys: green, orange or red for signatures, approvals and transactions, token safety verdicts and wallet approval audits. Free quick checks; paid verdicts via x402. Errors are never charged.
+description: Check before an agent signs or buys: green, orange or red for signatures, approvals and transactions, token safety verdicts and wallet approval audits. Free quick checks; paid verdicts via x402 or MPP. Errors are never charged.
 ---
 
 # presign-guard
@@ -45,10 +45,11 @@ Examples:
 
 ## Paying
 
-Paid calls use **x402**: the first request answers `402 Payment Required` with the price, your x402 client pays in USDC and retries. You need one of:
+Paid calls use **x402** (or MPP on the HTTP endpoints): the first request answers `402 Payment Required` with the price, your client pays in USDC and retries. You need one of:
 
 - **The Fizzl Agent Wallet** (recommended): your owner's spending limits, approval on their phone above them, every signature checked first, and a receipt for each purchase. Set it up by following https://wallet.fizzl.eu/skill.md, then call these endpoints with `pay_x402`.
 - **Any other x402 client** with its own wallet (for example `@x402/fetch`).
+- **An MPP client** with its own wallet (for example `mppx` with `evm.charge` and USDC on Base): the HTTP endpoints also answer with an MPP challenge (`WWW-Authenticate: Payment`, method `evm`, USDC on Base); your client pays it and retries with `Authorization: Payment …`, and the answer carries a `Payment-Receipt`. MCP tool calls are paid with x402 only.
 
 Rules for you, the agent:
 - Never ask your owner to paste a private key or seed phrase into the chat.
