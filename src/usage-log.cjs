@@ -219,7 +219,9 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
         if (!described) return;
         // describe() may supply the payment itself (MCP carries it in _meta).
         const payment = quote ? null : described.payment !== undefined ? described.payment : paymentOf(req, res);
-        const offered = Boolean(req.headers['payment-signature'] || req.headers['x-payment']);
+        // An MPP credential (Authorization: Payment …, mpp-pay.js) counts as an offered payment too.
+        const mppOffered = /(?:^|,)\s*Payment\s/i.test(String(req.headers.authorization || ''));
+        const offered = Boolean(req.headers['payment-signature'] || req.headers['x-payment']) || mppOffered;
         record({
           route: described.route,
           via: described.via || 'http',
@@ -227,7 +229,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
           ms: Date.now() - started,
           paid: Boolean(payment),
           ...(payment || {}),
-          ...(quote ? { quote: true, ...(offered ? { payment_failed: true } : {}) } : {}),
+          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp' } : {}) } : {}) } : {}),
           agent: agentOf(req.headers['user-agent']),
           visitor: visitorOf(req.ip || (req.socket && req.socket.remoteAddress), visitorSecret),
           input: described.input,
