@@ -288,6 +288,8 @@ The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8
 
 `PAY_TO_SOLANA` (optional) is a Solana address for USDC payments on Solana, offered for the token verdict only; those payments settle through the PayAI facilitator (`SOLANA_FACILITATOR_URL` to override). Without it, the token verdict is paid on Base only.
 
+`MPP_SECRET` (optional, mainnet) turns on MPP payment next to x402 on the paid routes, for agents that speak MPP (mppx): method `evm`, USDC on Base, settled by the CDP facilitator only after a successful answer. Any long random string; it signs the challenge ids.
+
 `PAY_TO` must be an EVM address (`0x` + 40 hex characters). Surrounding spaces are trimmed; anything else stops the server at startup with a clear error, so a typo can't publish an unpayable 402.
 
 ## Data sources
