@@ -276,7 +276,7 @@ function creditPaths() {
     get: {
       operationId: `buyCredits${credits}`,
       summary: `Buy ${credits} prepaid credits ($${price}); returns a credit key for the x-credit-key header`,
-      "x-payment-info": { price: { mode: "fixed", currency: "USD", amount: price }, protocols: ["x402"], asset: "USDC" },
+      "x-payment-info": { price: { mode: "fixed", currency: "USD", amount: price }, protocols: [{ x402: {} }], asset: "USDC" },
       responses: { 200: { description: "credit_key, credits, expires_at" }, 402: { description: "Payment Required" } },
     },
   });
@@ -296,7 +296,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
         summary: r.summary,
         "x-payment-info": {
           price: { mode: "fixed", currency: "USD", amount: r.price },
-          protocols: ["x402"],
+          protocols: [{ x402: {} }],
           networks: [network],
           asset: "USDC",
         },
@@ -316,7 +316,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       summary: TOKEN_ROUTE.summary,
       "x-payment-info": {
         price: { mode: "fixed", currency: "USD", amount: TOKEN_ROUTE.price },
-        protocols: ["x402"],
+        protocols: [{ x402: {} }],
         networks: tokenNetworks,
         asset: "USDC",
       },
@@ -337,7 +337,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       summary: APPROVALS_ROUTE.summary,
       "x-payment-info": {
         price: { mode: "fixed", currency: "USD", amount: APPROVALS_ROUTE.price },
-        protocols: ["x402"],
+        protocols: [{ x402: {} }],
         networks: tokenNetworks,
         asset: "USDC",
       },

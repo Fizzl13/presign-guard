@@ -109,6 +109,8 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, now = () 
     const echoed = { realm: c.realm, method: c.method, intent: c.intent, request, expires: c.expires, digest: c.digest, opaque: c.opaque };
     const want = Buffer.from(idOf(echoed)), got = Buffer.from(String(c.id || ''));
     if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) throw new PaymentError("That challenge wasn't issued here (id doesn't match). Ask again for a fresh 402.");
+    // Several services may share one MPP_SECRET: a challenge only pays the service (realm) that issued it.
+    if (c.realm !== realm) throw new PaymentError('That challenge is for another service.');
     let bound;
     try { bound = JSON.parse(fromB64u(c.opaque)).route; } catch { bound = null; }
     if (bound !== route) throw new PaymentError('That challenge is for another route.');
@@ -196,15 +198,19 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, now = () 
 // MPP discovery (paymentauth.org draft-payment-discovery, read by MPPScan): adds the evm offer to
 // every operation whose x-payment-info has a fixed USD price, next to the x402 fields, and the
 // service metadata at the root. Changes and returns spec.
-// include(path, method) limits it to the operations MPP really sells.
-function addMppOffers(spec, { categories = [], docs = {}, include = () => true } = {}) {
+// include(path, method) limits it to the operations MPP really sells. protocols is written as
+// objects ([{x402:{}}, {mpp:{…}}]) as @agentcash/discovery (MPPScan, x402scan) reads it: next to a
+// price object, plain strings make it drop the payment info.
+function addMppOffers(spec, { categories = [], docs = {}, contact = null, include = () => true } = {}) {
   spec['x-service-info'] = { categories, docs };
+  if (contact && spec.info && !spec.info.contact) spec.info.contact = contact;
   for (const [path, methods] of Object.entries(spec.paths || {})) {
     for (const [method, op] of Object.entries(methods)) {
       if (!include(path, method.toUpperCase())) continue;
       const info = op && op['x-payment-info'];
       if (!info || !info.price || info.price.mode !== 'fixed' || info.price.amount === undefined) continue;
       info.offers = [{ amount: atomicUsdc(info.price.amount), currency: BASE_USDC, description: op.summary || op.description || '', intent: INTENT, method: METHOD }];
+      info.protocols = [{ x402: {} }, { mpp: { method: METHOD, intent: INTENT, currency: BASE_USDC } }];
     }
   }
   return spec;

@@ -82,7 +82,8 @@ test("openapi.json gets an evm offer on the routes MPP sells, not on the credit 
   const ROUTES = x402Routes(PAY_TO, "eip155:8453", null);
   const spec = addMppOffers(openApi("https://p.test", "eip155:8453", ["eip155:8453"], { credits: true }), { include: (p, m) => `${m} ${p}` in ROUTES });
   const info = spec.paths["/v1/check"].post["x-payment-info"];
-  assert.deepEqual(info.protocols, ["x402"]);
+  assert.deepEqual(info.protocols.map((p) => Object.keys(p)[0]), ["x402", "mpp"]);
+  assert.deepEqual(spec.paths["/v1/credits/100"].get["x-payment-info"].protocols, [{ x402: {} }]);
   assert.equal(info.offers[0].method, "evm");
   assert.equal(info.offers[0].amount, String(Math.round(Number(info.price.amount) * 1e6)));
   assert.equal(spec.paths["/v1/credits/100"].get["x-payment-info"].offers, undefined);
