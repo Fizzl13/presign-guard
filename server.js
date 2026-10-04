@@ -12,6 +12,7 @@ import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { agentRegistration, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
+import mppPayModule from "./src/mpp-pay.cjs";
 import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
 import { createTokenQuickRouter } from "./src/token-quick.js";
 import { fizzlCors } from "./src/fizzl-cors.js";
@@ -82,6 +83,17 @@ if (process.env.CREDITS_REDIS_URL) {
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
 const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
+// MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
+// CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
+const MPP = MAINNET && process.env.MPP_SECRET
+  ? mppPayModule.createMppPay({
+    secret: process.env.MPP_SECRET,
+    realm: new URL(PUBLIC_URL).host,
+    recipient: PAY_TO,
+    routes: Object.fromEntries(Object.entries(ROUTES).map(([route, r]) => [route, r.accepts.find((a) => a.network === NETWORK).price])),
+    facilitator: facilitators[facilitators.length - 1],
+  })
+  : null;
 // Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
 const SIGNER = createSigner();
 
@@ -185,7 +197,8 @@ app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; ne
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
 // Challenges (and so the Bazaar listing) name presign-guard.fizzl.eu, also when called on the Render address.
 const paywall = unlessInternal((req) => req.fizzlInternal === true, onPublicHost(PUBLIC_URL, paymentMiddleware(PAYWALL_ROUTES, resourceServer)));
-app.use((req, res, next) => (req.fizzlCredits ? next() : paywall(req, res, next)));
+if (MPP) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal ? next() : MPP.middleware(req, res, next)));
+app.use((req, res, next) => (req.fizzlCredits || req.mppPaid ? next() : paywall(req, res, next)));
 app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
 app.use(createTokenRouter());

@@ -57,6 +57,7 @@ function decodeBase64Json(value) {
 // What was paid, from the request's payment header (amount, network) and the
 // response's settlement header (transaction, payer). Null when not paid.
 function paymentOf(req, res) {
+  if (res.locals && res.locals.mppPayment) return res.locals.mppPayment; // paid over MPP (mpp-pay.cjs)
   const settlement = decodeBase64Json(res.getHeader('PAYMENT-RESPONSE') || res.getHeader('X-PAYMENT-RESPONSE'));
   if (!settlement || settlement.success === false) return null;
   const payload = decodeBase64Json(req.headers['payment-signature'] || req.headers['x-payment']);
