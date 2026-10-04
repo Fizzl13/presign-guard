@@ -92,6 +92,8 @@ const MPP = MAINNET && process.env.MPP_SECRET
     recipient: PAY_TO,
     routes: Object.fromEntries(Object.entries(ROUTES).map(([route, r]) => [route, r.accepts.find((a) => a.network === NETWORK).price])),
     facilitator: facilitators[facilitators.length - 1],
+    // MPP_TEMPO_RECIPIENT adds the tempo method (USDC.e on Tempo, push mode; MPP_TEMPO_CHAIN 42431 = testnet).
+    tempo: process.env.MPP_TEMPO_RECIPIENT ? { recipient: process.env.MPP_TEMPO_RECIPIENT, chainId: Number(process.env.MPP_TEMPO_CHAIN || 4217), rpc: process.env.MPP_TEMPO_RPC || undefined } : null,
   })
   : null;
 // Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
@@ -130,7 +132,7 @@ app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=30
 app.get("/openapi.json", (_req, res) => {
   const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
-  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: { name: "Fizzl", url: "https://fizzl.eu" }, include: (path, method) => `${method} ${path}` in ROUTES });
+  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: { name: "Fizzl", url: "https://fizzl.eu" }, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo });
   res.json(spec);
 });
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL, { credits: Boolean(creditStore) })));
