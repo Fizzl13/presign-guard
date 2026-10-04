@@ -125,6 +125,7 @@ app.get("/", (_req, res) => res.json({
 }));
 app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
 // Instructions an AI agent can read and follow ("Connect to presign-guard.fizzl.eu/skill.md").
+app.get("/favicon.ico", (_req, res) => res.set("cache-control", "public, max-age=86400").sendFile(fileURLToPath(new URL("./public/favicon.ico", import.meta.url))));
 app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
 app.get("/openapi.json", (_req, res) => {
   const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])], { credits: Boolean(creditStore) });

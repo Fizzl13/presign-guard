@@ -294,6 +294,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       post: {
         operationId: r.operationId,
         summary: r.summary,
+        tags: ["Pre-sign checks"],
         "x-payment-info": {
           price: { mode: "fixed", currency: "USD", amount: r.price },
           protocols: [{ x402: {} }],
@@ -314,6 +315,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
     get: {
       operationId: TOKEN_ROUTE.operationId,
       summary: TOKEN_ROUTE.summary,
+      tags: ["Token checks"],
       "x-payment-info": {
         price: { mode: "fixed", currency: "USD", amount: TOKEN_ROUTE.price },
         protocols: [{ x402: {} }],
@@ -335,6 +337,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
     get: {
       operationId: APPROVALS_ROUTE.operationId,
       summary: APPROVALS_ROUTE.summary,
+      tags: ["Wallet approvals"],
       "x-payment-info": {
         price: { mode: "fixed", currency: "USD", amount: APPROVALS_ROUTE.price },
         protocols: [{ x402: {} }],
