@@ -2,7 +2,8 @@
 //
 // Wired up in server.js.
 //
-// Env: PAY_TO, ANTHROPIC_API_KEY, optional GOPLUS_ACCESS_TOKEN, CLAUDE_MODEL, X402_NETWORK, FACILITATOR_URL
+// Env: PAY_TO, ANTHROPIC_API_KEY, optional GOPLUS_ACCESS_TOKEN, CLAUDE_MODEL, X402_NETWORK, FACILITATOR_URL,
+//      TYPESAFE_API_KEY (Jev second opinion, src/jev.js)
 //
 // Request types (POST body):
 //   { type: "approval",    chainId, token, spender, amount }
@@ -28,6 +29,7 @@ import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, 
 export const NEW_WALLET_DAYS = 7;
 export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
+import { secondOpinion } from "./jev.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -696,6 +698,13 @@ export async function analyze(req) {
     tokenReasons(token, data, add);
     controlReasons(controls, (code, severity, details) => add(code, severity, token, details));
   }
+  // Jev's second opinion on the site name and the token names (src/jev.js), alongside the checks below.
+  const aiSecond = secondOpinion({
+    chainId: req.chainId,
+    origin: req.origin ?? null,
+    tokens: tokens.map((address) => ({ address, ...tokenMeta.get(address) })),
+    skipTokens: new Set(reasons.filter((r) => r.code === "TOKEN_IMPERSONATION").map((r) => r.subject)),
+  }).catch(() => ({ reasons: [], sources: [] }));
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
@@ -842,6 +851,14 @@ export async function analyze(req) {
   if (req.kind === "unknown_signature") add("UNRECOGNIZED_SIGNATURE", "orange", req.target, { primaryType: req.primaryType });
   if (req.kind === "contract_call") add("UNDECODED_CALL", "info", req.target, { selector: req.selector });
 
+  // Only adds orange, and not where a phishing list already named the site.
+  const ai = await aiSecond;
+  const listedSite = reasons.some((r) => r.code === "PHISHING_SITE" || r.code === "LOOKALIKE_SITE");
+  for (const r of ai.reasons) {
+    if (listedSite && (r.code === "AI_LOOKALIKE_SITE" || r.code === "AI_LURE_SITE")) continue;
+    add(r.code, r.severity, r.subject, r.details);
+  }
+
   const verdict = reasons.some((r) => r.severity === "red") ? "red"
     : reasons.some((r) => r.severity === "orange") ? "orange"
     : "green";
@@ -875,7 +892,7 @@ export async function analyze(req) {
       value: req.value.toString(),
     },
     scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). Not covered: eth_sign/personal_sign messages and transaction simulation.",
-    sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : [])],
+    sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...ai.sources],
     checkedAt: new Date().toISOString(),
   };
 }

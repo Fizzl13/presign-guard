@@ -192,12 +192,17 @@ function mockClaude() {
   return new Response(JSON.stringify({ content: [{ type: "text", text: "Uitleg in gewone taal." }] }));
 }
 
+let jevAnswers = {};
 let server, base;
 before(async () => {
   globalThis.fetch = async (url, opts) => {
     const u = String(url);
     if (u.includes("gopluslabs")) return mockGoplus(u);
     if (u.includes("api.anthropic.com")) return mockClaude();
+    if (u.includes("api.typesafe.ai")) {
+      const q = JSON.parse(opts.body).questions;
+      return Response.json({ model: "jev-test", answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: "noul", noul: jevAnswers[id] ?? 0.02 }])), usage: {} });
+    }
     if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
     if (u.includes("dapp-scanning.api.cx.metamask.io")) return mockMetamask(u);
     if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) return mockRpc(opts);
@@ -878,4 +883,25 @@ test("PG1 key status for /health: unset, PG1's verdict on the key, never the key
   assert.equal(pg1KeyStatusNow(), "active");
   delete process.env.PG1_API_KEY;
   resetPg1();
+});
+
+test("Jev second opinion: adds orange for a brand-imitating site name the lists miss; off without TYPESAFE_API_KEY", async () => {
+  try {
+    jevAnswers = { site_imitates_brand: 0.96 };
+    const before = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "uniswap.org" });
+    assert.ok(!codes(before).includes("AI_LOOKALIKE_SITE")); // no key: no Jev
+    process.env.TYPESAFE_API_KEY = "ts-test";
+    const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "uniswap.org" });
+    const hit = r.body.reasons.find((x) => x.code === "AI_LOOKALIKE_SITE");
+    assert.equal(hit.severity, "orange");
+    assert.equal(hit.details.decidedBy, "jev");
+    assert.equal(r.body.verdict, "orange");
+    assert.ok(r.body.sources.includes("typesafe-jev"));
+    // A site a phishing list already names gets no extra AI reason.
+    const listed = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", origin: "metamask-login.com" });
+    assert.ok(codes(listed).includes("LOOKALIKE_SITE"));
+    assert.ok(!codes(listed).includes("AI_LOOKALIKE_SITE"));
+    // The real USDC is never asked about: no AI token reason.
+    assert.ok(!codes(r).includes("AI_TOKEN_IMPERSONATION"));
+  } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
 });
