@@ -22,6 +22,7 @@ import {
 } from "./presign-guard.js";
 import { permissionedToken } from "./token-acl.js";
 import { launchEscrows } from "./launch-escrow.js";
+import { secondOpinion } from "./jev.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1";
@@ -325,6 +326,7 @@ const PHRASES = {
   TOKEN_HONEYPOT: () => "honeypot: can't be sold",
   TOKEN_AIRDROP_SCAM: () => "airdrop scam",
   TOKEN_IMPERSONATION: () => "imitates another token",
+  AI_TOKEN_IMPERSONATION: () => "name looks like another token's (AI check)",
   NON_TRANSFERABLE: () => "can't be transferred",
   MALICIOUS_AUTHORITY: () => "authority address flagged malicious",
   MINT_AUTHORITY_ACTIVE: () => "supply can still be minted",
@@ -395,6 +397,17 @@ export async function tokenVerdict({ chain, address }, now = Date.now()) {
     const controls = needsControlCheck(sec.data) ? await issuerControls(chainId, address) : null;
     if (controls) sources.push("chain");
     evmReasons({ sec: sec.data, market, controls }, add);
+  }
+
+  // Jev's second opinion on the name (src/jev.js): only when the token isn't already flagged as a copy.
+  // Adds orange at most, never makes a token green.
+  if (!reasons.some((r) => r.code === "TOKEN_IMPERSONATION") && (market?.symbol || market?.name)) {
+    const ai = await secondOpinion({
+      chainId: chain === "solana" ? "solana" : TOKEN_CHAINS[chain].chainId,
+      tokens: [{ address, symbol: market?.symbol ?? undefined, name: market?.name ?? undefined }],
+    }).catch(() => ({ reasons: [], sources: [] }));
+    for (const r of ai.reasons) add(r.code, r.severity, r.details);
+    sources.push(...ai.sources);
   }
 
   const order = { red: 0, orange: 1, info: 2 };
