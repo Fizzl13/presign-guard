@@ -71,3 +71,9 @@ test("self-test for /health: off without a key, ok with an answer, failed on an 
   assert.equal(jevStatus(env).on, true);
   assert.match((await jevSelfTest({ env, fetch: stub({ jevStatus: 401 }).fetch })).selfTest, /^failed/);
 });
+
+test("Solana: the USDC mint is matched exactly (base58 is case-sensitive)", () => {
+  assert.equal(buildQuestions({ chainId: "solana", tokens: [{ address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", symbol: "USDC" }] }), null);
+  const q = buildQuestions({ chainId: "solana", tokens: [{ address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1V", symbol: "USDC" }] });
+  assert.equal(q.state.token_0.address, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1V");
+});

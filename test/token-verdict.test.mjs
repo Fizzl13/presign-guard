@@ -160,6 +160,10 @@ before(async () => {
     const u = new URL(String(url));
     calls.push(u.hostname);
     if (down.has(u.hostname)) return new Response("busy", { status: 503 });
+    if (u.hostname === "api.typesafe.ai") {
+      const q = JSON.parse(init.body).questions;
+      return Response.json({ model: "jev-test", answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: "noul", noul: jevP }])), usage: {} });
+    }
     if (u.hostname === "api.gopluslabs.io") {
       const a = u.searchParams.get("contract_addresses");
       const table = u.pathname.includes("/solana/") ? FIXTURES.goplusSol : FIXTURES.goplusEvm;
@@ -194,6 +198,7 @@ before(async () => {
 after(() => { globalThis.fetch = realFetch; });
 beforeEach(() => { calls.length = 0; rpcCalls.length = 0; down = new Set(); });
 
+let jevP = 0.02;
 const codes = (r, severity) => r.reasons.filter((x) => !severity || x.severity === severity).map((x) => x.code).sort();
 
 test("input: chain and address are checked, EVM addresses lowercased", () => {
@@ -453,4 +458,24 @@ test("route: DexScreener or GoPlus down is a 503 with no verdict (nothing is cha
     const g = await realFetch(`${base}/v1/token?chain=solana&address=So44444444444444444444444444444444444444444`);
     assert.equal(g.status, 503);
   });
+});
+
+test("Jev second opinion on the token name: orange CAUTION when Jev is sure; the real USDC is never asked; off without a key", async () => {
+  try {
+    jevP = 0.95;
+    const off = await tokenVerdict({ chain: "solana", address: BONK }, NOW);
+    assert.equal(off.verdict, "green"); // no key: unchanged
+    process.env.TYPESAFE_API_KEY = "ts-test";
+    const r = await tokenVerdict({ chain: "solana", address: BONK }, NOW);
+    assert.deepEqual([r.verdict, r.grade], ["orange", "CAUTION"]);
+    assert.equal(r.reasons.find((x) => x.code === "AI_TOKEN_IMPERSONATION").details.decidedBy, "jev");
+    assert.match(r.one_liner, /AI check/);
+    assert.ok(r.sources.includes("typesafe-jev"));
+    calls.length = 0;
+    const usdc = await tokenVerdict({ chain: "solana", address: USDC_SOL }, NOW);
+    assert.ok(!usdc.reasons.some((x) => x.code === "AI_TOKEN_IMPERSONATION"));
+    assert.ok(!calls.includes("api.typesafe.ai"));
+    jevP = 0.1;
+    assert.equal((await tokenVerdict({ chain: "solana", address: BONK }, NOW)).verdict, "green");
+  } finally { delete process.env.TYPESAFE_API_KEY; jevP = 0.02; }
 });
