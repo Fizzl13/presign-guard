@@ -138,3 +138,22 @@ export async function secondOpinion(input, opts = {}) {
   }
   return { reasons, sources: ["typesafe-jev", ...(between.length && Object.keys(claude).length ? ["claude"] : [])] };
 }
+
+// Shown in GET /health, so the owner can see Jev works without a paid check (no key, no answers about users).
+const status = { on: false, selfTest: "not run", at: null };
+export function jevStatus(env = process.env) {
+  return { on: jevEnabled(env), selfTest: status.selfTest, at: status.at };
+}
+
+// At startup: one known-bad example. "ok" when Jev answers and calls it a brand imitation.
+export async function jevSelfTest(opts = {}) {
+  const env = opts.env ?? process.env;
+  if (!jevEnabled(env)) { status.selfTest = "off (no TYPESAFE_API_KEY)"; return status; }
+  const q = buildQuestions({ chainId: 8453, origin: "uniswap-airdrop-claim.xyz" });
+  const probs = await askJev(q, { ...opts, env });
+  status.at = new Date().toISOString();
+  if (!probs || typeof probs.site_imitates_brand !== "number") status.selfTest = "failed: no answer from TypeSafe (key, network or rate limit; see the log)";
+  else status.selfTest = `ok: brand imitation ${Math.round(probs.site_imitates_brand * 100)}%, lure ${Math.round((probs.site_lure ?? 0) * 100)}%`;
+  console.log(`[jev] self-test ${status.selfTest}`);
+  return status;
+}
