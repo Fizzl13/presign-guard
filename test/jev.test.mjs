@@ -1,7 +1,7 @@
 // Jev second opinion (src/jev.js): Jev decides when sure, Claude decides in between, failures are silent.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildQuestions, secondOpinion, jevEnabled } from "../src/jev.js";
+import { buildQuestions, secondOpinion, jevEnabled, jevSelfTest, jevStatus } from "../src/jev.js";
 
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const FAKE = "0x7777000000000000000000000000000000000002";
@@ -63,4 +63,11 @@ test("TypeSafe failing (429, 529, network) is skipped silently", async () => {
   }
   const broken = async () => { throw new TypeError("fetch failed"); };
   assert.deepEqual(await secondOpinion({ chainId: 8453, origin: "a.test" }, { env, fetch: broken }), { reasons: [], sources: [] });
+});
+
+test("self-test for /health: off without a key, ok with an answer, failed on an error", async () => {
+  assert.match((await jevSelfTest({ env: {} })).selfTest, /^off/);
+  assert.match((await jevSelfTest({ env, fetch: stub({ jev: { site_imitates_brand: 0.97, site_lure: 0.91 } }).fetch })).selfTest, /^ok: brand imitation 97%, lure 91%/);
+  assert.equal(jevStatus(env).on, true);
+  assert.match((await jevSelfTest({ env, fetch: stub({ jevStatus: 401 }).fetch })).selfTest, /^failed/);
 });
