@@ -959,7 +959,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null) {
     "POST /v1/check": route("/v1/check",
       "Is this transaction, approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
     "POST /v1/check/explain": route("/v1/check/explain",
-      "Pre-sign risk verdict plus a plain-language explanation in Dutch or English"),
+      "Is this transaction, approval or signature safe to sign, explained for a person? The same pre-sign verdict as /v1/check (green/orange/red + reason codes) plus a short plain-language explanation in English or Dutch, for an agent to show its user before asking for approval"),
     [`GET ${TOKEN_ROUTE.path}`]: {
       accepts: [
         { scheme: "exact", price: tokenPrice, network, payTo },
