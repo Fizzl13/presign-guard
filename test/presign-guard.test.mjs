@@ -905,3 +905,17 @@ test("Jev second opinion: adds orange for a brand-imitating site name the lists 
     assert.ok(!codes(r).includes("AI_TOKEN_IMPERSONATION"));
   } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
 });
+
+test("Jev second opinion: a signature whose contract calls itself Uniswap is orange; the real token's permit is not asked", async () => {
+  try {
+    process.env.TYPESAFE_API_KEY = "ts-test";
+    jevAnswers = { domain_impersonates: 0.95 };
+    const fake = await check(sig("Permit", { owner: USER, spender: GOOD, value: "1000000", nonce: 0, deadline: FAR }, { verifyingContract: GOOD, name: "Uniswap V3" }));
+    const hit = fake.body.reasons.find((x) => x.code === "AI_SIGNATURE_IMPERSONATION");
+    assert.equal(hit.severity, "orange");
+    assert.equal(hit.subject, GOOD.toLowerCase());
+    assert.equal(fake.body.verdict, "orange");
+    const real = await check(sig("Permit", { owner: USER, spender: GOOD, value: "1000000", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN, name: "USD Coin" }));
+    assert.ok(!codes(real).includes("AI_SIGNATURE_IMPERSONATION"));
+  } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
+});

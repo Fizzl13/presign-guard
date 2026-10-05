@@ -77,3 +77,17 @@ test("Solana: the USDC mint is matched exactly (base58 is case-sensitive)", () =
   const q = buildQuestions({ chainId: "solana", tokens: [{ address: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1V", symbol: "USDC" }] });
   assert.equal(q.state.token_0.address, "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1V");
 });
+
+test("signature domain: a contract named after Permit2 is asked about; the real Permit2 and tokens are not", async () => {
+  const q = buildQuestions({ chainId: 8453, domain: { name: "Permit2", verifyingContract: FAKE } });
+  assert.deepEqual(Object.keys(q.questions), ["domain_impersonates"]);
+  assert.deepEqual(q.state.signature_domain, { name: "Permit2", verifying_contract: FAKE });
+  assert.equal(buildQuestions({ chainId: 8453, domain: { name: "Permit2", verifyingContract: "0x000000000022D473030F116dDEE9F6B43aC78BA3" } }), null);
+  assert.equal(buildQuestions({ chainId: 8453, domain: { name: "USD Coin", verifyingContract: USDC_BASE } }), null);
+  // A permit for a token whose name is already asked about is not asked twice.
+  const both = buildQuestions({ chainId: 8453, tokens: [{ address: FAKE, symbol: "USDC", name: "USD Coin" }], domain: { name: "USD Coin", verifyingContract: FAKE } });
+  assert.deepEqual(Object.keys(both.questions), ["token_0_impersonates"]);
+  const s = stub({ jev: { domain_impersonates: 0.94 } });
+  const r = await secondOpinion({ chainId: 8453, domain: { name: "Uniswap V3", verifyingContract: FAKE } }, { env, fetch: s.fetch });
+  assert.deepEqual(r.reasons.map((x) => [x.code, x.severity, x.subject, x.details.decidedBy]), [["AI_SIGNATURE_IMPERSONATION", "orange", FAKE, "jev"]]);
+});
