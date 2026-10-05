@@ -24,6 +24,17 @@ const OFFICIAL = {
   56: { USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", USDT: "0x55d398326f99059ff775485246999027b3197955" },
   solana: { USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", wSOL: "So11111111111111111111111111111111111111112" },
 };
+// Contracts of the protocols whose names permit-phishing copies most, the same address on every EVM chain
+// they run on. A signature whose domain.verifyingContract is one of these (or an official token) is not asked about.
+const OFFICIAL_PROTOCOLS = {
+  Permit2: "0x000000000022d473030f116ddee9f6b43ac78ba3",
+  "Seaport 1.5": "0x00000000000000adc04c56bf30ac9d3c0aaf14dc",
+  "Seaport 1.6": "0x0000000000000068f116a894984e2db1123eb395",
+  "CoW Protocol (GPv2Settlement)": "0x9008d19f58aabd9ed0d60971565aa8510560ab41",
+  "UniswapX (ExclusiveDutchOrderReactor)": "0x6000da47483062a0d734ba3dc7576ce6a0b645c4",
+  "1inch Aggregation Router v6": "0x111111125421ca6dc452d289314280a0f8842a65",
+  "1inch Aggregation Router v5": "0x1111111254eeb25477b68fb85ed929f73a960582",
+};
 // EVM addresses compare case-insensitively; Solana mints exactly.
 const norm = (a) => (/^0x/i.test(String(a)) ? String(a).toLowerCase() : String(a));
 
@@ -32,7 +43,7 @@ export function jevEnabled(env = process.env) {
 }
 
 // The questions for one check. Returns { state, questions, meta } or null when there is nothing to ask.
-export function buildQuestions({ chainId, origin = null, tokens = [], skipSite = false, skipTokens = new Set() }) {
+export function buildQuestions({ chainId, origin = null, tokens = [], skipSite = false, skipTokens = new Set(), domain = null }) {
   const official = OFFICIAL[chainId] ?? {};
   const officialAddresses = new Set(Object.values(official).map(norm));
   const questions = {};
@@ -67,6 +78,23 @@ export function buildQuestions({ chainId, origin = null, tokens = [], skipSite =
     };
     meta[`${key}_impersonates`] = { code: "AI_TOKEN_IMPERSONATION", subject: state[key].address };
   });
+
+  // The name a signature request shows the user (EIP-712 domain.name): permit phishing names its own
+  // contract "Permit2", "Uniswap" or "USD Coin" so the wallet shows a trusted name.
+  const dname = typeof domain?.name === "string" ? domain.name.trim().slice(0, 64) : "";
+  const verifying = domain?.verifyingContract ? norm(domain.verifyingContract) : null;
+  const protocolAddresses = new Set(Object.values(OFFICIAL_PROTOCOLS));
+  const askedAsToken = tokens.some((t) => t?.address && norm(t.address) === verifying && (t.name === dname || t.symbol === dname));
+  if (dname && verifying && !officialAddresses.has(verifying) && !protocolAddresses.has(verifying) && !askedAsToken) {
+    state.signature_domain = { name: dname, verifying_contract: verifying };
+    state.well_known_protocol_contracts = OFFICIAL_PROTOCOLS;
+    questions.domain_impersonates = {
+      type: "noul",
+      instructions: "A wallet shows `signature_domain.name` as the name of the contract asking for a signature. Does that name present itself as a well-known protocol, wallet or token (for example Permit2, Uniswap, OpenSea, Seaport, 1inch, USDC or USD Coin)? The contract `signature_domain.verifying_contract` is not one of the official contracts in `well_known_protocol_contracts` or `well_known_tokens_official_contracts`.",
+      criteria: { true: "The name claims to be, or closely copies, a famous protocol, wallet or token it is not", false: "The name is the contract's own and does not pretend to be another known project" },
+    };
+    meta.domain_impersonates = { code: "AI_SIGNATURE_IMPERSONATION", subject: verifying };
+  }
 
   return Object.keys(questions).length ? { state, questions, meta } : null;
 }

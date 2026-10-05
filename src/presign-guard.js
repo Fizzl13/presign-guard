@@ -463,7 +463,7 @@ function parseSignature(raw, chainId) {
     if (!verifying) throw new ValidationError(`${primaryType} signatures need domain.verifyingContract`);
     return verifying;
   };
-  const base = { primaryType, target: verifying, grants: [], revoke: false };
+  const base = { primaryType, target: verifying, grants: [], revoke: false, ...(typeof domain.name === "string" && domain.name && { domainName: domain.name.slice(0, 64) }) };
 
   // EIP-2612 permit, and DAI-style permit (holder/allowed/expiry)
   if (primaryType === "Permit") {
@@ -704,6 +704,8 @@ export async function analyze(req) {
     origin: req.origin ?? null,
     tokens: tokens.map((address) => ({ address, ...tokenMeta.get(address) })),
     skipTokens: new Set(reasons.filter((r) => r.code === "TOKEN_IMPERSONATION").map((r) => r.subject)),
+    // Skipped when the code already flags it (a Permit2 signature at another contract is NONCANONICAL_PERMIT2).
+    domain: req.domainName && req.target && !(req.kind?.startsWith("permit2") && req.target !== PERMIT2) ? { name: req.domainName, verifyingContract: req.target } : null,
   }).catch(() => ({ reasons: [], sources: [] }));
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
