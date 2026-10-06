@@ -99,6 +99,11 @@
   .green { color: var(--green); background: var(--green-bg); } .orange { color: var(--orange); background: var(--orange-bg); } .red { color: var(--red); background: var(--red-bg); }
   .reasons { margin: 12px 0 0; padding-left: 20px; } .reasons li { margin: 4px 0; }
   .explain { margin-top: 12px; }
+  .prices { display: flex; flex-wrap: wrap; gap: 10px; margin: -24px 0 40px; }
+  .price { background: var(--ink-2); border: 1px solid var(--line); border-radius: 14px; padding: 10px 14px; font-size: 14.5px; color: var(--soft); text-decoration: none; }
+  .price b { color: var(--mint); font-weight: 600; }
+  .price.save { border-color: rgba(97,245,195,.45); }
+  a.price:hover { border-color: var(--mint); }
 </style>
 </head>
 <body>
@@ -110,6 +115,11 @@
   <div class="eyebrow"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>x402 · Base · for AI agents</div>
   <h1>Check it <em>before</em> your agent signs it.</h1>
   <p class="lead">Send presign-guard the transaction, approval or signature your agent is about to sign. You get back green, orange or red, with the reasons, in under a second. $0.01 per check in USDC via x402. No account, no API key.</p>
+  <div class="prices" aria-label="Prices">
+    <span class="price"><b>$0.01</b> per check</span>
+    <a class="price save" href="#credits-card"><b>$0.80</b> for 100 prepaid · 20% off</a>
+    <a class="price save" href="#credits-card"><b>$7.00</b> for 1000 prepaid · 30% off</a>
+  </div>
 
   <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Try it</h2>
   <div class="card">
