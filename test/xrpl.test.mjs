@@ -27,8 +27,8 @@ const run = async (tx, opts = {}, body = {}) => analyzeXrpl(await parseXrplReque
 const codes = (r) => r.reasons.map((x) => `${x.severity}:${x.code}`);
 
 test("addresses and requests: checksum, required fields, network", async () => {
-  assert.equal(await isXrplAddress(ME), true);
-  assert.equal(await isXrplAddress(ME.slice(0, -1) + "3"), false);
+  assert.equal(isXrplAddress(ME), true);
+  assert.equal(isXrplAddress(ME.slice(0, -1) + "3"), false);
   await assert.rejects(parseXrplRequest({ type: "xrpl" }), /tx is required/);
   await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "Payment", Account: "0xabc" } }), /Account/);
   await assert.rejects(parseXrplRequest({ type: "xrpl", network: "xrpl:9", tx: { TransactionType: "Payment", Account: ME } }), /network/);

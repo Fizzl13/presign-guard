@@ -11,19 +11,21 @@
 // The ledger is read through public JSON-RPC (no key); when it can't be reached the check says so (info) and the
 // rules that need no ledger still apply. Fail-closed as in presign-guard.js: errors are non-2xx, never "green".
 
+import { createHash } from "node:crypto";
 import { domainAge, hostnameReputation, NEW_DOMAIN_DAYS } from "./pg1.js";
 
 export const XRPL_NETWORKS = {
   "xrpl:0": { name: "XRP Ledger", rpc: "https://xrplcluster.com", rlusdIssuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
   "xrpl:1": { name: "XRPL Testnet", rpc: "https://testnet.xrpl-labs.com", rlusdIssuer: "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV" },
 };
-const RLUSD = "524C555344000000000000000000000000000000";
+export const RLUSD = "524C555344000000000000000000000000000000";
 const RPC_TIMEOUT_MS = 5000;
 const CACHE_MS = 5 * 60 * 1000;
 
 // AccountSet SetFlag values (asf…) and AccountRoot flags (lsf…).
+export const BLACKHOLES = new Set(["rrrrrrrrrrrrrrrrrrrrrhoLvTp", "rrrrrrrrrrrrrrrrrrrrBZbvji", "rrrrrrrrrrrrrrrrrNAMEtxvNvQ", "rrrrrrrrrrrrrrrrrrrn5RM1rHd"]);
 const ASF = { requireDest: 1, disableMaster: 4, defaultRipple: 8, depositAuth: 9, allowClawback: 16 };
-const LSF = { requireDestTag: 0x00020000, disallowXrp: 0x00080000, globalFreeze: 0x00400000, depositAuth: 0x01000000, allowClawback: 0x80000000 };
+export const LSF = { requireDestTag: 0x00020000, requireAuth: 0x00040000, disallowXrp: 0x00080000, disableMaster: 0x00100000, noFreeze: 0x00200000, globalFreeze: 0x00400000, depositAuth: 0x01000000, allowClawback: 0x80000000 };
 const TF_PARTIAL_PAYMENT = 0x00020000;
 const TF_SELL_NFTOKEN = 0x00000001;
 
@@ -37,7 +39,7 @@ export class XrplValidationError extends Error {
 
 // XRPL classic address: base58 (XRPL alphabet), 25 bytes = 0x00 + 20-byte account id + 4-byte double-SHA-256 checksum.
 const ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz";
-export async function isXrplAddress(value) {
+export function isXrplAddress(value) {
   if (typeof value !== "string" || !/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(value)) return false;
   let n = 0n;
   for (const ch of value) {
@@ -48,7 +50,6 @@ export async function isXrplAddress(value) {
   const hex = n.toString(16).padStart(50, "0");
   if (hex.length !== 50) return false;
   const bytes = Buffer.from(hex, "hex");
-  const { createHash } = await import("node:crypto");
   const sum = createHash("sha256").update(createHash("sha256").update(bytes.subarray(0, 21)).digest()).digest();
   return bytes[0] === 0 && sum.subarray(0, 4).equals(bytes.subarray(21, 25));
 }
@@ -61,9 +62,9 @@ export async function parseXrplRequest(body) {
   const tx = body.tx ?? body.tx_json;
   if (!tx || typeof tx !== "object" || Array.isArray(tx)) throw new XrplValidationError("tx is required: the unsigned transaction JSON (TransactionType, Account, …)");
   if (typeof tx.TransactionType !== "string" || !/^[A-Za-z]{2,40}$/.test(tx.TransactionType)) throw new XrplValidationError("tx.TransactionType is required");
-  if (!(await isXrplAddress(tx.Account))) throw new XrplValidationError("tx.Account must be a valid XRPL address (r…)");
+  if (!isXrplAddress(tx.Account)) throw new XrplValidationError("tx.Account must be a valid XRPL address (r…)");
   for (const field of ["Destination", "RegularKey"]) {
-    if (tx[field] !== undefined && !(await isXrplAddress(tx[field]))) throw new XrplValidationError(`tx.${field} must be a valid XRPL address (r…)`);
+    if (tx[field] !== undefined && !isXrplAddress(tx[field])) throw new XrplValidationError(`tx.${field} must be a valid XRPL address (r…)`);
   }
   let origin;
   if (body.origin !== undefined && body.origin !== null && body.origin !== "") {
@@ -75,11 +76,11 @@ export async function parseXrplRequest(body) {
 
 // Amount helpers: XRP is a string of drops; an issued token is { currency, issuer, value }.
 const isIssued = (a) => a && typeof a === "object" && typeof a.currency === "string";
-const currencyName = (c) => (String(c).toUpperCase() === RLUSD ? "RLUSD" : String(c).length === 40 ? Buffer.from(String(c), "hex").toString("latin1").replace(/\0+$/, "") || c : c);
-const isRlusdCode = (c) => String(c).toUpperCase() === RLUSD || String(c).toUpperCase() === "RLUSD";
+export const currencyName = (c) => (String(c).toUpperCase() === RLUSD ? "RLUSD" : String(c).length === 40 ? Buffer.from(String(c), "hex").toString("latin1").replace(/\0+$/, "") || c : c);
+export const isRlusdCode = (c) => String(c).toUpperCase() === RLUSD || String(c).toUpperCase() === "RLUSD";
 
 const cache = new Map();
-function ledger(network, fetchImpl) {
+export function ledger(network, fetchImpl = globalThis.fetch) {
   const { rpc } = XRPL_NETWORKS[network];
   const useCache = fetchImpl === globalThis.fetch; // a stand-in node (tests) is asked every time
   return async (method, params) => {

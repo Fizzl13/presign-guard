@@ -31,8 +31,8 @@ export const TOKEN_INPUT_EXAMPLE = { chain: "solana", address: "DezXAZ8z7PnrnRJj
 export const TOKEN_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc"], description: "Chain the token lives on" },
-    address: { type: "string", description: "Solana mint address (base58) or EVM token contract (0x...)" },
+    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "xrpl"], description: "Chain the token lives on" },
+    address: { type: "string", description: "Solana mint address (base58), EVM token contract (0x...), or an XRPL token as CURRENCY.rIssuer (e.g. RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De)" },
   },
   required: ["chain", "address"],
 };
