@@ -87,6 +87,8 @@ The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta[
 
 `GET /v1/token?chain=solana&address=<mint>` (or `chain=base|ethereum|arbitrum|optimism|polygon|bsc` with a `0x` token contract) answers one question before an agent buys, holds or accepts a token: is the token itself a trap?
 
+**XRP Ledger:** `chain=xrpl&address=CURRENCY.rIssuer` (e.g. `RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`; names longer than 3 characters may be given as text or as the ledger's 40-hex code). Read from the issuer account on the ledger and DexScreener's XRPL market: red `TOKEN_FROZEN` (global freeze), `TOKEN_ISSUER_NOT_FOUND`, `TOKEN_IMPERSONATION` (called RLUSD but not Ripple's); orange `CLAWBACK_ENABLED`, `PERMISSIONED_TOKEN` (RequireAuth), `MINT_AUTHORITY_ACTIVE` (the issuer isn't blackholed, so it can issue more), `TRANSFER_FEE` / `HIGH_TRANSFER_FEE`, plus the market rules (`LOW_LIQUIDITY`, `NO_DEX_MARKET`, `NEW_TOKEN`); info `ISSUER_BLACKHOLED` (master key off, no usable regular key and no signer list: fixed supply and settings), `FREEZE_AUTHORITY_ACTIVE` (no NoFreeze flag). Ripple's own RLUSD keeps clawback, freeze and minting on purpose: info, with `ISSUER_IS_RIPPLE`.
+
 ```json
 {
   "verdict": "orange",

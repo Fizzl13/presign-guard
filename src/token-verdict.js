@@ -23,6 +23,7 @@ import {
 import { permissionedToken } from "./token-acl.js";
 import { launchEscrows } from "./launch-escrow.js";
 import { secondOpinion } from "./jev.js";
+import { isXrplAddress, ledger, isRlusdCode, currencyName, RLUSD, LSF, BLACKHOLES, XRPL_NETWORKS } from "./xrpl.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1";
@@ -38,6 +39,8 @@ export const TOKEN_CHAINS = {
   optimism: { chainId: 10, dexscreener: "optimism" },
   polygon: { chainId: 137, dexscreener: "polygon" },
   bsc: { chainId: 56, dexscreener: "bsc" },
+  // XRP Ledger: address is "CURRENCY.rIssuer" (a 3-letter code or its 40-hex form, e.g. RLUSD.rMxCK…).
+  xrpl: { dexscreener: "xrpl" },
 };
 
 export const LOW_LIQUIDITY_USD = 50_000;
@@ -65,12 +68,26 @@ export function parseTokenRequest(query) {
     throw new ValidationError(`chain must be one of: ${Object.keys(TOKEN_CHAINS).join(", ")}`);
   }
   const raw = String(query?.address ?? "").trim();
+  if (chain === "xrpl") return parseXrplToken(raw);
   if (chain === "solana") {
     if (!SOLANA_ADDRESS.test(raw)) throw new ValidationError("address must be a Solana mint address (base58)");
     return { chain, address: raw };
   }
   if (!isAddress(raw, { strict: false })) throw new ValidationError("address must be a 0x-prefixed token contract address");
   return { chain, address: raw.toLowerCase() };
+}
+
+// "RLUSD.rMxCK…", "524C55….rMxCK…" or "SOLO.r…": the currency code (3 characters, or 40 hex for longer names,
+// which is how the ledger and DexScreener write them) and the issuer.
+function parseXrplToken(raw) {
+  const m = /^([^.\s]{3,40})\.(r[1-9A-HJ-NP-Za-km-z]{24,34})$/.exec(raw);
+  if (!m || !isXrplAddress(m[2])) throw new ValidationError('address must be an XRPL token as "CURRENCY.rIssuer", e.g. RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De');
+  let currency = m[1];
+  if (/^[A-Fa-f0-9]{40}$/.test(currency)) currency = currency.toUpperCase();
+  else if (currency.length === 3) { if (currency.toUpperCase() === "XRP") throw new ValidationError("XRP is the native asset and has no issuer to check"); }
+  else if (/^[\x20-\x7e]{4,20}$/.test(currency)) currency = Buffer.from(currency, "latin1").toString("hex").toUpperCase().padEnd(40, "0");
+  else throw new ValidationError("currency must be a 3-character code, a name of up to 20 characters, or 40 hex");
+  return { chain: "xrpl", address: `${currency}.${m[2]}`, currency, issuer: m[2] };
 }
 
 // ---------- sources ----------
@@ -335,6 +352,9 @@ const PHRASES = {
   BALANCE_MUTABLE: () => "balances can be changed",
   TOKEN_OWNER_CAN_CHANGE_BALANCES: () => "owner can change balances",
   TOKEN_PAUSED: () => "transfers are paused",
+  TOKEN_FROZEN: () => "issuer froze all transfers",
+  TOKEN_ISSUER_NOT_FOUND: () => "issuer account doesn't exist",
+  CLAWBACK_ENABLED: () => "issuer can claw tokens back",
   HIGH_TRANSFER_FEE: (d) => `${d.feePct}% transfer fee`,
   TRANSFER_FEE: (d) => `${d.feePct}% transfer fee`,
   TOKEN_HIGH_TAX: (d) => `${pct1(Math.max(d.buyTax, d.sellTax) * 100)}% tax`,
@@ -348,7 +368,9 @@ const PHRASES = {
 export function oneLiner({ grade, reasons, market }) {
   const serious = reasons.filter((r) => r.severity !== "info");
   const phrases = serious.map((r) => PHRASES[r.code]?.(r.details ?? {}) ?? r.code.toLowerCase().replace(/_/g, " "));
-  if (!phrases.length && reasons.some((r) => r.code === "TOKEN_ON_TRUST_LIST")) {
+  if (!phrases.length && reasons.some((r) => r.code === "ISSUER_IS_RIPPLE")) {
+    phrases.push("no red flags, Ripple's RLUSD");
+  } else if (!phrases.length && reasons.some((r) => r.code === "TOKEN_ON_TRUST_LIST")) {
     // DexScreener's liquidity and age undercount quote assets (USDT showed $863): leave them out.
     phrases.push("no red flags, on the GoPlus trust list");
   } else if (!phrases.length) {
@@ -367,7 +389,63 @@ export function oneLiner({ grade, reasons, market }) {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 }
 
-export async function tokenVerdict({ chain, address }, now = Date.now()) {
+// An XRPL token: what its issuer account allows (claw back, freeze, require authorisation, charge a transfer fee,
+// issue more) and its DEX market. An issuer that disabled its master key and has no usable regular key
+// ("blackholed") can't change any of that or issue more. Ripple's RLUSD keeps clawback and freeze on purpose
+// (a regulated stablecoin): context, not warnings. A token called RLUSD from another issuer is an impersonation.
+async function xrplTokenVerdict({ address, currency, issuer }, now, { fetchImpl = globalThis.fetch } = {}) {
+  const { reasons, add } = reasonCollector();
+  const sources = ["xrpl-ledger", "dexscreener"];
+  const net = XRPL_NETWORKS["xrpl:0"];
+  const trusted = currency === RLUSD && issuer === net.rlusdIssuer;
+  if (isRlusdCode(currency) && !trusted) add("TOKEN_IMPERSONATION", "red", { realToken: `RLUSD.${net.rlusdIssuer}`, issuer });
+  const ask = ledger("xrpl:0", fetchImpl);
+  const [info, pairs] = await Promise.all([
+    ask("account_info", { account: issuer, signer_lists: true }).catch((err) => ({ error: "unavailable", error_message: err.message })),
+    getMarket("xrpl", address).catch(() => []),
+  ]);
+  const market = summarizeMarket(pairs, "xrpl", address.toLowerCase(), now);
+  if (info.error === "actNotFound") add("TOKEN_ISSUER_NOT_FOUND", "red", { issuer });
+  else if (info.error || !info.account_data) add("LEDGER_UNAVAILABLE", "info", { message: String(info.error_message || info.error).slice(0, 120) });
+  else {
+    const a = info.account_data;
+    const flags = Number(a.Flags) || 0;
+    const power = trusted ? "info" : "orange";
+    if (flags & LSF.globalFreeze) add("TOKEN_FROZEN", "red");
+    if (flags & LSF.allowClawback) add("CLAWBACK_ENABLED", power);
+    if (flags & LSF.requireAuth) add("PERMISSIONED_TOKEN", power, { standard: "xrpl-require-auth" });
+    if (!(flags & LSF.noFreeze)) add("FREEZE_AUTHORITY_ACTIVE", "info");
+    // Blackholed: no master key, no usable regular key, and no signer list (multisig can still sign for it).
+    const signerLists = info.signer_lists ?? a.signer_lists ?? [];
+    const blackholed = Boolean(flags & LSF.disableMaster) && (!a.RegularKey || BLACKHOLES.has(a.RegularKey)) && signerLists.length === 0;
+    if (blackholed) add("ISSUER_BLACKHOLED", "info");
+    else add("MINT_AUTHORITY_ACTIVE", power);
+    const feePct = Number(a.TransferRate) > 1_000_000_000 ? pct1(Number(a.TransferRate) / 1e7 - 100) : 0;
+    if (feePct >= HIGH_TRANSFER_FEE_PCT) add("HIGH_TRANSFER_FEE", "orange", { feePct });
+    else if (feePct > 0) add("TRANSFER_FEE", trusted ? "info" : "orange", { feePct });
+    if (trusted) add("ISSUER_IS_RIPPLE", "info");
+  }
+  marketReasons(market, add, { trusted });
+  const order = { red: 0, orange: 1, info: 2 };
+  reasons.sort((x, y) => order[x.severity] - order[y.severity]);
+  const { verdict, grade } = gradeOf(reasons);
+  return {
+    version: "1",
+    verdict,
+    grade,
+    one_liner: oneLiner({ grade, reasons, market }),
+    reasons,
+    token: { chain: "xrpl", address, currency: currencyName(currency), issuer, name: market?.name ?? null, symbol: market?.symbol ?? currencyName(currency) },
+    market,
+    sources,
+    checkedAt: new Date(now).toISOString(),
+    disclaimer: "Automated on-chain and market checks, not financial advice. Green means no known red flags, not that the token will hold its value.",
+  };
+}
+
+export async function tokenVerdict(request, now = Date.now(), opts = {}) {
+  if (request.chain === "xrpl") return xrplTokenVerdict(request, now, opts);
+  const { chain, address } = request;
   const { reasons, add } = reasonCollector();
   const sources = ["goplus", "dexscreener"];
   let partial = false;
