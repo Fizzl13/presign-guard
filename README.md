@@ -161,6 +161,15 @@ Every approval with an orange or red code has `revoke: true`. The grades are the
 
 Supported chains: 1, 10, 56, 137, 8453, 42161.
 
+### XRP Ledger transactions
+
+```jsonc
+// An unsigned XRPL transaction (no chainId; network defaults to "xrpl:0", mainnet)
+{ "type": "xrpl", "network": "xrpl:0", "tx": { "TransactionType": "Payment", "Account": "r…", "Destination": "r…", "Amount": "15000" } }
+```
+
+There are no token approvals on the XRPL: what drains accounts there is handing the account over. Red: `XRPL_REGULAR_KEY_CHANGE` (SetRegularKey to another key), `XRPL_SIGNER_LIST_CHANGE` (SignerListSet with other signers), `XRPL_DISABLE_MASTER_KEY` (AccountSet asfDisableMaster), `XRPL_ACCOUNT_DELETE` (all remaining XRP goes to the destination), `XRPL_FAKE_RLUSD` (a token called RLUSD that isn't issued by Ripple), `PHISHING_SITE`. Orange: `XRPL_PARTIAL_PAYMENT`, `XRPL_DESTINATION_TAG_MISSING` (the destination, often an exchange, requires a tag), `XRPL_DESTINATION_REFUSES` (Deposit Authorization), `XRPL_DESTINATION_NOT_ACTIVATED`, `XRPL_DESTINATION_NO_TRUSTLINE`, `XRPL_DESTINATION_DISALLOWS_XRP`, `XRPL_ISSUER_CAN_CLAW_BACK` / `XRPL_ISSUER_FROZEN` / `XRPL_TRANSFER_FEE` / `XRPL_ISSUER_NOT_FOUND` (on a TrustSet; Ripple's own RLUSD has clawback by design, which is info), `XRPL_ENABLE_CLAWBACK`, `XRPL_ENABLE_DEPOSIT_AUTH`, `XRPL_SIGNER_LIST_REMOVED`, `XRPL_ESCROW_TO_OTHER`, `XRPL_NFT_GIVEAWAY` (an NFT sell offer for nothing), `XRPL_TX_NOT_ANALYZED` (a transaction type this check doesn't judge), `LOOKALIKE_SITE`, `NEW_DOMAIN`, `DOMAIN_NOT_REGISTERED`. Info: `XRPL_NEW_DESTINATION`, `XRPL_REGULAR_KEY_REMOVED`, `XRPL_LEDGER_UNAVAILABLE`. The ledger is read through public JSON-RPC (xrplcluster.com; testnet.xrpl-labs.com), cached for 5 minutes. Same price and route as the EVM check.
+
 Optional on every type: `"origin": "https://…"`, the site asking for the signature or transaction (a URL or a hostname). Its domain age is looked up: a domain registered less than 30 days ago is orange (`NEW_DOMAIN`), which catches the fresh phishing sites wallet drainers run on. It is also checked against phishing lists and lookalikes: on MetaMask's eth-phishing-detect blocklist (via PG1) or GoPlus's phishing list is red (`PHISHING_SITE`, `details.flaggedBy` names the lists); a lookalike of a known brand (PG1's typosquat detection, e.g. `metamask-login.com` → `metamask.io`) is orange (`LOOKALIKE_SITE`); with `METAMASK_SCAN=on` (off by default: MetaMask's site-scanner endpoint has no published API or licence), a site MetaMask's own site scanner (Blockaid) blocks is orange (`WALLET_BLOCKS_SITE`), not red, because that scanner also blocks legitimate browser-payment pages. A source that can't be reached is `SITE_REPUTATION_UNAVAILABLE` (info), never a clean result. `ORIGIN_REPUTATION=off` turns these checks off. Local and IP origins are not looked up.
 
 Recognised signatures: EIP-2612 `Permit`, DAI-style permit, Permit2 (`PermitSingle`, `PermitBatch`, `PermitTransferFrom`, batch and witness variants), EIP-3009 `TransferWithAuthorization` / `ReceiveWithAuthorization` (what x402 asks an agent to sign to pay), and Seaport `OrderComponents`.

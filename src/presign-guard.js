@@ -9,6 +9,7 @@
 //   { type: "approval",    chainId, token, spender, amount }
 //   { type: "transaction", chainId, to, data, value? }
 //   { type: "signature",   chainId, typedData }   // eth_signTypedData_v4 payload (object or JSON string)
+//   { type: "xrpl",        network?, tx }          // an unsigned XRP Ledger transaction (src/xrpl.js)
 //   Add lang: "nl" | "en" on /v1/check/explain.
 //
 // Fail-closed rule: every error returns a non-2xx status and verdict: null, never "green".
@@ -31,6 +32,7 @@ export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
 import { secondOpinion } from "./jev.js";
 import { checkMandatePayment } from "./mandate.js";
+import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -1014,8 +1016,8 @@ export function createCheckRouter() {
 
   const handler = (withExplanation) => async (req, res) => {
     try {
-      const parsed = parseRequest(req.body);
-      const result = await analyze(parsed);
+      // XRP Ledger transactions have their own parser and rules (src/xrpl.js).
+      const result = isXrplRequest(req.body) ? await analyzeXrpl(await parseXrplRequest(req.body)) : await analyze(parseRequest(req.body));
       if (withExplanation) {
         const lang = req.body.lang === "nl" ? "nl" : "en";
         result.explanation = { lang, text: await explain(result, lang) };
