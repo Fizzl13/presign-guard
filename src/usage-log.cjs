@@ -43,6 +43,7 @@ const NETWORK_NAMES = {
   'eip155:84532': 'base-sepolia',
   'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp': 'solana',
   'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1': 'solana-devnet',
+  'eip155:4217': 'Tempo',
 };
 
 function decodeBase64Json(value) {
@@ -70,6 +71,24 @@ function paymentOf(req, res) {
     payer: settlement.payer || null,
     tx: settlement.transaction || null,
   };
+}
+
+// The network a refused payment was tried on: the x402 payment header's network, or for an MPP
+// credential (Authorization: Payment …) its method, "evm" (Base) or "tempo". Null when unreadable.
+function attemptedNetwork(req) {
+  const payload = decodeBase64Json(req.headers['payment-signature'] || req.headers['x-payment']);
+  const accepted = payload && (payload.accepted || payload.requirements);
+  const network = (accepted && accepted.network) || (payload && payload.network);
+  if (network) return NETWORK_NAMES[network] || clip(String(network), 60);
+  const m = /(?:^|,)\s*Payment\s+([A-Za-z0-9_-]+)/i.exec(String(req.headers.authorization || ''));
+  if (!m) return null;
+  try {
+    const cred = JSON.parse(Buffer.from(m[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    const method = cred && cred.challenge && cred.challenge.method;
+    return method === 'tempo' ? 'Tempo' : method === 'evm' ? 'base' : method ? clip(String(method), 30) : null;
+  } catch {
+    return null;
+  }
 }
 
 // Who is calling, in a few words and without personal data: "browser" for a
@@ -229,7 +248,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
           ms: Date.now() - started,
           paid: Boolean(payment),
           ...(payment || {}),
-          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp' } : {}) } : {}) } : {}),
+          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp' } : {}), ...(attemptedNetwork(req) ? { network: attemptedNetwork(req) } : {}) } : {}) } : {}),
           agent: agentOf(req.headers['user-agent']),
           visitor: visitorOf(req.ip || (req.socket && req.socket.remoteAddress), visitorSecret),
           input: described.input,
@@ -268,4 +287,4 @@ function mcpPayment(requestBody, responseBody) {
   };
 }
 
-module.exports = { createUsageLog, paymentOf, mcpToolCall, mcpPayment, clip, agentOf, visitorOf };
+module.exports = { createUsageLog, paymentOf, attemptedNetwork, mcpToolCall, mcpPayment, clip, agentOf, visitorOf };
