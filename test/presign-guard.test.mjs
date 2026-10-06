@@ -4,6 +4,8 @@ import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createCheckRouter } from "../src/presign-guard.js";
+import { generateKeyPairSync, sign as edSign } from "node:crypto";
+import { jcs, mandateDigest, eip3009Binding } from "../src/mandate.js";
 import { resetPg1, pg1Paused, pg1KeyStatus, pg1KeyStatusNow } from "../src/pg1.js";
 
 process.env.ANTHROPIC_API_KEY = "test-key";
@@ -918,4 +920,41 @@ test("Jev second opinion: a signature whose contract calls itself Uniswap is ora
     const real = await check(sig("Permit", { owner: USER, spender: GOOD, value: "1000000", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN, name: "USD Coin" }));
     assert.ok(!codes(real).includes("AI_SIGNATURE_IMPERSONATION"));
   } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
+});
+
+// Mandate check (x402 `authority` extension draft, src/mandate.js): the payment against the grant.
+const edKeys = generateKeyPairSync("ed25519");
+const mandateFor = (over = {}) => {
+  const issuer = edKeys.publicKey.export({ format: "jwk" }).x;
+  return { v: "x402-mandate/1", issuer, subject: USER, asset: TOKEN, cap: "100000", perPayment: "50000", recipients: [EOA], accountant: issuer, purpose: "test", notAfter: "2030-01-01T00:00:00Z", nonce: "n1", ...over };
+};
+const withMandate = (m, value, paymentId = "p1") => {
+  const body = sig("TransferWithAuthorization", { from: USER, to: EOA, value, validAfter: "0", validBefore: String(Math.floor(Date.now() / 1000) + 300), nonce: eip3009Binding(mandateDigest(m), "p1") },
+    { name: "USD Coin", version: "2", verifyingContract: TOKEN });
+  return { ...body, mandate: { mandate: m, alg: "Ed25519", sig: edSign(null, Buffer.from("x402-mandate/1\n" + jcs(m)), edKeys.privateKey).toString("base64url"), paymentId } };
+};
+
+test("x402 payment inside its mandate: green with MANDATE_OK", async () => {
+  const r = await check(withMandate(mandateFor(), "20000"));
+  assert.equal(r.body.verdict, "green");
+  assert.ok(codes(r).includes("MANDATE_OK"));
+  assert.equal(r.body.mandate.ok, true);
+});
+
+test("x402 payment over its mandate's per-payment bound is red", async () => {
+  const r = await check(withMandate(mandateFor(), "60000"));
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("MANDATE_OVER_LIMIT"));
+  assert.equal(r.body.mandate.ok, false);
+});
+
+test("a nonce that is not the mandate binding is red", async () => {
+  const r = await check(withMandate(mandateFor(), "20000", "p2"));
+  assert.ok(codes(r).includes("MANDATE_BINDING_MISMATCH"));
+  assert.equal(r.body.verdict, "red");
+});
+
+test("a mandate on something other than an EIP-3009 payment is refused before payment", async () => {
+  const r = await check({ ...payment(EOA, "20000"), type: "approval", token: TOKEN, spender: EOA, amount: "1", mandate: {} });
+  assert.equal(r.status, 400);
 });

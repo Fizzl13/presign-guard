@@ -30,6 +30,7 @@ export const NEW_WALLET_DAYS = 7;
 export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
 import { secondOpinion } from "./jev.js";
+import { checkMandatePayment } from "./mandate.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -586,6 +587,19 @@ export function parseRequest(body) {
     if (host === undefined) throw new ValidationError("origin must be a URL or hostname");
     if (host) req.origin = host;
   }
+  // Optional: the spending mandate (x402 `authority` extension, mandate.js) this EIP-3009 payment
+  // claims to be made under: { mandate, alg, sig, paymentId }.
+  if (body.mandate !== undefined && body.mandate !== null) {
+    if (req.kind !== "transfer_authorization") throw new ValidationError("mandate applies to EIP-3009 payment signatures (TransferWithAuthorization)");
+    const m = body.mandate;
+    if (typeof m !== "object" || Array.isArray(m)) throw new ValidationError("mandate must be { mandate, alg, sig, paymentId }");
+    const msg = body.typedData.message;
+    req.mandate = {
+      envelope: { mandate: m.mandate, alg: m.alg, sig: m.sig },
+      paymentId: m.paymentId,
+      payment: { chainId: req.chainId, from: toAddress(msg.from, "message.from"), to: req.grants[0].spender, token: req.grants[0].token, value: req.grants[0].amount, nonce: String(msg.nonce ?? "") },
+    };
+  }
   return req;
 }
 
@@ -861,6 +875,16 @@ export async function analyze(req) {
     add(r.code, r.severity, r.subject, r.details);
   }
 
+  // Outside the agent's mandate is red: signing would spend beyond what the principal granted.
+  let mandate = null;
+  if (req.mandate) {
+    const m = checkMandatePayment(req.mandate.envelope, req.mandate.paymentId, req.mandate.payment);
+    for (const f of m.failures) add(f.code, "red", req.mandate.payment.to, { reason: f.reason, ...(f.expected && { expectedNonce: f.expected }) });
+    for (const w of m.warnings) add(w.code, "orange", req.mandate.payment.to, { reason: w.reason });
+    if (m.ok) add("MANDATE_OK", "info", req.mandate.payment.to, { mandateDigest: m.digest });
+    mandate = { ok: m.ok, ...(m.digest && { digest: m.digest }), checked: "single payment (§6, §7); cumulative spend against the cap is not checked" };
+  }
+
   const verdict = reasons.some((r) => r.severity === "red") ? "red"
     : reasons.some((r) => r.severity === "orange") ? "orange"
     : "green";
@@ -894,6 +918,7 @@ export async function analyze(req) {
       value: req.value.toString(),
     },
     scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). Not covered: eth_sign/personal_sign messages and transaction simulation.",
+    ...(mandate && { mandate }),
     sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...ai.sources],
     checkedAt: new Date().toISOString(),
   };

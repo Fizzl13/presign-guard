@@ -196,6 +196,7 @@ export const INPUT_SCHEMA = {
     value: { type: "string", description: "transaction: native value in wei" },
     typedData: { type: ["object", "string"], description: "signature: the eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)" },
     origin: { type: "string", description: "optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange" },
+    mandate: { type: "object", description: "optional, EIP-3009 payments only: the spending mandate the agent pays under (x402 authority extension, x402-mandate/1): { mandate, alg: \"Ed25519\", sig, paymentId }. Outside it (over perPayment or cap, other recipient, payer or token, expired, bad signature, nonce not the mandate binding) is red" },
     lang: { type: "string", enum: ["en", "nl"], description: "explain only: language of the explanation (default en)" },
   },
   required: ["type", "chainId"],
