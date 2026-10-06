@@ -186,8 +186,10 @@ export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_T
 export const INPUT_SCHEMA = {
   type: "object",
   properties: {
-    type: { type: "string", enum: ["approval", "transaction", "signature"], description: "What the agent is about to sign" },
-    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161] },
+    type: { type: "string", enum: ["approval", "transaction", "signature", "xrpl"], description: "What the agent is about to sign (xrpl: an XRP Ledger transaction)" },
+    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction and signature" },
+    network: { type: "string", enum: ["xrpl:0", "xrpl:1"], description: "xrpl: the ledger (default xrpl:0, mainnet)" },
+    tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows and NFT giveaways" },
     token: { type: "string", description: "approval: token contract" },
     spender: { type: "string", description: "approval: who gets the allowance" },
     amount: { type: "string", description: "approval: amount in base units (0 = revoke)" },
@@ -199,7 +201,7 @@ export const INPUT_SCHEMA = {
     mandate: { type: "object", description: "optional, EIP-3009 payments only: the spending mandate the agent pays under (x402 authority extension, x402-mandate/1): { mandate, alg: \"Ed25519\", sig, paymentId }. Outside it (over perPayment or cap, other recipient, payer or token, expired, bad signature, nonce not the mandate binding) is red" },
     lang: { type: "string", enum: ["en", "nl"], description: "explain only: language of the explanation (default en)" },
   },
-  required: ["type", "chainId"],
+  required: ["type"],
 };
 
 const OUTPUT_SCHEMA = {
