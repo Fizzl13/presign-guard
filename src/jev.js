@@ -35,6 +35,38 @@ const OFFICIAL_PROTOCOLS = {
   "1inch Aggregation Router v6": "0x111111125421ca6dc452d289314280a0f8842a65",
   "1inch Aggregation Router v5": "0x1111111254eeb25477b68fb85ed929f73a960582",
 };
+// Code rules for what Jev was weakest at in the calibration of 6 Oct 2026 (60 real dapp domains, 200 real Base
+// tokens, made-up phishing): a dapp's domain with its dot turned into a hyphen or with another top-level domain
+// (pump-fun.io, revoke-cash.app, jup-ag.net scored 22-51%), and a signature that calls itself by the exact name
+// of a famous protocol, wallet or token while its contract is not that one ("Permit2", "Seaport", "Coinbase"
+// scored 45-84%). These are decided here, without asking Jev, and are orange like Jev's sure answers.
+const DAPP_DOMAINS = [
+  "uniswap.org", "opensea.io", "aave.com", "curve.fi", "jup.ag", "raydium.io", "pump.fun", "revoke.cash", "lido.fi", "blur.io",
+  "magiceden.io", "1inch.io", "cow.fi", "ens.domains", "metamask.io", "phantom.app", "coinbase.com", "morpho.org",
+  "aerodrome.finance", "pancakeswap.finance", "safe.global", "hyperliquid.xyz", "eigenlayer.xyz", "pendle.finance", "ether.fi",
+  "across.to", "stargate.finance", "zora.co", "rabby.io", "kraken.com", "binance.com", "etherscan.io", "basescan.org", "dexscreener.com",
+];
+const PROTOCOL_NAMES = /^(permit2|seaport( \d(\.\d)?)?|opensea|uniswap( v[234])?|uniswapx|uniswap permit2|1inch( .*)?|usd coin|tether usd|metamask|coinbase( wallet)?|cow protocol|gpv2settlement|blur|magic eden|phantom)$/i;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function lookalikeOf(origin) {
+  const host = String(origin || "").toLowerCase().replace(/^[a-z]+:\/\//, "").split(/[/:?#]/)[0];
+  if (!host) return null;
+  for (const brand of DAPP_DOMAINS) {
+    if (host === brand || host.endsWith(`.${brand}`)) return null;
+    const [label, ...rest] = brand.split(".");
+    const tld = rest.join(".");
+    // The brand's label and TLD glued or hyphenated as their own label run (pump-fun.io, app-uniswap-org.xyz),
+    // or the brand's label on another TLD as the whole registrable name (jup.ag -> jup.net is not caught: too short).
+    const glued = new RegExp(`(^|[.-])${escapeRe(label)}-?${escapeRe(tld.replace(/\./g, "-?"))}([.-]|$)`);
+    if (glued.test(host) && label.length + tld.length >= 5) return brand;
+  }
+  return null;
+}
+export function protocolNameOf(name) {
+  const n = String(name || "").trim();
+  return n && PROTOCOL_NAMES.test(n) ? n : null;
+}
+
 // EVM addresses compare case-insensitively; Solana mints exactly.
 const norm = (a) => (/^0x/i.test(String(a)) ? String(a).toLowerCase() : String(a));
 
@@ -151,14 +183,26 @@ export async function askClaude({ state, questions }, ids, { env = process.env, 
 // The whole second opinion: returns { reasons: [{code, severity, subject, details}], sources: [...] }.
 export async function secondOpinion(input, opts = {}) {
   const env = opts.env ?? process.env;
-  const empty = { reasons: [], sources: [] };
-  if (!jevEnabled(env)) return empty;
   const q = buildQuestions(input);
-  if (!q) return empty;
+  if (!q) return { reasons: [], sources: [] };
+  // The code rules first (they need no key); what they decide is not asked again.
+  const ruled = [];
+  const look = q.questions.site_imitates_brand ? lookalikeOf(q.state.site) : null;
+  if (look) {
+    ruled.push({ code: "AI_LOOKALIKE_SITE", severity: "orange", subject: q.state.site, details: { decidedBy: "rule", imitates: look } });
+    delete q.questions.site_imitates_brand;
+  }
+  const pname = q.questions.domain_impersonates ? protocolNameOf(q.state.signature_domain?.name) : null;
+  if (pname) {
+    ruled.push({ code: "AI_SIGNATURE_IMPERSONATION", severity: "orange", subject: q.meta.domain_impersonates.subject, details: { decidedBy: "rule", name: pname } });
+    delete q.questions.domain_impersonates;
+  }
+  const empty = { reasons: ruled, sources: ruled.length ? ["rules"] : [] };
+  if (!jevEnabled(env) || !Object.keys(q.questions).length) return empty;
   const probs = await askJev(q, opts);
   if (!probs) return empty;
   const sure = num(env.JEV_SURE, 0.85), unsure = num(env.JEV_UNSURE, 0.5);
-  const reasons = [];
+  const reasons = [...ruled];
   const between = Object.entries(probs).filter(([, p]) => p >= unsure && p < sure).map(([id]) => id);
   const claude = await askClaude(q, between, opts);
   for (const [id, p] of Object.entries(probs)) {
@@ -167,7 +211,7 @@ export async function secondOpinion(input, opts = {}) {
     if (p >= sure) reasons.push({ code, severity: "orange", subject, details: { ...details, decidedBy: "jev" } });
     else if (claude[id] === true) reasons.push({ code, severity: "orange", subject, details: { ...details, decidedBy: "jev+claude" } });
   }
-  return { reasons, sources: ["typesafe-jev", ...(between.length && Object.keys(claude).length ? ["claude"] : [])] };
+  return { reasons, sources: [...(ruled.length ? ["rules"] : []), "typesafe-jev", ...(between.length && Object.keys(claude).length ? ["claude"] : [])] };
 }
 
 // Shown in GET /health, so the owner can see Jev works without a paid check (no key, no answers about users).

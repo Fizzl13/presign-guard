@@ -1,7 +1,7 @@
 // Jev second opinion (src/jev.js): Jev decides when sure, Claude decides in between, failures are silent.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildQuestions, secondOpinion, jevEnabled, jevSelfTest, jevStatus } from "../src/jev.js";
+import { buildQuestions, secondOpinion, jevEnabled, jevSelfTest, jevStatus, lookalikeOf, protocolNameOf } from "../src/jev.js";
 
 const USDC_BASE = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 const FAKE = "0x7777000000000000000000000000000000000002";
@@ -88,6 +88,26 @@ test("signature domain: a contract named after Permit2 is asked about; the real 
   const both = buildQuestions({ chainId: 8453, tokens: [{ address: FAKE, symbol: "USDC", name: "USD Coin" }], domain: { name: "USD Coin", verifyingContract: FAKE } });
   assert.deepEqual(Object.keys(both.questions), ["token_0_impersonates"]);
   const s = stub({ jev: { domain_impersonates: 0.94 } });
-  const r = await secondOpinion({ chainId: 8453, domain: { name: "Uniswap V3", verifyingContract: FAKE } }, { env, fetch: s.fetch });
+  // An exact famous name is decided by the code rule; a looser one ("Uniswap Labs Router") goes to Jev.
+  const r = await secondOpinion({ chainId: 8453, domain: { name: "Uniswap Labs Router", verifyingContract: FAKE } }, { env, fetch: s.fetch });
   assert.deepEqual(r.reasons.map((x) => [x.code, x.severity, x.subject, x.details.decidedBy]), [["AI_SIGNATURE_IMPERSONATION", "orange", FAKE, "jev"]]);
+  const exact = await secondOpinion({ chainId: 8453, domain: { name: "Uniswap V3", verifyingContract: FAKE } }, { env, fetch: s.fetch });
+  assert.deepEqual(exact.reasons.map((x) => [x.code, x.subject, x.details.decidedBy]), [["AI_SIGNATURE_IMPERSONATION", FAKE, "rule"]]);
+});
+
+test("code rules: a dapp domain with a hyphen or another TLD, a signature named like a famous protocol", async () => {
+  for (const h of ["pump-fun.io", "revoke-cash.app", "jup-ag.net", "app-uniswap-org.xyz"]) assert.ok(lookalikeOf(h), h);
+  for (const h of ["pump.fun", "app.uniswap.org", "revoke.cash", "stake.lido.fi", "database-org.com", "fizzl.eu", "mycurve-finance.com"]) assert.equal(lookalikeOf(h), null, h);
+  for (const n of ["Permit2", "Seaport 1.6", "OpenSea", "Uniswap V3", "1inch Aggregation Router", "USD Coin", "MetaMask", "Coinbase"]) assert.ok(protocolNameOf(n), n);
+  for (const n of ["Aerodrome", "Morpho", "Zora", "Permit2 Clone", "My Token"]) assert.equal(protocolNameOf(n), null, n);
+  // Without a key the rules still answer; what they decide is not asked again.
+  const off = stub();
+  const r = await secondOpinion({ chainId: 8453, origin: "pump-fun.io", domain: { name: "Permit2", verifyingContract: FAKE } }, { env: {}, fetch: off.fetch });
+  assert.deepEqual(r.reasons.map((x) => [x.code, x.details.decidedBy]), [["AI_LOOKALIKE_SITE", "rule"], ["AI_SIGNATURE_IMPERSONATION", "rule"]]);
+  assert.equal(off.calls.length, 0);
+  const on = stub({ jev: { site_lure: 0.95 } });
+  const both = await secondOpinion({ chainId: 8453, origin: "pump-fun.io" }, { env, fetch: on.fetch });
+  assert.deepEqual(Object.keys(on.calls[0].body.questions), ["site_lure"]);
+  assert.deepEqual(both.reasons.map((x) => [x.code, x.details.decidedBy]), [["AI_LOOKALIKE_SITE", "rule"], ["AI_LURE_SITE", "jev"]]);
+  assert.deepEqual(both.sources, ["rules", "typesafe-jev"]);
 });
