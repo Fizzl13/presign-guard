@@ -30,8 +30,8 @@ const TF_PARTIAL_PAYMENT = 0x00020000;
 const TF_SELL_NFTOKEN = 0x00000001;
 
 // Types judged by a rule below, and everyday types with nothing to flag on their own.
-const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer"]);
-const BENIGN = new Set(["OfferCreate", "OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMDeposit", "AMMWithdraw", "AMMVote", "AMMBid"]);
+const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit"]);
+const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid"]);
 
 export class XrplValidationError extends Error {
   constructor(message) { super(message); this.status = 400; }
@@ -75,7 +75,7 @@ export async function parseXrplRequest(body) {
 }
 
 // Amount helpers: XRP is a string of drops; an issued token is { currency, issuer, value }.
-const isIssued = (a) => a && typeof a === "object" && typeof a.currency === "string";
+const isIssued = (a) => Boolean(a && typeof a === "object" && typeof a.currency === "string" && typeof a.issuer === "string" && a.currency.toUpperCase() !== "XRP");
 export const currencyName = (c) => (String(c).toUpperCase() === RLUSD ? "RLUSD" : String(c).length === 40 ? Buffer.from(String(c), "hex").toString("latin1").replace(/\0+$/, "") || c : c);
 export const isRlusdCode = (c) => String(c).toUpperCase() === RLUSD || String(c).toUpperCase() === "RLUSD";
 
@@ -96,6 +96,35 @@ export function ledger(network, fetchImpl = globalThis.fetch) {
     }
     return result;
   };
+}
+
+// A DEX order more than this much below the best available rate is flagged.
+const OFFER_MAX_BELOW_MARKET = 0.05;
+const round6 = (x) => Math.round(x * 1e6) / 1e6;
+// An amount in whole units: XRP drops to XRP, a token's value as a number.
+const units = (a) => (isIssued(a) ? Number(a.value) : Number(a) / 1e6);
+const assetOf = (a) => (isIssued(a) ? { currency: a.currency, issuer: a.issuer } : { currency: "XRP" });
+
+// The best rate (units received per unit given) the ledger offers now for giving `give` to get `receive`: the top of
+// the order book and the AMM pool's spot price, whichever is better. null = neither exists.
+async function bestRate(ask, give, receive) {
+  const [book, amm] = await Promise.all([
+    ask("book_offers", { taker_gets: assetOf(receive), taker_pays: assetOf(give), limit: 1 }).catch(() => ({})),
+    ask("amm_info", { asset: assetOf(give), asset2: assetOf(receive) }).catch(() => ({})),
+  ]);
+  const rates = [];
+  const top = book.offers?.[0];
+  if (top) {
+    const gets = units(top.taker_gets_funded ?? top.TakerGets), pays = units(top.taker_pays_funded ?? top.TakerPays);
+    if (gets > 0 && pays > 0) rates.push({ rate: gets / pays, source: "order book" });
+  }
+  if (amm.amm) {
+    const a = units(amm.amm.amount), b = units(amm.amm.amount2);
+    // amount is the pool's `asset` (what we give), amount2 its `asset2` (what we receive)
+    if (a > 0 && b > 0) rates.push({ rate: b / a, source: "AMM pool" });
+  }
+  if (!rates.length) return null;
+  return rates.sort((x, y) => y.rate - x.rate)[0];
 }
 
 export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
@@ -160,19 +189,43 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     if (isIssued(tx.SendMax)) fakeRlusd(tx.SendMax, "SendMax");
   }
 
-  if (type === "TrustSet" && isIssued(tx.LimitAmount)) {
-    const issuer = tx.LimitAmount.issuer;
-    if (!fakeRlusd(tx.LimitAmount, "LimitAmount") && Number(tx.LimitAmount.value) > 0) {
-      const info = await account(issuer);
-      if (info && !info.exists) add("XRPL_ISSUER_NOT_FOUND", "orange", issuer);
-      if (info?.exists) {
-        // Ripple's own RLUSD is a regulated stablecoin with clawback on by design: worth knowing, not a warning.
-        const rippleRlusd = issuer === net.rlusdIssuer && isRlusdCode(tx.LimitAmount.currency);
-        if (info.flags & LSF.allowClawback) add("XRPL_ISSUER_CAN_CLAW_BACK", rippleRlusd ? "info" : "orange", issuer, { token: currencyName(tx.LimitAmount.currency), ...(rippleRlusd && { note: "regulated stablecoin: Ripple can claw back RLUSD" }) });
-        if (info.flags & LSF.globalFreeze) add("XRPL_ISSUER_FROZEN", "orange", issuer, { token: currencyName(tx.LimitAmount.currency) });
-        if (info.transferRate > 1_000_000_000) add("XRPL_TRANSFER_FEE", "orange", issuer, { feePercent: Math.round((info.transferRate / 1e7 - 100) * 100) / 100 });
+  // What the issuer of a token the account is about to hold (trust line, buy, pool deposit) can do to it.
+  const issuerRisks = async (amount, where) => {
+    if (!isIssued(amount) || fakeRlusd(amount, where)) return;
+    const issuer = amount.issuer;
+    const info = await account(issuer);
+    if (info && !info.exists) add("XRPL_ISSUER_NOT_FOUND", "orange", issuer, { where });
+    if (!info?.exists) return;
+    // Ripple's own RLUSD is a regulated stablecoin with clawback on by design: worth knowing, not a warning.
+    const rippleRlusd = issuer === net.rlusdIssuer && isRlusdCode(amount.currency);
+    if (info.flags & LSF.allowClawback) add("XRPL_ISSUER_CAN_CLAW_BACK", rippleRlusd ? "info" : "orange", issuer, { token: currencyName(amount.currency), ...(rippleRlusd && { note: "regulated stablecoin: Ripple can claw back RLUSD" }) });
+    if (info.flags & LSF.globalFreeze) add("XRPL_ISSUER_FROZEN", "orange", issuer, { token: currencyName(amount.currency) });
+    if (info.transferRate > 1_000_000_000) add("XRPL_TRANSFER_FEE", "orange", issuer, { feePercent: Math.round((info.transferRate / 1e7 - 100) * 100) / 100 });
+  };
+
+  if (type === "TrustSet" && isIssued(tx.LimitAmount) && Number(tx.LimitAmount.value) > 0) await issuerRisks(tx.LimitAmount, "LimitAmount");
+
+  // A DEX order: TakerGets is what the account gives, TakerPays what it receives. The token bought is screened like
+  // a trust line; the limit price is compared with the best the ledger offers now (order book and AMM pool). On the
+  // XRPL a crossing order fills at the better book prices first, but on a thin book it keeps filling down to its
+  // limit: a limit far below the market lets that happen.
+  if (type === "OfferCreate" && tx.TakerGets !== undefined && tx.TakerPays !== undefined) {
+    fakeRlusd(tx.TakerGets, "TakerGets");
+    await issuerRisks(tx.TakerPays, "TakerPays");
+    const give = units(tx.TakerGets), receive = units(tx.TakerPays);
+    if (give > 0 && receive > 0) {
+      const market = await bestRate(ask, tx.TakerGets, tx.TakerPays).catch(() => undefined);
+      const yours = receive / give;
+      if (market === null) add("XRPL_NO_MARKET", "orange", null, { effect: "no order book or AMM pool for this pair right now: the order rests until someone takes it, at your price" });
+      else if (market && yours < market.rate * (1 - OFFER_MAX_BELOW_MARKET)) {
+        add("XRPL_OFFER_FAR_BELOW_MARKET", "orange", null, { yourRate: round6(yours), marketRate: round6(market.rate), worseByPct: Math.round((1 - yours / market.rate) * 1000) / 10, source: market.source, effect: "you accept far less than the market gives now; on a thin book the order can fill down to this price" });
       }
     }
+  }
+
+  // Creating or funding an AMM pool: both assets are held by the pool for you; a fake or risky token loses value.
+  if (type === "AMMCreate" || type === "AMMDeposit") {
+    for (const field of ["Amount", "Amount2", "Asset", "Asset2"]) if (isIssued(tx[field])) await issuerRisks(tx[field], field);
   }
 
   if (type === "EscrowCreate" && tx.Destination && tx.Destination !== tx.Account) {
@@ -231,7 +284,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD, destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, plus the requesting site's phishing-list status and domain age. Not covered: simulation of offers and AMM trades.",
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD, destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
     sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(req.origin ? ["pg1"] : [])],
     checkedAt: new Date().toISOString(),
   };

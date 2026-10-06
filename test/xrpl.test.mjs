@@ -77,3 +77,27 @@ test("escrow to someone else, NFT for nothing and unknown types are orange; a le
   const down = await analyzeXrpl(await parseXrplRequest({ type: "xrpl", tx: { TransactionType: "Payment", Account: ME, Destination: OTHER, Amount: "15000" } }), { fetchImpl: ledger({ down: true }) });
   assert.deepEqual(codes(down), ["info:XRPL_LEDGER_UNAVAILABLE"]);
 });
+
+test("DEX orders: the token bought is screened, a limit far below the book or AMM is orange, no market is orange", async () => {
+  // Stand-in DEX: an AMM pool of 1,000,000 XRP and 1,500,000 RLUSD (1.5 RLUSD per XRP), no order book.
+  const dex = ({ pool = true, accounts = { [RIPPLE]: {} } } = {}) => async (_u, init) => {
+    const { method, params: [p] } = JSON.parse(init.body);
+    let result;
+    if (method === "account_info") result = accounts[p.account] ? { account_data: { Account: p.account, Flags: 0 } } : { error: "actNotFound" };
+    else if (method === "book_offers") result = { offers: [] };
+    else if (method === "amm_info") {
+      const xrpFirst = p.asset.currency === "XRP";
+      result = pool ? { amm: xrpFirst ? { amount: "1000000000000", amount2: { currency: RLUSD, issuer: RIPPLE, value: "1500000" } } : { amount: { currency: RLUSD, issuer: RIPPLE, value: "1500000" }, amount2: "1000000000000" } } : { error: "actNotFound" };
+    } else result = {};
+    return new Response(JSON.stringify({ result }));
+  };
+  const offer = (value) => ({ type: "xrpl", tx: { TransactionType: "OfferCreate", Account: ME, TakerGets: "100000000", TakerPays: { currency: RLUSD, issuer: RIPPLE, value } } });
+  assert.equal((await analyzeXrpl(await parseXrplRequest(offer("149")), { fetchImpl: dex() })).verdict, "green");
+  const low = await analyzeXrpl(await parseXrplRequest(offer("100")), { fetchImpl: dex() });
+  assert.deepEqual(codes(low), ["orange:XRPL_OFFER_FAR_BELOW_MARKET"]);
+  assert.equal(low.reasons[0].details.source, "AMM pool");
+  assert.equal(low.reasons[0].details.worseByPct, 33.3);
+  assert.deepEqual(codes(await analyzeXrpl(await parseXrplRequest(offer("100")), { fetchImpl: dex({ pool: false }) })), ["orange:XRPL_NO_MARKET"]);
+  const deposit = { type: "xrpl", tx: { TransactionType: "AMMDeposit", Account: ME, Asset: { currency: "XRP" }, Asset2: { currency: "USD", issuer: OTHER }, Amount2: { currency: "USD", issuer: OTHER, value: "5" } } };
+  assert.ok(codes(await analyzeXrpl(await parseXrplRequest(deposit), { fetchImpl: dex() })).includes("orange:XRPL_ISSUER_NOT_FOUND"), "an XRP asset is not looked up as a token; the unknown issuer is");
+});
