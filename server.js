@@ -122,7 +122,10 @@ app.use(nohumansClaim());
 app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus() }));
 jevSelfTest().catch(() => {});
 const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
-app.get("/", (req, res, next) => (req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
+app.get("/", (req, res, next) => (res.vary("Accept"), req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
+// For search engines: the homepage is the one page to index.
+app.get("/robots.txt", (_req, res) => res.type("text/plain").send(`User-agent: *\nAllow: /\n\nSitemap: ${PUBLIC_URL}/sitemap.xml\n`));
+app.get("/sitemap.xml", (_req, res) => res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${PUBLIC_URL}/</loc></url></urlset>\n`));
 app.get("/", (_req, res) => res.json({
   service: "presign-guard",
   docs: "https://github.com/Fizzl13/presign-guard",
