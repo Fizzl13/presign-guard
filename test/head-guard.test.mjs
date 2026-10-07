@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { headGuard } from "../src/head-guard.js";
 
-test("headGuard: HEAD on a paid path is handled as GET (so it gets the 402); with a payment it is refused; other paths untouched", () => {
-  const guard = headGuard((p) => p === "/paid");
+test("headGuard: every HEAD is handled as GET (paid paths then get the 402, also /PAID and /paid/); with a payment it is refused", () => {
+  const guard = headGuard();
   const run = (method, path, headers = {}) => {
     const req = { method, path, headers };
     const res = { code: null, headers: {}, ended: false, status(c) { this.code = c; return this; }, set(k, v) { this.headers[k] = v; return this; }, end() { this.ended = true; } };
@@ -17,8 +17,7 @@ test("headGuard: HEAD on a paid path is handled as GET (so it gets the 402); wit
   const b = run("HEAD", "/paid", { "payment-signature": "abc" });
   assert.equal(b.res.code, 405);
   assert.ok(!b.nexted);
-  const c = run("HEAD", "/free");
-  assert.equal(c.req.method, "HEAD");
+  for (const p of ["/free", "/PAID", "/paid/"]) assert.equal(run("HEAD", p).req.method, "GET", p);
   const d = run("GET", "/paid");
   assert.equal(d.req.method, "GET");
 });
