@@ -307,6 +307,8 @@ The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8
 
 `MPP_SECRET` (optional, mainnet) turns on MPP payment next to x402 on the paid routes, for agents that speak MPP (mppx): method `evm`, USDC on Base, settled by the CDP facilitator only after a successful answer. Any long random string; it signs the challenge ids. `MPP_TEMPO_RECIPIENT` adds MPP method `tempo` (push mode: the agent sends USDC.e on Tempo with the MPP memo and answers with the transaction hash, checked on a Tempo RPC): the address that receives it on Tempo. `MPP_TEMPO_CHAIN=42431` switches to the Moderato testnet, `MPP_TEMPO_RPC` overrides the RPC.
 
+`MPP_TEMPO_OPERATOR_KEY` (optional, with `MPP_TEMPO_RECIPIENT` and `CREDITS_REDIS_URL`) adds MPP sessions (intent `session`, mppx): the agent opens a payment channel on Tempo once and pays each call with a signed voucher, no transaction per call. The channel pays out to `MPP_TEMPO_RECIPIENT`; the key is a separate operator account that only settles and closes channels and pays the gas (a few dollars of USDC.e on Tempo is plenty). Channel state lives in Redis; spend is settled on-chain after $0.50 or 10 minutes.
+
 `PAY_TO` must be an EVM address (`0x` + 40 hex characters). Surrounding spaces are trimmed; anything else stops the server at startup with a clear error, so a typo can't publish an unpayable 402.
 
 ## Data sources
