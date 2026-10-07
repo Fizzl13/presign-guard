@@ -426,6 +426,13 @@ async function xrplTokenVerdict({ address, currency, issuer }, now, { fetchImpl 
     if (trusted) add("ISSUER_IS_RIPPLE", "info");
   }
   marketReasons(market, add, { trusted });
+  // Jev's second opinion on the name (src/jev.js), as for EVM and Solana: "RLUSD2" or "USDC" from some issuer.
+  if (!trusted && !reasons.some((r) => r.code === "TOKEN_IMPERSONATION")) {
+    const name = currencyName(currency);
+    const ai = await secondOpinion({ chainId: "xrpl", tokens: [{ address: `${name}.${issuer}`, symbol: name, name: market?.name ?? undefined }] }).catch(() => ({ reasons: [], sources: [] }));
+    for (const r of ai.reasons) add(r.code, r.severity, r.details);
+    sources.push(...ai.sources);
+  }
   const order = { red: 0, orange: 1, info: 2 };
   reasons.sort((x, y) => order[x.severity] - order[y.severity]);
   const { verdict, grade } = gradeOf(reasons);

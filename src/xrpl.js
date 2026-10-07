@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import { domainAge, hostnameReputation, NEW_DOMAIN_DAYS } from "./pg1.js";
+import { secondOpinion } from "./jev.js";
 
 export const XRPL_NETWORKS = {
   "xrpl:0": { name: "XRP Ledger", rpc: "https://xrplcluster.com", rlusdIssuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
@@ -271,6 +272,24 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     else if (domain && !domain.found && domain.unregistered) add("DOMAIN_NOT_REGISTERED", "orange", domain.domain);
   }
 
+  // The names of the tokens this transaction moves or trusts (not Ripple's RLUSD, not one already flagged as fake):
+  // RLUSD look-alikes by rule, other famous names by Jev when the server has TypeSafe. Orange at most.
+  const seen = new Set();
+  const tokens = [];
+  for (const k of ["Amount", "SendMax", "DeliverMin", "LimitAmount", "TakerGets", "TakerPays", "Amount2"]) {
+    const a = tx[k];
+    if (!isIssued(a) || (isRlusdCode(a.currency) && (a.issuer === net.rlusdIssuer || reasons.some((r) => r.code === "XRPL_FAKE_RLUSD")))) continue;
+    const name = currencyName(a.currency);
+    const address = `${name}.${a.issuer}`;
+    if (!seen.has(address)) { seen.add(address); tokens.push({ address, symbol: name }); }
+  }
+  let aiSources = [];
+  if (tokens.length) {
+    const ai = await secondOpinion({ chainId: "xrpl", tokens }).catch(() => ({ reasons: [], sources: [] }));
+    for (const r of ai.reasons) add(r.code, r.severity, r.subject, r.details);
+    aiSources = ai.sources;
+  }
+
   const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
   return {
     version: "2",
@@ -284,8 +303,8 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD, destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
-    sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(req.origin ? ["pg1"] : [])],
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
+    sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
     checkedAt: new Date().toISOString(),
   };
 }
