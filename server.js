@@ -7,6 +7,8 @@ import { onPublicHost } from "./src/public-host.js";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { ExactXrplScheme } from "@x402/xrpl/exact/server";
+import { createXrplFacilitator, XRPL_NETWORK } from "./src/xrpl-facilitator.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { agentRegistration, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
@@ -46,6 +48,10 @@ if (PAY_TO_SOLANA && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(PAY_TO_SOLANA)) {
 }
 const SOLANA_NETWORK = MAINNET ? "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp" : "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1";
 const SOLANA = PAY_TO_SOLANA ? { network: SOLANA_NETWORK, payTo: PAY_TO_SOLANA } : null;
+// XRP Ledger (mainnet only): the same dollar prices in RLUSD to Frits's account (it has the RLUSD trust line),
+// settled in-process (src/xrpl-facilitator.js). XRPL_PAY_TO overrides the account, XRPL_PAY_TO=off turns it off.
+const XRPL_PAY_TO = process.env.XRPL_PAY_TO === "off" ? null : process.env.XRPL_PAY_TO?.trim() || "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw";
+const XRPL = MAINNET && XRPL_PAY_TO ? { network: XRPL_NETWORK, payTo: XRPL_PAY_TO } : null;
 
 if (MAINNET && !(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET)) {
   throw new Error("Mainnet needs CDP_API_KEY_ID and CDP_API_KEY_SECRET for the CDP facilitator");
@@ -70,12 +76,14 @@ const facilitators = MAINNET
   ? [
     ...(SOLANA ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.SOLANA_FACILITATOR_URL ?? "https://facilitator.payai.network" }), (n) => n.startsWith("solana:"))] : []),
     new HTTPFacilitatorClient(cdpFacilitator),
+    ...(XRPL ? [createXrplFacilitator({ wsUrl: process.env.XRPL_WS_URL || "wss://xrplcluster.com" })] : []),
   ]
   : [new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL ?? "https://x402.org/facilitator" })];
 
 const resourceServer = new x402ResourceServer(facilitators).register(NETWORK, new ExactEvmScheme());
 if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
-const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA);
+if (XRPL) resourceServer.register(XRPL_NETWORK, new ExactXrplScheme());
+const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
@@ -83,7 +91,7 @@ if (process.env.CREDITS_REDIS_URL) {
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
-const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA) } : ROUTES;
+const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL) } : ROUTES;
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
@@ -132,7 +140,7 @@ app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.
 app.get("/favicon.ico", (_req, res) => res.set("cache-control", "public, max-age=86400").sendFile(fileURLToPath(new URL("./public/favicon.ico", import.meta.url))));
 app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
 app.get("/openapi.json", (_req, res) => {
-  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : [])], { credits: Boolean(creditStore) });
+  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : [])], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
   if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: { name: "Fizzl", url: "https://fizzl.eu" }, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo });
   res.json(spec);
@@ -192,7 +200,7 @@ app.use(feedback.router(express));
 // MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
 // One free limit per IP for the free MCP tools and GET /v1/token/quick together.
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, signer: SIGNER, limiter: freeLimiter, feedback }));
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, signer: SIGNER, limiter: freeLimiter, feedback }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));

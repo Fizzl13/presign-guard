@@ -10,6 +10,7 @@
 // buy credits that would vanish on a restart. Only a SHA-256 of each key is
 // stored, never the key itself.
 import { createHash, randomBytes } from "node:crypto";
+import { xrplAccept } from "./xrpl-facilitator.js";
 
 export const CREDIT_HEADER = "x-credit-key";
 export const PACKS = {
@@ -119,13 +120,14 @@ export async function redisStore(rawUrl, { timeoutMs = 10_000 } = {}) {
 }
 
 // The x402 routes that sell the packs.
-export function packRoutes(network, payTo, solana = null) {
+export function packRoutes(network, payTo, solana = null, xrpl = null) {
   const routes = {};
   for (const [size, pack] of Object.entries(PACKS)) {
     routes[`GET /v1/credits/${size}`] = {
       accepts: [
         { scheme: "exact", price: `$${pack.price}`, network, payTo },
         ...(solana?.payTo ? [{ scheme: "exact", price: `$${pack.price}`, network: solana.network, payTo: solana.payTo }] : []),
+        ...xrplAccept(xrpl, `$${pack.price}`, `GET /v1/credits/${size}`),
       ],
       description: `${pack.credits} prepaid presign-guard credits (1 credit = $0.01 of checks), valid ${CREDIT_TTL_DAYS} days. Returns a credit key for the ${CREDIT_HEADER} header.`,
       mimeType: "application/json",
