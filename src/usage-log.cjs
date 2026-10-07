@@ -259,7 +259,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
           ms: Date.now() - started,
           paid: Boolean(payment),
           ...(payment || {}),
-          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp' } : {}), ...(attemptedNetwork(req) ? { network: attemptedNetwork(req) } : {}) } : {}) } : {}),
+          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp', ...(res.locals && res.locals.mppRefused ? { reason: res.locals.mppRefused } : {}) } : {}), ...(attemptedNetwork(req) ? { network: attemptedNetwork(req) } : {}) } : {}) } : {}),
           agent: agentOf(req.headers['user-agent']),
           visitor: visitorOf(req.ip || (req.socket && req.socket.remoteAddress), visitorSecret),
           input: described.input,

@@ -266,6 +266,7 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
   }
 
   function refuse(req, res, route, reason) {
+    res.locals.mppRefused = String(reason).slice(0, 160); // for the usage log: why the credential was refused
     res.status(402);
     res.set('WWW-Authenticate', headersFor(route));
     res.set('Cache-Control', 'no-store');
