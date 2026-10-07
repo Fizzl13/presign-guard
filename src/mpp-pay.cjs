@@ -335,8 +335,8 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
 // include(path, method) limits it to the operations MPP really sells. protocols is written as
 // objects ([{x402:{}}, {mpp:{…}}]) as @agentcash/discovery (MPPScan, x402scan) reads it: next to a
 // price object, plain strings make it drop the payment info.
-// tempo: { currency } adds the tempo offer too; evm: false leaves the evm offer out.
-function addMppOffers(spec, { categories = [], docs = {}, contact = null, include = () => true, evm = true, tempo = null } = {}) {
+// tempo: { currency } adds the tempo offer too; evm: false leaves the evm offer out; session: { currency } adds a tempo session offer.
+function addMppOffers(spec, { categories = [], docs = {}, contact = null, include = () => true, evm = true, tempo = null, session = null } = {}) {
   spec['x-service-info'] = { categories, docs };
   if (contact && spec.info && !spec.info.contact) spec.info.contact = contact;
   for (const [path, methods] of Object.entries(spec.paths || {})) {
@@ -347,6 +347,11 @@ function addMppOffers(spec, { categories = [], docs = {}, contact = null, includ
       const offered = [...(evm ? [[METHOD, BASE_USDC]] : []), ...(tempo ? [[TEMPO, tempo.currency]] : [])];
       info.offers = offered.map(([method, currency]) => ({ amount: atomicUsdc(info.price.amount), currency, description: op.summary || op.description || '', intent: INTENT, method }));
       info.protocols = [{ x402: {} }, ...offered.map(([method, currency]) => ({ mpp: { method, intent: INTENT, currency } }))];
+      // session: { currency } (src/mpp-session.js) adds the pay-as-you-go tempo session offer.
+      if (session) {
+        info.offers.push({ amount: atomicUsdc(info.price.amount), currency: session.currency, description: op.summary || op.description || '', intent: 'session', method: TEMPO, unitType: 'request' });
+        info.protocols.push({ mpp: { method: TEMPO, intent: 'session', currency: session.currency } });
+      }
     }
   }
   return spec;

@@ -88,3 +88,17 @@ test("openapi.json gets an evm offer on the routes MPP sells, not on the credit 
   assert.equal(info.offers[0].amount, String(Math.round(Number(info.price.amount) * 1e6)));
   assert.equal(spec.paths["/v1/credits/100"].get["x-payment-info"].offers, undefined);
 });
+
+test("openapi.json gets a tempo session offer when sessions are on", async () => {
+  const { openApi } = await import("../src/discovery.js");
+  const { x402Routes } = await import("../src/presign-guard.js");
+  const { addMppOffers } = require("../src/mpp-pay.cjs");
+  const ROUTES = x402Routes(PAY_TO, "eip155:8453", null);
+  const USDCE = "0x20C000000000000000000000b9537d11c60E8b50";
+  const spec = addMppOffers(openApi("https://p.test", "eip155:8453", ["eip155:8453"], {}), { include: (p, m) => `${m} ${p}` in ROUTES, tempo: { currency: USDCE }, session: { currency: USDCE } });
+  const info = spec.paths["/v1/check"].post["x-payment-info"];
+  assert.deepEqual(info.offers.map((o) => `${o.method}/${o.intent}`), ["evm/charge", "tempo/charge", "tempo/session"]);
+  assert.equal(info.offers[2].unitType, "request");
+  assert.equal(info.offers[2].amount, info.offers[0].amount);
+  assert.deepEqual(info.protocols.at(-1), { mpp: { method: "tempo", intent: "session", currency: USDCE } });
+});

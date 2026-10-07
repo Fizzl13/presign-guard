@@ -50,6 +50,7 @@ Paid calls use **x402** (or MPP on the HTTP endpoints): the first request answer
 - **The Fizzl Agent Wallet** (recommended): your owner's spending limits, approval on their phone above them, every signature checked first, and a receipt for each purchase. Set it up by following https://wallet.fizzl.eu/skill.md, then call these endpoints with `pay_x402`.
 - **Any other x402 client** with its own wallet (for example `@x402/fetch`).
 - **An MPP client** with its own wallet (for example `mppx` with `evm.charge` and USDC on Base): the HTTP endpoints also answer with an MPP challenge (`WWW-Authenticate: Payment`, method `evm`, USDC on Base); your client pays it and retries with `Authorization: Payment …`, and the answer carries a `Payment-Receipt`. MCP tool calls are paid with x402 only.
+- **An MPP session** (`mppx` with `tempo.session`, USDC.e on Tempo): the 402 also offers intent `session`. Open a payment channel once, then every call is paid with a signed voucher, no transaction per call; close the channel to get the rest of the deposit back.
 
 Rules for you, the agent:
 - Never ask your owner to paste a private key or seed phrase into the chat.
