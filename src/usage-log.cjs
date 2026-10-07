@@ -12,6 +12,12 @@
 
 const crypto = require('node:crypto');
 
+// Git's blob id of a file's bytes: what the contents API calls its sha.
+const blobSha = (buf) => crypto.createHash('sha1').update(`blob ${buf.length}\0`).update(buf).digest('hex');
+const MAX_QUEUE = 200;
+// Tests pass their own fetch; only the real service exits on SIGTERM.
+const fetchFnGiven = (fn) => fn !== globalThis.fetch;
+
 const DEFAULT_REPO = 'Fizzl13/usage-log';
 const API = 'https://api.github.com';
 const MAX_TEXT = 300;
@@ -125,12 +131,20 @@ function visitorOf(ip, secret) {
   return crypto.createHmac('sha256', secret).update(address).digest('hex').slice(0, 12);
 }
 
-function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch, now = () => new Date(), log = console } = {}) {
+function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch, now = () => new Date(), log = console, flushDelayMs = 10 * 60 * 1000, exitOnSignal = !fetchFnGiven(fetchFn) } = {}) {
   const token = env.USAGE_LOG_TOKEN;
   const repo = env.USAGE_LOG_REPO || DEFAULT_REPO;
   const visitorSecret = env.USAGE_LOG_SALT || token;
   const queue = [];
   let flushing = null;
+  let timer = null;
+  // Every write re-sends the whole day file to GitHub, so writes are batched: at most one per flushMs
+  // (USAGE_LOG_FLUSH_MS, default 10 minutes). On shutdown (a deploy, or the free plan going to sleep) the queue is
+  // written first.
+  const flushMs = Number(env.USAGE_LOG_FLUSH_MS) || flushDelayMs;
+  if (token && exitOnSignal) {
+    process.once('SIGTERM', () => { flush().finally(() => process.exit(0)); });
+  }
   let warned = false;
 
   const headers = {
@@ -144,13 +158,15 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
   async function append(path, lines) {
     for (let attempt = 0; attempt < 4; attempt++) {
       const url = `${API}/repos/${repo}/contents/${path}`;
-      const current = await fetchFn(url, { headers });
+      // The raw file: the JSON form leaves out the content of files over 1 MB, which would then be overwritten
+      // with only the new lines. The sha GitHub wants back is the git blob sha of exactly these bytes.
+      const current = await fetchFn(url, { headers: { ...headers, accept: 'application/vnd.github.raw+json' } });
       let sha;
       let text = '';
       if (current.status === 200) {
-        const file = await current.json();
-        sha = file.sha;
-        text = Buffer.from(file.content || '', 'base64').toString('utf8');
+        const raw = Buffer.from(await current.arrayBuffer());
+        sha = blobSha(raw);
+        text = raw.toString('utf8');
       } else if (current.status !== 404) {
         throw new Error(`read ${path}: HTTP ${current.status}`);
       }
@@ -168,6 +184,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
   }
 
   async function flush() {
+    if (timer) { clearTimeout(timer); timer = null; }
     if (flushing) return flushing;
     flushing = (async () => {
       while (queue.length) {
@@ -199,7 +216,11 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
       return;
     }
     queue.push({ t: now().toISOString(), service, ...event, input: clipAll(event.input), result: clipAll(event.result) });
-    flush();
+    if (queue.length >= MAX_QUEUE) flush();
+    else if (!timer) {
+      timer = setTimeout(() => { timer = null; flush(); }, flushMs);
+      timer.unref?.();
+    }
   }
 
   // Express middleware. describe(req, res, body) returns { route, input, result, via, payment? }
