@@ -104,6 +104,7 @@ export async function redisStore(rawUrl, { timeoutMs = 10_000 } = {}) {
   const k = (hash) => `credits:${hash}`;
   return {
     persistent: true,
+    client, // shared with MPP sessions (src/mpp-session.js)
     async issue(hash, credits, ttlDays) { await client.set(k(hash), String(credits), { EX: ttlDays * 86400 }); },
     async balance(hash) {
       const [credits, ttl] = await Promise.all([client.get(k(hash)), client.ttl(k(hash))]);

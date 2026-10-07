@@ -18,6 +18,7 @@ import { agentRegistration, mirrorChallengeIntoBody, openApi, wellKnown } from "
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
 import mppPayModule from "./src/mpp-pay.cjs";
+import { createMppSession, sessionStore } from "./src/mpp-session.js";
 import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
 import { createTokenQuickRouter } from "./src/token-quick.js";
 import { fizzlCors } from "./src/fizzl-cors.js";
@@ -114,6 +115,22 @@ const MPP = MAINNET && process.env.MPP_SECRET
     tempo: process.env.MPP_TEMPO_RECIPIENT ? { recipient: process.env.MPP_TEMPO_RECIPIENT, chainId: Number(process.env.MPP_TEMPO_CHAIN || 4217), rpc: process.env.MPP_TEMPO_RPC || undefined } : null,
   })
   : null;
+// MPP sessions (src/mpp-session.js): pay-as-you-go over a Tempo payment channel, one voucher per call, paid out to
+// MPP_TEMPO_RECIPIENT. Needs the operator key (MPP_TEMPO_OPERATOR_KEY) and Redis for the channel state.
+const MPP_SESSION = MPP?.tempo && process.env.MPP_TEMPO_OPERATOR_KEY && creditStore?.client
+  ? createMppSession({
+    operatorKey: process.env.MPP_TEMPO_OPERATOR_KEY,
+    recipient: process.env.MPP_TEMPO_RECIPIENT,
+    secret: process.env.MPP_SECRET,
+    realm: new URL(PUBLIC_URL).host,
+    publicUrl: PUBLIC_URL,
+    chainId: Number(process.env.MPP_TEMPO_CHAIN || 4217),
+    rpcUrl: process.env.MPP_TEMPO_RPC || undefined,
+    store: sessionStore(creditStore.client),
+    routes: Object.fromEntries(Object.entries(ROUTES).map(([route, r]) => [route, r.accepts.find((a) => a.network === NETWORK).price])),
+  })
+  : null;
+if (MPP_SESSION) console.log(`[mpp-session] on: operator ${MPP_SESSION.operator}, paid out to ${MPP_SESSION.recipient}`);
 // Signed verdicts (src/receipt.js); unsigned when RECEIPT_SIGNER_SECRET is not set.
 const SIGNER = createSigner();
 
@@ -229,7 +246,8 @@ app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; ne
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
 // Challenges (and so the Bazaar listing) name presign-guard.fizzl.eu, also when called on the Render address.
 const paywall = unlessInternal((req) => req.fizzlInternal === true, onPublicHost(PUBLIC_URL, paymentMiddleware(PAYWALL_ROUTES, resourceServer)));
-if (MPP) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal ? next() : MPP.middleware(req, res, next)));
+if (MPP_SESSION) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal ? next() : MPP_SESSION.middleware(req, res, next)));
+if (MPP) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal || req.mppPaid ? next() : MPP.middleware(req, res, next)));
 app.use((req, res, next) => (req.fizzlCredits || req.mppPaid ? next() : paywall(req, res, next)));
 app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
