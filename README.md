@@ -79,6 +79,8 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 | `wallet_approvals` | $0.02 USDC via x402 | The wallet approval audit, as `GET /v1/approvals` |
 | `feedback` | free | Report a bug or a missing feature, as `POST /feedback` |
 
+The three check tools also take an XRP Ledger transaction: `{"type": "xrpl", "tx": {…unsigned tx JSON…}, "network": "xrpl:0"}` (no `chainId`), with the same rules as `POST /v1/check`.
+
 The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` and `wallet_approvals` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Token verdict
