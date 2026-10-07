@@ -303,6 +303,8 @@ The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8
 
 `PAY_TO_SOLANA` (optional) is a Solana address for USDC payments on Solana, offered for the token verdict only; those payments settle through the PayAI facilitator (`SOLANA_FACILITATOR_URL` to override). Without it, the token verdict is paid on Base only.
 
+`ALGORAND_PAY_TO` (optional) is an Algorand address for USDC payments on Algorand (ASA 31566704), offered on every paid route and credit pack at the same dollar price; those payments settle through GoPlausible's public facilitator (`ALGORAND_FACILITATOR_URL` to override), which pays the Algorand fee. The account must have opted in to USDC. Unset or `off`: no Algorand option.
+
 `MPP_SECRET` (optional, mainnet) turns on MPP payment next to x402 on the paid routes, for agents that speak MPP (mppx): method `evm`, USDC on Base, settled by the CDP facilitator only after a successful answer. Any long random string; it signs the challenge ids. `MPP_TEMPO_RECIPIENT` adds MPP method `tempo` (push mode: the agent sends USDC.e on Tempo with the MPP memo and answers with the transaction hash, checked on a Tempo RPC): the address that receives it on Tempo. `MPP_TEMPO_CHAIN=42431` switches to the Moderato testnet, `MPP_TEMPO_RPC` overrides the RPC.
 
 `PAY_TO` must be an EVM address (`0x` + 40 hex characters). Surrounding spaces are trimmed; anything else stops the server at startup with a clear error, so a typo can't publish an unpayable 402.
