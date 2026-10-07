@@ -38,3 +38,15 @@ test("usage log counts RLUSD in dollars", () => {
   assert.equal(usageLog.usdOf({ network: "xrpl:0", asset: "524C555344000000000000000000000000000000", amount: "0.01" }), 0.01);
   assert.equal(usageLog.usdOf({ network: "eip155:8453", amount: "10000" }), 0.01);
 });
+
+test("t54-format payments (invoiceId in the payload) go to t54; accepts carry the x402 SourceTag", async () => {
+  const { isT54Payload, X402_SOURCE_TAG } = await import("../src/xrpl-facilitator.js");
+  const calls = [];
+  const t54 = { verify: async () => (calls.push("t54 verify"), { isValid: true }), settle: async () => (calls.push("t54 settle"), { success: true }) };
+  const fac = createXrplFacilitator({ wsUrl: "wss://127.0.0.1:9", t54 });
+  await fac.verify({ x402Version: 2, payload: { signedTxBlob: "AB", invoiceId: "x" } }, {});
+  await fac.settle({ x402Version: 2, payload: { signedTxBlob: "AB", invoiceId: "x" } }, {});
+  assert.deepEqual(calls, ["t54 verify", "t54 settle"]);
+  assert.equal(isT54Payload({ payload: { signedTxBlob: "AB" } }), false);
+  assert.equal(x402Routes(EVM, "eip155:8453", null, XRPL)["GET /v1/token"].accepts.at(-1).extra.sourceTag, X402_SOURCE_TAG);
+});
