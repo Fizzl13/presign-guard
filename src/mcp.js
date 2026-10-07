@@ -21,6 +21,7 @@ import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { parseRequest, analyze, explain } from "./presign-guard.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl, XRPL_NETWORKS } from "./xrpl.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
+import { algorandAccept } from "./algorand.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
 import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
 import { paymentOf } from "./receipt.js";
@@ -178,7 +179,7 @@ const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [APPROVALS_ROUTE.path]: 
 const priceOf = (tool) => `$${(OTHER_ROUTES[tool.route] ?? ROUTES[tool.route]).price}`;
 
 // accepts[] per paid tool, built once the facilitator is reachable.
-function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, tool }) {
+function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, tool }) {
   let wrapper = null;
   return async () => {
     if (wrapper) return wrapper;
@@ -189,6 +190,7 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, tool
       accepts.push(...await resourceServer.buildPaymentRequirements({ scheme: "exact", price, network: solana.network, payTo: solana.payTo }));
     }
     for (const x of xrplAccept(xrpl, price, `mcp ${tool.name}`)) accepts.push(...await resourceServer.buildPaymentRequirements(x));
+    for (const x of algorandAccept(algorand, price)) accepts.push(...await resourceServer.buildPaymentRequirements(x));
     wrapper = createPaymentWrapper(resourceServer, {
       accepts,
       resource: { url: `mcp://tool/${tool.name}`, description: tool.summary, mimeType: "application/json", ...(tool.metadata ?? serviceMetadata) },
@@ -305,9 +307,9 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
   const router = express.Router();
-  const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, tool })]));
+  const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, tool })]));
 
   router.post("/mcp", express.json({ limit: "64kb" }), async (req, res) => {
     const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] } });

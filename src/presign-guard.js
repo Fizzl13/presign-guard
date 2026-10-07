@@ -34,6 +34,7 @@ import { secondOpinion } from "./jev.js";
 import { checkMandatePayment } from "./mandate.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
+import { algorandAccept } from "./algorand.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -973,10 +974,11 @@ export async function explain(result, lang) {
 
 // solana: optional { network, payTo }; the token verdict can then also be paid in USDC on Solana.
 // xrpl: optional { network, payTo }; every route can then also be paid in RLUSD on the XRP Ledger.
-export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null) {
+// algorand: optional { network, payTo }; every route can then also be paid in USDC on Algorand.
+export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
   const route = (path, description) => ({
-    accepts: [{ scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo }, ...xrplAccept(xrpl, `$${ROUTES[path].price}`, `POST ${path}`)],
+    accepts: [{ scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo }, ...xrplAccept(xrpl, `$${ROUTES[path].price}`, `POST ${path}`), ...algorandAccept(algorand, `$${ROUTES[path].price}`)],
     description,
     mimeType: "application/json",
     ...serviceMetadata,
@@ -994,6 +996,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         { scheme: "exact", price: tokenPrice, network, payTo },
         ...(solana?.payTo ? [{ scheme: "exact", price: tokenPrice, network: solana.network, payTo: solana.payTo }] : []),
         ...xrplAccept(xrpl, tokenPrice, `GET ${TOKEN_ROUTE.path}`),
+        ...algorandAccept(algorand, tokenPrice),
       ],
       description: "Is this token safe to buy, or a honeypot or rug pull? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
@@ -1005,6 +1008,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         { scheme: "exact", price: approvalsPrice, network, payTo },
         ...(solana?.payTo ? [{ scheme: "exact", price: approvalsPrice, network: solana.network, payTo: solana.payTo }] : []),
         ...xrplAccept(xrpl, approvalsPrice, `GET ${APPROVALS_ROUTE.path}`),
+        ...algorandAccept(algorand, approvalsPrice),
       ],
       description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
       mimeType: "application/json",

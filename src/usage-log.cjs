@@ -46,6 +46,8 @@ const NETWORK_NAMES = {
   'eip155:4217': 'Tempo',
   'xrpl:0': 'xrpl',
   'xrpl:1': 'xrpl-testnet',
+  'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=': 'algorand',
+  'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=': 'algorand-testnet',
 };
 const RLUSD_HEX = '524C555344000000000000000000000000000000';
 
