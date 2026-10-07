@@ -173,7 +173,7 @@ app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=30
 app.get("/openapi.json", (_req, res) => {
   const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : [])], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
-  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: { name: "Fizzl", url: "https://fizzl.eu" }, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo });
+  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: { name: "Fizzl", url: "https://fizzl.eu" }, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION ? { currency: MPP_SESSION.currency } : null });
   res.json(spec);
 });
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL, { credits: Boolean(creditStore) })));
