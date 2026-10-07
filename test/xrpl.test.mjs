@@ -101,3 +101,57 @@ test("DEX orders: the token bought is screened, a limit far below the book or AM
   const deposit = { type: "xrpl", tx: { TransactionType: "AMMDeposit", Account: ME, Asset: { currency: "XRP" }, Asset2: { currency: "USD", issuer: OTHER }, Amount2: { currency: "USD", issuer: OTHER, value: "5" } } };
   assert.ok(codes(await analyzeXrpl(await parseXrplRequest(deposit), { fetchImpl: dex() })).includes("orange:XRPL_ISSUER_NOT_FOUND"), "an XRP asset is not looked up as a token; the unknown issuer is");
 });
+
+test("token names: an RLUSD look-alike (RLUSD2, RLUSDC, RL-USD) is orange by rule, without TypeSafe; Ripple's RLUSD and other names are not", async () => {
+  const { rlusdLookalike } = await import("../src/jev.js");
+  assert.deepEqual(["RLUSD2", "RLUSDC", "RL-USD", "R1USD", "rlusd.x"].map(rlusdLookalike), ["RLUSD", "RLUSD", "RLUSD", "RLUSD", "RLUSD"]);
+  assert.deepEqual(["RLUSD", "USD", "SOLO", "XRPUSD"].map(rlusdLookalike), [null, null, null, null]);
+  const hex = (t) => Buffer.from(t).toString("hex").toUpperCase().padEnd(40, "0");
+  const prev = process.env.TYPESAFE_API_KEY; delete process.env.TYPESAFE_API_KEY;
+  try {
+    const copy = await run({ TransactionType: "Payment", Destination: OTHER, Amount: { currency: hex("RLUSD2"), issuer: FAKE, value: "5" } }, { accounts: { [OTHER]: {}, [FAKE]: {} }, lines: { [OTHER]: [hex("RLUSD2")] } });
+    const r = copy.reasons.find((x) => x.code === "AI_TOKEN_IMPERSONATION");
+    assert.ok(r, codes(copy).join());
+    assert.deepEqual([r.severity, r.subject, r.details.decidedBy, r.details.imitates], ["orange", `RLUSD2.${FAKE}`, "rule", "RLUSD"]);
+    assert.equal(copy.verdict, "orange");
+    // A trust line to an RLUSDC token, too.
+    const trust = await run({ TransactionType: "TrustSet", LimitAmount: { currency: hex("RLUSDC"), issuer: FAKE, value: "1000" } }, { accounts: { [FAKE]: {} } });
+    assert.ok(codes(trust).includes("orange:AI_TOKEN_IMPERSONATION"), codes(trust).join());
+    // Ripple's own RLUSD and an ordinary token name: no name reason.
+    const real = await run({ TransactionType: "Payment", Destination: OTHER, Amount: { currency: RLUSD, issuer: RIPPLE, value: "5" } }, { accounts: { [OTHER]: {}, [RIPPLE]: {} }, lines: { [OTHER]: [RLUSD] } });
+    assert.ok(!codes(real).some((c) => c.endsWith("AI_TOKEN_IMPERSONATION")), codes(real).join());
+    const solo = await run({ TransactionType: "Payment", Destination: OTHER, Amount: { currency: hex("SOLO"), issuer: FAKE, value: "5" } }, { accounts: { [OTHER]: {}, [FAKE]: {} }, lines: { [OTHER]: [hex("SOLO")] } });
+    assert.ok(!codes(solo).some((c) => c.endsWith("AI_TOKEN_IMPERSONATION")));
+  } finally { if (prev !== undefined) process.env.TYPESAFE_API_KEY = prev; }
+});
+
+test("token names: with TypeSafe set up, Jev judges other names (a USDC from some issuer); Ripple's RLUSD is never asked", async () => {
+  const hex = (t) => Buffer.from(t).toString("hex").toUpperCase().padEnd(40, "0");
+  const saved = { key: process.env.TYPESAFE_API_KEY, fetch: globalThis.fetch };
+  const asked = [];
+  process.env.TYPESAFE_API_KEY = "ts_test";
+  globalThis.fetch = async (url, init) => {
+    if (String(url).startsWith("https://api.typesafe.ai/")) {
+      const body = JSON.parse(init.body);
+      asked.push(body);
+      return Response.json({ answers: Object.fromEntries(Object.keys(body.questions).map((id) => [id, { noul: body.state[id.replace(/_impersonates$/, "")]?.symbol === "USD" ? 0.1 : 0.95 }])) });
+    }
+    return saved.fetch(url, init);
+  };
+  try {
+    const usdc = await run({ TransactionType: "TrustSet", LimitAmount: { currency: "USD", issuer: FAKE, value: "1000" } }, { accounts: { [FAKE]: {} } });
+    assert.ok(!codes(usdc).includes("orange:AI_TOKEN_IMPERSONATION"), "a plain USD IOU is not a copy (Jev 10%)");
+    const fake = await run({ TransactionType: "TrustSet", LimitAmount: { currency: hex("USDC"), issuer: FAKE, value: "1000" } }, { accounts: { [FAKE]: {} } });
+    const r = fake.reasons.find((x) => x.code === "AI_TOKEN_IMPERSONATION");
+    assert.deepEqual([r?.severity, r?.subject, r?.details.decidedBy, r?.details.probability], ["orange", `USDC.${FAKE}`, "jev", 0.95]);
+    assert.ok(fake.sources.includes("typesafe-jev"));
+    assert.equal(asked.at(-1).state.chain_id, "xrpl");
+    assert.deepEqual(asked.at(-1).state.well_known_tokens_official_contracts, { RLUSD: `RLUSD.${RIPPLE}` });
+    const n = asked.length;
+    await run({ TransactionType: "TrustSet", LimitAmount: { currency: RLUSD, issuer: RIPPLE, value: "1000" } }, { accounts: { [RIPPLE]: {} } });
+    assert.equal(asked.length, n, "Ripple's RLUSD is not asked about");
+  } finally {
+    globalThis.fetch = saved.fetch;
+    if (saved.key === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = saved.key;
+  }
+});

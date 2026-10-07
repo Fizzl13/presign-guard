@@ -23,7 +23,17 @@ const OFFICIAL = {
   137: { USDC: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", USDT: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", WETH: "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619" },
   56: { USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", USDT: "0x55d398326f99059ff775485246999027b3197955" },
   solana: { USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", wSOL: "So11111111111111111111111111111111111111112" },
+  // XRP Ledger tokens are "<currency>.<issuer>" (the currency as text, e.g. "RLUSD.r…"). XRP itself is no token.
+  xrpl: { RLUSD: "RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
 };
+// XRPL: a currency name that is RLUSD with something added or changed (RLUSD2, RLUSDC, RL-USD, R1USD) is a copy of
+// Ripple's stablecoin by its name alone; decided by code like the rules above. RLUSD itself from another issuer is
+// already red in the XRPL checks (XRPL_FAKE_RLUSD, TOKEN_IMPERSONATION).
+export function rlusdLookalike(symbol) {
+  const raw = String(symbol || "").trim().toUpperCase();
+  const s = raw.replace(/[^A-Z0-9]/g, "").replace(/1/g, "L").replace(/0/g, "O").replace(/5/g, "S");
+  return raw !== "RLUSD" && s.includes("RLUSD") ? "RLUSD" : null;
+}
 // Contracts of the protocols whose names permit-phishing copies most, the same address on every EVM chain
 // they run on. A signature whose domain.verifyingContract is one of these (or an official token) is not asked about.
 const OFFICIAL_PROTOCOLS = {
@@ -191,6 +201,15 @@ export async function secondOpinion(input, opts = {}) {
   if (look) {
     ruled.push({ code: "AI_LOOKALIKE_SITE", severity: "orange", subject: q.state.site, details: { decidedBy: "rule", imitates: look } });
     delete q.questions.site_imitates_brand;
+  }
+  if (input.chainId === "xrpl") {
+    for (const id of Object.keys(q.questions).filter((k) => /^token_\d+_impersonates$/.test(k))) {
+      const t = q.state[id.replace(/_impersonates$/, "")];
+      const copied = rlusdLookalike(t.symbol) || rlusdLookalike(t.name);
+      if (!copied) continue;
+      ruled.push({ code: "AI_TOKEN_IMPERSONATION", severity: "orange", subject: t.address, details: { decidedBy: "rule", imitates: copied } });
+      delete q.questions[id];
+    }
   }
   const pname = q.questions.domain_impersonates ? protocolNameOf(q.state.signature_domain?.name) : null;
   if (pname) {
