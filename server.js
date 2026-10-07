@@ -113,8 +113,8 @@ const app = express();
 app.set("trust proxy", trustProxyHops());
 app.disable("x-powered-by");
 app.use(securityHeaders);
-// HEAD on a paid route gets the 402 instead of running the handler for free (src/head-guard.js).
-app.use(headGuard((p) => p === "/v1/token" || p === "/v1/approvals" || /^\/v1\/credits\/\d+$/.test(p)));
+// Every HEAD is handled as a GET, so paid routes give their 402 instead of running for free (src/head-guard.js).
+app.use(headGuard());
 app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
