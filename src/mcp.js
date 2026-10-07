@@ -19,6 +19,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createPaymentWrapper } from "@x402/mcp";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { parseRequest, analyze, explain } from "./presign-guard.js";
+import { isXrplRequest, parseXrplRequest, analyzeXrpl, XRPL_NETWORKS } from "./xrpl.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
 import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
 import { paymentOf } from "./receipt.js";
@@ -27,15 +28,17 @@ import {
   APPROVALS_INPUT_SCHEMA, APPROVALS_INPUT_EXAMPLE, serviceMetadata, tokenServiceMetadata, approvalsServiceMetadata,
 } from "./discovery.js";
 
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
 export const FREE_CALLS_PER_HOUR = 10;
 
 const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
 
 // What the agent is about to sign; the same fields as the HTTP body.
 const CHECK_INPUT = {
-  type: z.enum(["approval", "transaction", "signature"]).describe("What the agent is about to sign"),
-  chainId: z.number().int().describe(`EVM chain id: ${CHAINS.join(", ")} (8453 = Base)`),
+  type: z.enum(["approval", "transaction", "signature", "xrpl"]).describe("What the agent is about to sign; xrpl = an unsigned XRP Ledger transaction in tx"),
+  chainId: z.number().int().optional().describe(`EVM chain id, required for approval, transaction and signature: ${CHAINS.join(", ")} (8453 = Base)`),
+  network: z.enum(Object.keys(XRPL_NETWORKS)).optional().describe("xrpl: xrpl:0 (mainnet, default) or xrpl:1 (testnet)"),
+  tx: z.record(z.any()).optional().describe("xrpl: the unsigned transaction JSON (TransactionType, Account, Destination, Amount, …)"),
   token: z.string().optional().describe("approval: the token contract"),
   spender: z.string().optional().describe("approval: who gets the allowance"),
   amount: z.string().optional().describe("approval: amount in base units (0 = revoke)"),
@@ -76,15 +79,17 @@ export function createRateLimiter(limit, windowMs) {
   };
 }
 
-// Same checks as the HTTP route: a 400 is refused before any payment.
-function validate(args) {
+// Same checks as the HTTP route: a 400 is refused before any payment. An XRP Ledger transaction
+// (type "xrpl") has its own parser and rules (xrpl.js).
+async function validate(args) {
   const { lang, ...body } = args;
   try {
-    return { request: parseRequest(body) };
+    return { request: isXrplRequest(body) ? { xrpl: await parseXrplRequest(body) } : parseRequest(body) };
   } catch (err) {
     return { error: err.message || "invalid request" };
   }
 }
+const check = (request) => (request.xrpl ? analyzeXrpl(request.xrpl) : analyze(request));
 
 function validateToken(args) {
   try {
@@ -117,10 +122,10 @@ const PAID_TOOLS = [
     input: CHECK_INPUT,
     validate,
     discovery: CHECK_DISCOVERY,
-    summary: "Green/orange/red verdict with reason codes before an agent signs an EVM transaction, token approval or EIP-712 signature.",
+    summary: "Green/orange/red verdict with reason codes before an agent signs an EVM transaction, token approval, EIP-712 signature or XRP Ledger transaction.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
-    run: (request) => analyze(request),
+      `Paid (${price} USDC via x402 on Base): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
+    run: (request) => check(request),
   },
   {
     name: "presign_check_explain",
@@ -133,7 +138,7 @@ const PAID_TOOLS = [
     description: (price) =>
       `Paid (${price} USDC via x402 on Base): the same verdict and reason codes as presign_check, plus a 3 to 5 sentence plain-language explanation a person can read before approving (lang en or nl). Same as POST /v1/check/explain.`,
     run: async (request, args) => {
-      const result = await analyze(request);
+      const result = await check(request);
       const lang = args.lang === "nl" ? "nl" : "en";
       return { ...result, explanation: { lang, text: await explain(result, lang) } };
     },
@@ -205,17 +210,17 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
     {
       title: "Quick pre-sign verdict (free)",
       description:
-        `Free: the green/orange/red verdict only, for a transaction, token approval or EIP-712 signature your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
+        `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature or XRP Ledger transaction (type xrpl) your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
       inputSchema: CHECK_INPUT,
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: examplesMeta(INPUT_EXAMPLE),
     },
     async (args) => {
       if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use presign_check ($0.01 USDC via x402) or POST https://presign-guard.fizzl.eu/v1/check.`);
-      const checked = validate(args);
+      const checked = await validate(args);
       if (checked.error) return toolError(checked.error);
       try {
-        const r = await analyze(checked.request);
+        const r = await check(checked.request);
         return text({ verdict: r.verdict, note: "Verdict only. presign_check ($0.01) returns the reasons and details." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
@@ -259,7 +264,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
         _meta: examplesMeta(tool.discovery.example),
       },
       async (args, extra) => {
-        const checked = tool.validate(args); // before the payment step
+        const checked = await tool.validate(args); // before the payment step
         if (checked.error) return toolError(checked.error);
         let paid;
         try {

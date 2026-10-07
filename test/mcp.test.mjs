@@ -103,6 +103,7 @@ before(async () => {
         baseToken: { address: USDC, name: "USD Coin", symbol: "USDC" }, priceUsd: "1.00", liquidity: { usd: 25e6 }, marketCap: 6e10, volume: { h24: 9e7 },
         info: { websites: [{ url: "https://circle.com" }] } }]));
     }
+    if (u.includes("xrplcluster.com")) return new Response(JSON.stringify({ result: { status: "error", error: "actNotFound" } }));
     if (u.includes("api.anthropic.com")) return new Response(JSON.stringify({ content: [{ type: "text", text: "Plain explanation." }] }));
     if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) {
       const address = JSON.parse(opts.body).params[0].toLowerCase();
@@ -148,7 +149,7 @@ test("lists the free quick checks and the paid tools with their prices", async (
   assert.deepEqual(tools.find((t) => t.name === "wallet_approvals").inputSchema.required.sort(), ["address", "chain"]);
   assert.match(tools.find((t) => t.name === "presign_check").description, /\$0\.01/);
   assert.match(tools.find((t) => t.name === "presign_check_explain").description, /\$0\.03/);
-  assert.deepEqual(tools.find((t) => t.name === "presign_check").inputSchema.required.sort(), ["chainId", "type"]);
+  assert.deepEqual(tools.find((t) => t.name === "presign_check").inputSchema.required.sort(), ["type"], "chainId is only required for EVM checks (parseRequest enforces it), not for type xrpl");
   await client.close();
 });
 
@@ -174,6 +175,28 @@ test("free quick check: the verdict only", async () => {
   assert.equal(green.reasons, undefined, "no reasons in the free tool");
   const red = JSON.parse((await client.callTool({ name: "presign_quick_check", arguments: { ...APPROVAL, spender: EOA, amount: (2n ** 256n - 1n).toString() } })).content[0].text);
   assert.equal(red.verdict, "red");
+  await client.close();
+});
+
+const XRPL_TAKEOVER = { type: "xrpl", tx: { TransactionType: "SetRegularKey", Account: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De", RegularKey: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh" } };
+
+test("XRP Ledger transactions: free verdict without a chainId; a takeover is red", async () => {
+  const client = await mcpClient();
+  const r = JSON.parse((await client.callTool({ name: "presign_quick_check", arguments: XRPL_TAKEOVER })).content[0].text);
+  assert.equal(r.verdict, "red");
+  await client.close();
+});
+
+test("XRP Ledger transactions: invalid input is refused before payment, valid input gets the payment requirement", async () => {
+  const client = await mcpClient();
+  const bad = await client.callTool({ name: "presign_check", arguments: { type: "xrpl", tx: { TransactionType: "Payment", Account: "not-an-address" } } });
+  assert.equal(bad.isError, true);
+  assert.match(bad.content[0].text, /XRPL address/);
+  const good = await client.callTool({ name: "presign_check", arguments: XRPL_TAKEOVER });
+  assert.ok(Array.isArray(good.structuredContent && good.structuredContent.accepts), JSON.stringify(good.content));
+  const evmWithoutChain = await client.callTool({ name: "presign_check", arguments: { type: "approval", token: USDC, spender: EOA, amount: "1" } });
+  assert.equal(evmWithoutChain.isError, true);
+  assert.match(evmWithoutChain.content[0].text, /chainId/);
   await client.close();
 });
 
