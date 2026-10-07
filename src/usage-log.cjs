@@ -44,7 +44,19 @@ const NETWORK_NAMES = {
   'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp': 'solana',
   'solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1': 'solana-devnet',
   'eip155:4217': 'Tempo',
+  'xrpl:0': 'xrpl',
+  'xrpl:1': 'xrpl-testnet',
 };
+const RLUSD_HEX = '524C555344000000000000000000000000000000';
+
+// USD value of a payment requirement: USDC in atomic units (6 decimals), or RLUSD on the XRP Ledger,
+// where amounts are decimal values ("0.02"). Null for anything else.
+function usdOf(accepted) {
+  const amount = accepted && (accepted.amount || accepted.maxAmountRequired);
+  if (amount === undefined || amount === null) return null;
+  if (/^xrpl:/.test(String(accepted.network || ''))) return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
+  return /^\d+$/.test(String(amount)) ? Number(amount) / 1e6 : null;
+}
 
 function decodeBase64Json(value) {
   if (!value) return null;
@@ -64,9 +76,8 @@ function paymentOf(req, res) {
   const payload = decodeBase64Json(req.headers['payment-signature'] || req.headers['x-payment']);
   const accepted = payload && (payload.accepted || payload.requirements);
   const network = settlement.network || (accepted && accepted.network) || null;
-  const atomic = accepted && (accepted.amount || accepted.maxAmountRequired);
   return {
-    usd: atomic !== undefined && atomic !== null && /^\d+$/.test(String(atomic)) ? Number(atomic) / 1e6 : null,
+    usd: usdOf(accepted),
     network: NETWORK_NAMES[network] || network,
     payer: settlement.payer || null,
     tx: settlement.transaction || null,
@@ -280,11 +291,11 @@ function mcpPayment(requestBody, responseBody) {
   const accepted = paid && paid.accepted;
   const network = settlement.network || (accepted && accepted.network) || null;
   return {
-    usd: accepted && /^\d+$/.test(String(accepted.amount)) ? Number(accepted.amount) / 1e6 : null,
+    usd: usdOf(accepted),
     network: NETWORK_NAMES[network] || network,
     payer: settlement.payer || null,
     tx: settlement.transaction || null,
   };
 }
 
-module.exports = { createUsageLog, paymentOf, attemptedNetwork, mcpToolCall, mcpPayment, clip, agentOf, visitorOf };
+module.exports = { createUsageLog, paymentOf, attemptedNetwork, usdOf, mcpToolCall, mcpPayment, clip, agentOf, visitorOf };

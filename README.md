@@ -41,7 +41,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
 | `GET /.well-known/x402` | free | x402 discovery manifest |
 
-Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict and the approval audit also on Solana). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict and the approval audit also on Solana), or for every paid route in **RLUSD on the XRP Ledger** (`xrpl:0`, the same dollar amount, issuer `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`; the payer signs an XRPL Payment with the challenge's `extra.invoiceId` as `InvoiceID`, see [`@x402/xrpl`](https://www.npmjs.com/package/@x402/xrpl), and the server verifies and submits it itself). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
 
 ## Credit packs
 
@@ -81,7 +81,7 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 
 The three check tools also take an XRP Ledger transaction: `{"type": "xrpl", "tx": {…unsigned tx JSON…}, "network": "xrpl:0"}` (no `chainId`), with the same rules as `POST /v1/check`.
 
-The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` and `wallet_approvals` also on Solana), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
+The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` and `wallet_approvals` also on Solana; all paid tools also in RLUSD on the XRP Ledger), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Token verdict
 
