@@ -10,6 +10,7 @@
 // Settlement: mppx settles after $0.50 of new spend or 10 minutes, and a sweep here settles any channel with
 // unsettled spend every 10 minutes, so an agent that goes quiet and force-closes (a 15-minute grace period)
 // can't walk away with what it already spent. Single instance: updates are serialized in this process.
+// The challenge suggests a $1 deposit, so mppx clients open a channel that covers many calls (they cap it themselves).
 import { Mppx, Store, tempo } from "mppx/server";
 import { createClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -55,7 +56,7 @@ function decodeCredential(auth) {
 export const credentialIntent = (auth) => decodeCredential(auth)?.challenge?.intent ?? null;
 
 // routes: { "POST /v1/check": "$0.01", ... }. Returns null when the operator key, recipient or store is missing.
-export function createMppSession({ operatorKey, recipient, secret, realm, routes, chainId = 4217, store, publicUrl, rpcUrl, settlementSchedule = { amount: "0.5", intervalMs: SWEEP_MS }, log = console }) {
+export function createMppSession({ operatorKey, recipient, secret, realm, routes, chainId = 4217, store, publicUrl, rpcUrl, settlementSchedule = { amount: "0.5", intervalMs: SWEEP_MS }, suggestedDeposit = "1", log = console }) {
   if (!operatorKey || !recipient || !secret || !store) return null;
   const known = TEMPO_CHAINS[chainId];
   if (!known) throw new Error(`MPP sessions: unknown Tempo chain ${chainId}`);
@@ -65,7 +66,7 @@ export function createMppSession({ operatorKey, recipient, secret, realm, routes
   const mppx = Mppx.create({
     secretKey,
     realm,
-    methods: [tempo.session({ account, recipient, operator: account.address, chainId, currency: known.currency, store, settlementSchedule })],
+    methods: [tempo.session({ account, recipient, operator: account.address, chainId, currency: known.currency, store, settlementSchedule, suggestedDeposit })],
   });
 
   const prices = new Map(Object.entries(routes).map(([route, price]) => [route, String(price).replace(/^\$/, "")]));

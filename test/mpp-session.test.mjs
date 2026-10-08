@@ -59,6 +59,7 @@ test("a 402 carries the session challenge next to the MPP charge one", async () 
     const request = JSON.parse(Buffer.from(/request="([^"]+)"/.exec(sessionPart)[1], "base64url").toString("utf8"));
     assert.equal(request.recipient.toLowerCase(), RECIPIENT.toLowerCase());
     assert.equal(request.amount, "5000");
+    assert.equal(request.suggestedDeposit, "1000000", "a $1 deposit, so a channel covers many calls");
     // Unpaid routes are left alone.
     const free = await fetch(`${srv.url}/healthz`);
     assert.equal(free.headers.get("www-authenticate"), null);
