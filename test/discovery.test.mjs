@@ -15,6 +15,9 @@ test("paid routes carry Bazaar metadata and the right prices", () => {
     assert.equal(r.extensions.bazaar.info.input.method, key.split(" ")[0]);
     assert.ok(r.extensions.bazaar.schema);
     assert.equal(r.serviceName, "presign-guard");
+    // Discovery lists such as GoPlausible's name the seller from this.
+    assert.equal(r.extensions["x402-merchant"].info.name, "Fizzl");
+    assert.equal(r.extensions["x402-merchant"].info.logo, "https://fizzl.eu/logo-512.png");
   }
 });
 
