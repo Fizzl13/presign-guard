@@ -18,6 +18,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createPaymentWrapper } from "@x402/mcp";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+import { merchantExtension } from "./merchant.js";
 import { parseRequest, analyze, explain } from "./presign-guard.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl, XRPL_NETWORKS } from "./xrpl.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
@@ -194,13 +195,16 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
     wrapper = createPaymentWrapper(resourceServer, {
       accepts,
       resource: { url: `mcp://tool/${tool.name}`, description: tool.summary, mimeType: "application/json", ...(tool.metadata ?? serviceMetadata) },
-      extensions: declareDiscoveryExtension({
-        toolName: tool.name,
-        description: tool.summary,
-        transport: "streamable-http",
-        inputSchema: tool.discovery.inputSchema,
-        example: tool.discovery.example,
-      }),
+      extensions: {
+        ...declareDiscoveryExtension({
+          toolName: tool.name,
+          description: tool.summary,
+          transport: "streamable-http",
+          inputSchema: tool.discovery.inputSchema,
+          example: tool.discovery.example,
+        }),
+        ...merchantExtension,
+      },
     });
     return wrapper;
   };
