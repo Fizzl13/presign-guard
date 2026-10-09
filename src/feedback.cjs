@@ -12,6 +12,7 @@
 //   submit(input, { ip, userAgent, via })  the same for an MCP tool; { ok, status, body }
 //   mcpTool          name, title, description and JSON schema for the MCP tool
 //   mcpShape(z)      the input as a zod shape, for McpServer.registerTool
+//   mcpOutputShape(z) the answer to a received report as a zod object (outputSchema)
 //   mcpCall(args, { ip, userAgent })  the tool's CallToolResult
 // The usage log's own MCP describer should skip the "feedback" tool: submit()
 // already records it, with the full message.
@@ -141,13 +142,23 @@ function createFeedback({ service, record = () => {}, agentOf = (ua) => String(u
 
   function mcpCall(args, { ip, userAgent } = {}) {
     const out = submit(args, { ip, userAgent, via: 'mcp' });
-    return { content: [{ type: 'text', text: JSON.stringify(out.body) }], ...(out.ok ? {} : { isError: true }) };
+    return { content: [{ type: 'text', text: JSON.stringify(out.body) }], ...(out.ok ? { structuredContent: out.body } : { isError: true }) };
   }
+
+  // The answer to a report that was received, as a zod shape (the tool's outputSchema).
+  const mcpOutputShape = (z) => z.object({
+    received: z.boolean().describe('true: a person will read it'),
+    id: z.string().describe('Report id, to refer to it later'),
+    service: z.string().optional(),
+    type: z.string().optional(),
+    note: z.string().optional(),
+  }).passthrough();
 
   return {
     router,
     submit,
     mcpShape,
+    mcpOutputShape,
     mcpCall,
     mcpTool: { name: 'feedback', title: 'Send feedback (free)', description: DESCRIPTION, inputSchema: SCHEMA },
   };
