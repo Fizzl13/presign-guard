@@ -65,6 +65,46 @@ const APPROVALS_INPUT = {
 
 const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }] });
 const toolError = (message) => ({ ...text(message), isError: true });
+// A successful answer: the JSON as text (for clients that read text) and as structuredContent (matching the tool's outputSchema).
+const json = (value) => (value && typeof value === "object" && !Array.isArray(value) ? { ...text(value), structuredContent: value } : text(value));
+
+// Output schemas: the fields an agent acts on. Extra fields are allowed (passthrough), so new fields never break a call.
+// MCP clients validate structuredContent even on an error result, and an unpaid call to a paid tool answers with
+// x402's payment requirement as structuredContent ({ x402Version, accepts, ... }): so every field of a paid tool's
+// schema is optional, and that answer passes as well.
+const VERDICT = z.enum(["green", "orange", "red"]).describe("green: go ahead; orange: ask the user; red: do not sign or buy");
+const REASONS = z.array(z.object({
+  code: z.string().describe("Reason code, e.g. SPENDER_FLAGGED, UNLIMITED_ALLOWANCE, TOKEN_HONEYPOT"),
+  severity: z.string().optional().describe("info, warn or critical"),
+  subject: z.string().optional().describe("The address or item the reason is about"),
+}).passthrough()).describe("Why the verdict is what it is");
+const RECEIPT = z.record(z.string(), z.unknown()).describe("Signed receipt (EIP-191) binding the verdict to your arguments");
+const GRADE = z.string().describe("SAFE, CAUTION, RISKY or AVOID");
+const PAID = {
+  version: z.string().optional(),
+  verdict: VERDICT.optional().describe("green: go ahead; orange: ask the user; red: do not sign or buy (absent on the payment requirement)"),
+  reasons: REASONS.optional(),
+  receipt: RECEIPT.optional(),
+  accepts: z.array(z.record(z.string(), z.unknown())).optional().describe("Only on an unpaid call: the x402 payment options"),
+};
+const obj = (shape) => z.object(shape).passthrough();
+const OUTPUT = {
+  presign_quick_check: obj({ verdict: VERDICT, note: z.string().optional() }),
+  token_quick_verdict: obj({ verdict: VERDICT, grade: GRADE.optional(), note: z.string().optional() }),
+  presign_check: obj(PAID),
+  presign_check_explain: obj({
+    ...PAID,
+    explanation: z.object({ lang: z.string(), text: z.string() }).optional().describe("Plain-language explanation for a person"),
+  }),
+  token_verdict: obj({ ...PAID, grade: GRADE.optional(), one_liner: z.string().optional().describe("One-line summary") }),
+  wallet_approvals: obj({
+    ...PAID,
+    grade: GRADE.optional(),
+    one_liner: z.string().optional().describe("One-line summary"),
+    approvals: z.array(z.record(z.string(), z.unknown())).optional().describe("Every open ERC-20 allowance with its spender"),
+    revokeUrl: z.string().optional().describe("revoke.cash link for this wallet"),
+  }),
+};
 
 export function createRateLimiter(limit, windowMs) {
   const hits = new Map();
@@ -220,6 +260,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       description:
         `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature or XRP Ledger transaction (type xrpl) your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
       inputSchema: CHECK_INPUT,
+      outputSchema: OUTPUT.presign_quick_check,
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: examplesMeta(INPUT_EXAMPLE),
     },
@@ -229,7 +270,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       if (checked.error) return toolError(checked.error);
       try {
         const r = await check(checked.request);
-        return text({ verdict: r.verdict, note: "Verdict only. presign_check ($0.01) returns the reasons and details." });
+        return json({ verdict: r.verdict, note: "Verdict only. presign_check ($0.01) returns the reasons and details." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
       }
@@ -243,6 +284,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       description:
         `Free: the green/orange/red verdict and grade only, for a Solana or EVM token your agent is about to buy, hold or accept. Limited to ${FREE_CALLS_PER_HOUR} free calls per hour (shared with presign_quick_check). For the reasons, one-line summary and market data use token_verdict ($0.01).`,
       inputSchema: TOKEN_INPUT,
+      outputSchema: OUTPUT.token_quick_verdict,
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: examplesMeta(TOKEN_INPUT_EXAMPLE),
     },
@@ -252,7 +294,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       if (checked.error) return toolError(checked.error);
       try {
         const r = await tokenVerdict(checked.request);
-        return text({ verdict: r.verdict, grade: r.grade, note: "Verdict only. token_verdict ($0.01) returns the reasons, summary and market data." });
+        return json({ verdict: r.verdict, grade: r.grade, note: "Verdict only. token_verdict ($0.01) returns the reasons, summary and market data." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
       }
@@ -268,6 +310,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
         title: `${tool.title} (${price} via x402)`,
         description: `${tool.description(price)} The answer carries a signed receipt (EIP-191, bound to your arguments) that proves later which verdict you got.`,
         inputSchema: tool.input,
+        outputSchema: OUTPUT[tool.name],
         annotations: { readOnlyHint: true, openWorldHint: true },
         _meta: examplesMeta(tool.discovery.example),
       },
@@ -285,7 +328,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
             const result = await tool.run(checked.request, args);
             // Signed like the HTTP answers (receipt.js): route "mcp <tool>", input = the tool arguments.
             const payment = paymentOf(extra && extra._meta && extra._meta["x402/payment"]);
-            return text(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment }) : result);
+            return json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment }) : result);
           } catch (err) {
             return toolError(`could not check: ${err.message}`); // not charged
           }
@@ -300,6 +343,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
         title: feedback.mcpTool.title,
         description: feedback.mcpTool.description,
         inputSchema: feedback.mcpShape(z),
+        ...(feedback.mcpOutputShape ? { outputSchema: feedback.mcpOutputShape(z) } : {}),
         annotations: { readOnlyHint: false, openWorldHint: false },
         // Marked as an example, so a checker that sends it is easy to spot in the log.
         _meta: examplesMeta({ type: "other", message: "Example report from the tool listing: please ignore." }),

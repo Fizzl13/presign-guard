@@ -160,6 +160,9 @@ test("every tool lists valid example arguments in _meta.examples: paid tools ans
     const example = tool._meta && tool._meta.examples && tool._meta.examples[0];
     assert.ok(example && typeof example === "object", `${tool.name} has an example`);
     for (const key of tool.inputSchema.required || []) assert.ok(key in example, `${tool.name} example has ${key}`);
+    // An output schema (directories such as Smithery score it) that never rejects new fields.
+    assert.equal(tool.outputSchema && tool.outputSchema.type, "object", `${tool.name} has an outputSchema`);
+    assert.notEqual(tool.outputSchema.additionalProperties, false, `${tool.name}: extra fields allowed`);
     if (/quick|feedback/.test(tool.name)) continue; // free tools would run the check or file a report
     const result = await client.callTool({ name: tool.name, arguments: example });
     assert.ok(result.isError, tool.name);
@@ -170,7 +173,9 @@ test("every tool lists valid example arguments in _meta.examples: paid tools ans
 
 test("free quick check: the verdict only", async () => {
   const client = await mcpClient();
-  const green = JSON.parse((await client.callTool({ name: "presign_quick_check", arguments: APPROVAL })).content[0].text);
+  const greenResult = await client.callTool({ name: "presign_quick_check", arguments: APPROVAL });
+  const green = JSON.parse(greenResult.content[0].text);
+  assert.deepEqual(greenResult.structuredContent, green, "the same answer as structured content");
   assert.equal(green.verdict, "green");
   assert.equal(green.reasons, undefined, "no reasons in the free tool");
   const red = JSON.parse((await client.callTool({ name: "presign_quick_check", arguments: { ...APPROVAL, spender: EOA, amount: (2n ** 256n - 1n).toString() } })).content[0].text);
