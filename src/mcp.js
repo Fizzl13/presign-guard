@@ -81,11 +81,11 @@ const REASONS = z.array(z.object({
 const RECEIPT = z.record(z.string(), z.unknown()).describe("Signed receipt (EIP-191) binding the verdict to your arguments");
 const GRADE = z.string().describe("SAFE, CAUTION, RISKY or AVOID");
 const PAID = {
-  version: z.string().optional(),
-  verdict: VERDICT.optional().describe("green: go ahead; orange: ask the user; red: do not sign or buy (absent on the payment requirement)"),
-  reasons: REASONS.optional(),
-  receipt: RECEIPT.optional(),
-  accepts: z.array(z.record(z.string(), z.unknown())).optional().describe("Only on an unpaid call: the x402 payment options"),
+  version: z.string().nullable().optional(),
+  verdict: VERDICT.nullable().optional().describe("green: go ahead; orange: ask the user; red: do not sign or buy (absent on the payment requirement)"),
+  reasons: REASONS.nullable().optional(),
+  receipt: RECEIPT.nullable().optional(),
+  accepts: z.array(z.record(z.string(), z.unknown())).nullable().optional().describe("Only on an unpaid call: the x402 payment options"),
 };
 const obj = (shape) => z.object(shape).passthrough();
 const OUTPUT = {
@@ -94,15 +94,15 @@ const OUTPUT = {
   presign_check: obj(PAID),
   presign_check_explain: obj({
     ...PAID,
-    explanation: z.object({ lang: z.string(), text: z.string() }).optional().describe("Plain-language explanation for a person"),
+    explanation: z.object({ lang: z.string(), text: z.string() }).nullable().optional().describe("Plain-language explanation for a person"),
   }),
-  token_verdict: obj({ ...PAID, grade: GRADE.optional(), one_liner: z.string().optional().describe("One-line summary") }),
+  token_verdict: obj({ ...PAID, grade: GRADE.nullable().optional(), one_liner: z.string().nullable().optional().describe("One-line summary") }),
   wallet_approvals: obj({
     ...PAID,
-    grade: GRADE.optional(),
-    one_liner: z.string().optional().describe("One-line summary"),
-    approvals: z.array(z.record(z.string(), z.unknown())).optional().describe("Every open ERC-20 allowance with its spender"),
-    revokeUrl: z.string().optional().describe("revoke.cash link for this wallet"),
+    grade: GRADE.nullable().optional(),
+    one_liner: z.string().nullable().optional().describe("One-line summary"),
+    approvals: z.array(z.record(z.string(), z.unknown())).nullable().optional().describe("Every open ERC-20 allowance with its spender"),
+    revokeUrl: z.string().nullable().optional().describe("revoke.cash link for this wallet"),
   }),
 };
 
