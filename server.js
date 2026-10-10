@@ -33,6 +33,7 @@ import { signPageRouter } from "./src/sign-page.js";
 import { creditCosts, creditsRouter, packRoutes, payWithCredits, redisStore, withCreditsHint, CREDIT_HEADER } from "./src/credits.js";
 import { trustProxyHops } from "./src/proxy.js";
 import { jevStatus, jevSelfTest } from "./src/jev.js";
+import { simulationStatus, simulationSelfTest } from "./src/simulate.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -144,8 +145,9 @@ app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus() }));
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus() }));
 jevSelfTest().catch(() => {});
+simulationSelfTest().catch(() => {});
 const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
 app.get("/", (req, res, next) => (res.vary("Accept"), req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
 // For search engines: the homepage is the one page to index.

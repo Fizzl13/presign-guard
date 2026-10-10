@@ -90,3 +90,37 @@ export function simulationEffects(sim, from) {
     approvals_set: sim.changes.filter((c) => c.type === "approve" && c.from === me).map((c) => `${line(c)} for ${c.to}`),
   };
 }
+
+// Shown in GET /health, so the owner can see simulation works without a paid check: at startup one harmless
+// simulation per covered chain (a zero-value self-transfer). Alchemy's own error message ("… is not enabled for
+// this app", "invalid API key") tells what to fix; the key itself is never shown.
+const status = { on: false, selfTest: "not run", at: null };
+export function simulationStatus(env = process.env) {
+  return { on: Boolean(env.ALCHEMY_API_KEY) && env.SIMULATION !== "off", selfTest: status.selfTest, at: status.at };
+}
+export async function simulationSelfTest({ env = process.env, fetch: fetchImpl } = {}) {
+  const key = env.ALCHEMY_API_KEY;
+  if (!key || env.SIMULATION === "off") { status.selfTest = "off (no ALCHEMY_API_KEY)"; return status; }
+  const probe = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+  const results = await Promise.all(Object.entries(NETWORKS).map(async ([chainId, net]) => {
+    try {
+      const res = await (fetchImpl ?? globalThis.fetch)(`https://${net}.g.alchemy.com/v2/${key}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "alchemy_simulateAssetChanges", params: [{ from: probe, to: probe, value: "0x0", data: "0x" }] }),
+        signal: AbortSignal.timeout(8000),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.ok && body?.result && !body.error) return [chainId, "ok"];
+      const msg = String(body?.error?.message ?? `HTTP ${res.status}`).split(key).join("…").slice(0, 120);
+      return [chainId, msg];
+    } catch (err) {
+      return [chainId, err.name];
+    }
+  }));
+  status.at = new Date().toISOString();
+  const bad = results.filter(([, r]) => r !== "ok");
+  status.selfTest = bad.length ? `failed on ${bad.map(([c, r]) => `${c}: ${r}`).join("; ")}${bad.length < results.length ? ` (ok on ${results.filter(([, r]) => r === "ok").map(([c]) => c).join(", ")})` : ""}` : `ok on chains ${results.map(([c]) => c).join(", ")}`;
+  console.log(`[simulate] self-test ${status.selfTest}`);
+  return status;
+}

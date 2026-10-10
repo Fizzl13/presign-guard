@@ -1107,3 +1107,14 @@ test("simulation: the intent check sees the simulated balance changes", async ()
   const asked = JSON.stringify(jevCalls.at(-1) ?? {});
   assert.match(asked, /5000 USDC to 0xbad0000000000000000000000000000000000001/);
 });
+
+test("simulation self-test (GET /health): ok per chain, Alchemy's message when a chain fails, never the key", async () => {
+  const { simulationSelfTest, simulationStatus } = await import("../src/simulate.js");
+  assert.equal((await simulationSelfTest({ env: {} })).selfTest, "off (no ALCHEMY_API_KEY)");
+  const ok = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "k1" }, fetch: async () => Response.json({ jsonrpc: "2.0", id: 1, result: { changes: [] } }) });
+  assert.match(ok.selfTest, /^ok on chains 1, 10, 137, 8453, 42161$/);
+  const part = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async (u) => (u.includes("base-mainnet") ? Response.json({ jsonrpc: "2.0", id: 1, error: { message: "BASE_MAINNET is not enabled for this app (secretkey)" } }, { status: 403 }) : Response.json({ result: { changes: [] } })) });
+  assert.match(part.selfTest, /^failed on 8453: BASE_MAINNET is not enabled for this app \(…\) \(ok on 1, 10, 137, 42161\)$/);
+  assert.ok(!part.selfTest.includes("secretkey"));
+  assert.equal(simulationStatus({ ALCHEMY_API_KEY: "x" }).on, true);
+});
