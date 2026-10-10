@@ -33,6 +33,7 @@ export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
 import { secondOpinion, intentCheck } from "./jev.js";
 import { checkMandatePayment } from "./mandate.js";
+import { parseRequirements, checkX402Payment } from "./x402-requirements.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
@@ -469,7 +470,7 @@ function parseSignature(raw, chainId) {
     if (!verifying) throw new ValidationError(`${primaryType} signatures need domain.verifyingContract`);
     return verifying;
   };
-  const base = { primaryType, target: verifying, grants: [], revoke: false, ...(typeof domain.name === "string" && domain.name && { domainName: domain.name.slice(0, 64) }) };
+  const base = { primaryType, target: verifying, grants: [], revoke: false, ...(typeof domain.name === "string" && domain.name && { domainName: domain.name.slice(0, 64) }), ...(typeof domain.version === "string" && domain.version && { domainVersion: domain.version.slice(0, 16) }) };
 
   // EIP-2612 permit, and DAI-style permit (holder/allowed/expiry)
   if (primaryType === "Permit") {
@@ -610,6 +611,12 @@ export function parseRequest(body) {
       paymentId: m.paymentId,
       payment: { chainId: req.chainId, from: toAddress(msg.from, "message.from"), to: req.grants[0].spender, token: req.grants[0].token, value: req.grants[0].amount, nonce: String(msg.nonce ?? "") },
     };
+  }
+  // Optional: the x402 payment requirements this EIP-3009 payment answers (one entry of the 402's accepts list,
+  // as { accepted: {…} } or the entry itself); x402-requirements.js checks the signature pays exactly that.
+  if (body.x402 !== undefined && body.x402 !== null) {
+    if (req.kind !== "transfer_authorization") throw new ValidationError("x402 applies to EIP-3009 payment signatures (TransferWithAuthorization)");
+    try { req.x402 = parseRequirements(body.x402); } catch (err) { throw new ValidationError(err.message); }
   }
   return req;
 }
@@ -891,6 +898,16 @@ export async function analyze(req) {
   // The agent's stated intent against what signing does: INTENT_MISMATCH is orange, a match an info line.
   const intent = intentAnswer ? await intentAnswer : { reasons: [], sources: [] };
   for (const r of intent.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  // Not what the seller asked (x402 requirements): paying more, someone else, another token or chain is red.
+  if (req.x402) {
+    const g = req.grants[0];
+    const x = checkX402Payment(req.x402, { chainId: req.chainId, to: g.spender, token: g.token, value: g.amount, validBefore: g.expiresAt, domainName: req.domainName, domainVersion: req.domainVersion }, { now });
+    for (const f of x.failures) { const { code, ...d } = f; add(code, "red", g.spender, d); }
+    for (const w of x.warnings) { const { code, ...d } = w; add(code, "orange", g.spender, d); }
+    for (const n of x.notes) { const { code, ...d } = n; add(code, "info", g.spender, d); }
+    if (x.ok) add("X402_REQUIREMENTS_MATCH", "info", g.spender, { amount: g.amount.toString() });
+  }
 
   // Outside the agent's mandate is red: signing would spend beyond what the principal granted.
   let mandate = null;
