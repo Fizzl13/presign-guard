@@ -195,10 +195,21 @@ function mockClaude() {
 }
 
 let jevAnswers = {};
-// Alchemy's alchemy_simulateAssetChanges (src/simulate.js): the next answer, or an HTTP error.
-let alchemyResult = { changes: [], gasUsed: "0x5208", error: null };
-const alchemyCalls = [];
-const alchemyAnswer = () => (alchemyResult === "down" ? new Response("{}", { status: 503 }) : Response.json({ jsonrpc: "2.0", id: 1, result: alchemyResult }));
+// eth_simulateV1 (src/simulate.js), on Alchemy or the public RPC: the next call result, or "down" (HTTP error).
+const SIM_OK = { status: "0x1", logs: [], gasUsed: "0x5208" };
+let simResult = SIM_OK;
+let alchemyDown = false;
+const simCalls = [];
+const simAnswer = (u, body) => {
+  simCalls.push({ url: u, body });
+  if (simResult === "down" || (alchemyDown && u.includes("g.alchemy.com"))) return new Response("{}", { status: 503 });
+  if (simResult.rpcError) return Response.json({ jsonrpc: "2.0", id: 1, error: simResult.rpcError });
+  return Response.json({ jsonrpc: "2.0", id: 1, result: [{ calls: [simResult] }] });
+};
+// symbol() and decimals() of the tokens that moved
+const tokenMetaAnswer = (body) => Response.json(body.map(({ id, params: [{ to, data }] }) => (to.toLowerCase() === TOKEN
+  ? { jsonrpc: "2.0", id, result: data === "0x95d89b41" ? "0x" + (32).toString(16).padStart(64, "0") + (4).toString(16).padStart(64, "0") + Buffer.from("USDC").toString("hex").padEnd(64, "0") : "0x" + (6).toString(16).padStart(64, "0") }
+  : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } })));
 const jevCalls = [];
 let server, base;
 before(async () => {
@@ -211,7 +222,11 @@ before(async () => {
       jevCalls.push(JSON.parse(opts.body));
       return Response.json({ model: "jev-test", answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: "noul", noul: jevAnswers[id] ?? 0.02 }])), usage: {} });
     }
-    if (u.includes("g.alchemy.com")) { alchemyCalls.push({ url: u, body: JSON.parse(opts.body) }); return alchemyAnswer(u, JSON.parse(opts.body)); }
+    if (opts?.body && /g\.alchemy\.com|publicnode\.com/.test(u)) {
+      const body = JSON.parse(opts.body);
+      if (body.method === "eth_simulateV1") return simAnswer(u, body);
+      if (u.includes("g.alchemy.com") || (Array.isArray(body) && body.every((c) => ["0x95d89b41", "0x313ce567"].includes(c.params?.[0]?.data)))) return tokenMetaAnswer(body);
+    }
     if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
     if (u.includes("dapp-scanning.api.cx.metamask.io")) return mockMetamask(u);
     if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) return mockRpc(opts);
@@ -1034,65 +1049,94 @@ test("a mandate on something other than an EIP-3009 payment is refused before pa
   assert.equal(r.status, 400);
 });
 
-// ---------- simulation (src/simulate.js, Alchemy) ----------
+// ---------- simulation (src/simulate.js, eth_simulateV1) ----------
 const SENDER = USER;
 const ROUTER = "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"; // a contract (Uniswap's universal router)
-const withAlchemy = async (result, fn) => {
-  const before = process.env.ALCHEMY_API_KEY;
-  process.env.ALCHEMY_API_KEY = "test-key";
-  alchemyResult = result;
-  alchemyCalls.length = 0;
-  try { return await fn(); } finally { if (before === undefined) delete process.env.ALCHEMY_API_KEY; else process.env.ALCHEMY_API_KEY = before; alchemyResult = { changes: [], gasUsed: "0x5208", error: null }; }
+const T = { transfer: "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", approval: "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925", approvalAll: "0x17307eab39ab6107e8899845ad3d59bd9653c200f220920489ca2b5937696c31" };
+const topic = (a) => "0x" + a.slice(2).toLowerCase().padStart(64, "0");
+const simWord = (n) => "0x" + BigInt(n).toString(16).padStart(64, "0");
+const logs = {
+  erc20: (token, from, to, amount) => ({ address: token, topics: [T.transfer, topic(from), topic(to)], data: simWord(amount) }),
+  native: (from, to, amount) => ({ address: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE", topics: [T.transfer, topic(from), topic(to)], data: simWord(amount) }),
+  nft: (token, from, to, id) => ({ address: token, topics: [T.transfer, topic(from), topic(to), simWord(id)], data: "0x" }),
+  approve: (token, owner, spender, amount) => ({ address: token, topics: [T.approval, topic(owner), topic(spender)], data: simWord(amount) }),
+  approveAll: (token, owner, operator) => ({ address: token, topics: [T.approvalAll, topic(owner), topic(operator)], data: simWord(1) }),
 };
+const withSim = async (result, fn, { key = "test-key" } = {}) => {
+  const before = process.env.ALCHEMY_API_KEY;
+  if (key) process.env.ALCHEMY_API_KEY = key; else delete process.env.ALCHEMY_API_KEY;
+  simResult = result;
+  simCalls.length = 0;
+  try { return await fn(); } finally { if (before === undefined) delete process.env.ALCHEMY_API_KEY; else process.env.ALCHEMY_API_KEY = before; simResult = SIM_OK; alchemyDown = false; }
+};
+const swap = (extra = {}) => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c", ...extra });
 
 test("simulation: a transaction with from is simulated; what leaves and arrives is in the answer and an info line", async () => {
-  const result = { gasUsed: "0x1", error: null, changes: [
-    { assetType: "ERC20", changeType: "TRANSFER", from: SENDER, to: ROUTER, rawAmount: "10000000", amount: "10", symbol: "USDC", decimals: 6, contractAddress: TOKEN },
-    { assetType: "NATIVE", changeType: "TRANSFER", from: ROUTER, to: SENDER, rawAmount: "3000000000000000", amount: "0.003", symbol: "ETH", decimals: 18 },
-  ] };
-  const r = await withAlchemy(result, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c", value: "0" }));
-  assert.equal(alchemyCalls.length, 1);
-  assert.match(alchemyCalls[0].url, /base-mainnet\.g\.alchemy\.com\/v2\/test-key/);
-  assert.deepEqual(alchemyCalls[0].body.params[0], { from: SENDER.toLowerCase(), to: ROUTER.toLowerCase(), data: "0x3593564c", value: "0x0" });
+  const result = { status: "0x1", gasUsed: "0x1", logs: [logs.erc20(TOKEN, SENDER, ROUTER, 10000000), logs.native(ROUTER, SENDER, 3000000000000000n)] };
+  const r = await withSim(result, () => swap({ value: "0" }));
+  assert.equal(simCalls.length, 1);
+  assert.match(simCalls[0].url, /base-mainnet\.g\.alchemy\.com\/v2\/test-key/);
+  assert.equal(simCalls[0].body.method, "eth_simulateV1");
+  assert.deepEqual(simCalls[0].body.params[0].blockStateCalls[0].calls[0], { from: SENDER.toLowerCase(), to: ROUTER.toLowerCase(), data: "0x3593564c", value: "0x0" });
+  assert.equal(simCalls[0].body.params[0].traceTransfers, true);
   assert.equal(r.body.simulation.ok, true);
+  assert.equal(r.body.simulation.source, "alchemy");
   assert.equal(r.body.simulation.changes.length, 2);
   const info = r.body.reasons.find((x) => x.code === "SIMULATED");
   assert.deepEqual(info.details.leaves, [{ to: ROUTER.toLowerCase(), asset: "erc20", symbol: "USDC", amount: "10" }]);
-  assert.equal(info.details.arrives[0].symbol, "ETH");
+  assert.deepEqual(info.details.arrives, [{ from: ROUTER.toLowerCase(), asset: "native", symbol: "ETH", amount: "0.003" }]);
   assert.ok(r.body.sources.includes("alchemy"));
   assert.match(r.body.scope, /simulated/);
 });
 
-test("simulation: an approval the call doesn't show, an NFT leaving, or a failing transaction is orange", async () => {
-  const hidden = await withAlchemy({ error: null, changes: [{ assetType: "ERC20", changeType: "APPROVE", from: SENDER, to: EOA, rawAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", symbol: "USDC", contractAddress: TOKEN }] },
-    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
-  assert.equal(hidden.body.verdict, "orange");
-  assert.equal(hidden.body.reasons.find((x) => x.code === "HIDDEN_APPROVAL").subject, EOA);
-  const nft = await withAlchemy({ error: null, changes: [{ assetType: "ERC721", changeType: "TRANSFER", from: SENDER, to: EOA, tokenId: "7", contractAddress: ROUTER }] },
-    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
-  assert.ok(nft.body.reasons.some((x) => x.code === "SIMULATION_NFT_OUT" && x.details.tokenId === "7"));
-  const fails = await withAlchemy({ error: { message: "execution reverted" }, changes: [] },
-    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
-  assert.equal(fails.body.verdict, "orange");
-  assert.equal(fails.body.reasons.find((x) => x.code === "SIMULATION_FAILS").details.error, "execution reverted");
-  assert.equal(fails.body.simulation.ok, false);
+test("simulation: without an Alchemy key, or when Alchemy fails, the chain's public RPC simulates", async () => {
+  const result = { status: "0x1", logs: [logs.erc20(TOKEN, SENDER, EOA, 5000000)] };
+  const noKey = await withSim(result, () => swap(), { key: null });
+  assert.equal(simCalls.length, 1);
+  assert.match(simCalls[0].url, /base-rpc\.publicnode\.com/);
+  assert.equal(noKey.body.simulation.source, "rpc");
+  assert.equal(noKey.body.simulation.changes[0].amount, "5");
+  assert.ok(!noKey.body.sources.includes("alchemy"));
+  alchemyDown = true;
+  const fallback = await withSim(result, () => swap());
+  assert.deepEqual(simCalls.map((c) => new URL(c.url).hostname), ["base-mainnet.g.alchemy.com", "base-rpc.publicnode.com"]);
+  assert.equal(fallback.body.simulation.source, "rpc");
 });
 
-test("simulation: a plain approve call is not a hidden approval; no from, no key, other chains or Alchemy down: no simulation", async () => {
-  const approve = await withAlchemy({ error: null, changes: [{ assetType: "ERC20", changeType: "APPROVE", from: SENDER, to: ROUTER, rawAmount: "1000000", contractAddress: TOKEN }] },
+test("simulation: an approval the call doesn't show, an NFT leaving, or a failing transaction is orange", async () => {
+  const hidden = await withSim({ status: "0x1", logs: [logs.approve(TOKEN, SENDER, EOA, 2n ** 256n - 1n)] }, () => swap());
+  assert.equal(hidden.body.verdict, "orange");
+  assert.equal(hidden.body.reasons.find((x) => x.code === "HIDDEN_APPROVAL").subject, EOA);
+  const all = await withSim({ status: "0x1", logs: [logs.approveAll(ROUTER, SENDER, EOA)] }, () => swap());
+  assert.equal(all.body.reasons.find((x) => x.code === "HIDDEN_APPROVAL").details.asset, "nft_all");
+  const nft = await withSim({ status: "0x1", logs: [logs.nft(ROUTER, SENDER, EOA, 7)] }, () => swap());
+  assert.ok(nft.body.reasons.some((x) => x.code === "SIMULATION_NFT_OUT" && x.details.tokenId === "7"));
+  const fails = await withSim({ status: "0x0", logs: [], error: { code: 3, message: "execution reverted: ERC20: transfer amount exceeds balance" } }, () => swap());
+  assert.equal(fails.body.verdict, "orange");
+  assert.equal(fails.body.reasons.find((x) => x.code === "SIMULATION_FAILS").details.error, "execution reverted: ERC20: transfer amount exceeds balance");
+  assert.equal(fails.body.simulation.ok, false);
+  const broke = await withSim({ rpcError: { code: -38014, message: "insufficient funds for gas * price + value: have 0 want 1000000000000000000" } }, () => swap({ value: "1000000000000000000" }));
+  assert.equal(broke.body.verdict, "orange");
+  assert.match(broke.body.reasons.find((x) => x.code === "SIMULATION_FAILS").details.error, /^insufficient funds/);
+});
+
+test("simulation: a plain approve call is not a hidden approval; no from, SIMULATION=off or every RPC down: no simulation", async () => {
+  const approve = await withSim({ status: "0x1", logs: [logs.approve(TOKEN, SENDER, ROUTER, 1000000)] },
     () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: approveData(ROUTER, 1000000) }));
   assert.ok(!approve.body.reasons.some((x) => x.code === "HIDDEN_APPROVAL"));
-  const noFrom = await withAlchemy({ error: null, changes: [] }, () => check({ type: "transaction", chainId: 8453, to: ROUTER, data: "0x3593564c" }));
+  const noFrom = await withSim(SIM_OK, () => check({ type: "transaction", chainId: 8453, to: ROUTER, data: "0x3593564c" }));
   assert.equal(noFrom.body.simulation, undefined);
-  assert.equal(alchemyCalls.length, 0);
-  const bsc = await withAlchemy({ error: null, changes: [] }, () => check({ type: "transaction", chainId: 56, from: SENDER, to: ROUTER, data: "0x3593564c" }));
-  assert.equal(bsc.body.simulation, undefined);
-  const down = await withAlchemy("down", () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
+  assert.equal(simCalls.length, 0);
+  const down = await withSim("down", () => swap());
   assert.equal(down.body.simulation, undefined);
   assert.ok(!down.body.reasons.some((x) => x.code.startsWith("SIMULAT")));
-  const noKey = await check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" });
-  assert.equal(noKey.body.simulation, undefined);
-  assert.match(noKey.body.scope, /transaction simulation/);
+  process.env.SIMULATION = "off";
+  try {
+    const off = await withSim(SIM_OK, () => swap());
+    assert.equal(off.body.simulation, undefined);
+    assert.equal(simCalls.length, 0);
+    assert.match(off.body.scope, /transaction simulation/);
+  } finally { delete process.env.SIMULATION; }
   assert.equal((await check({ type: "transaction", chainId: 8453, from: "nope", to: ROUTER, data: "0x" })).status, 400);
 });
 
@@ -1101,20 +1145,24 @@ test("simulation: the intent check sees the simulated balance changes", async ()
   const before = process.env.TYPESAFE_API_KEY;
   process.env.TYPESAFE_API_KEY = "test";
   try {
-    await withAlchemy({ error: null, changes: [{ assetType: "ERC20", changeType: "TRANSFER", from: SENDER, to: EOA, rawAmount: "5000000000", amount: "5000", symbol: "USDC", contractAddress: TOKEN }] },
-      () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c", intent: "swap 10 USDC for ETH" }));
+    await withSim({ status: "0x1", logs: [logs.erc20(TOKEN, SENDER, EOA, 5000000000)] }, () => swap({ intent: "swap 10 USDC for ETH" }));
   } finally { if (before === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = before; }
   const asked = JSON.stringify(jevCalls.at(-1) ?? {});
   assert.match(asked, /5000 USDC to 0xbad0000000000000000000000000000000000001/);
 });
 
-test("simulation self-test (GET /health): ok per chain, Alchemy's message when a chain fails, never the key", async () => {
+test("simulation self-test (GET /health): which source answered per chain, the reason when one fails, never the key", async () => {
   const { simulationSelfTest, simulationStatus } = await import("../src/simulate.js");
-  assert.equal((await simulationSelfTest({ env: {} })).selfTest, "off (no ALCHEMY_API_KEY)");
-  const ok = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "k1" }, fetch: async () => Response.json({ jsonrpc: "2.0", id: 1, result: { changes: [] } }) });
-  assert.match(ok.selfTest, /^ok on chains 1, 10, 137, 8453, 42161$/);
-  const part = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async (u) => (u.includes("base-mainnet") ? Response.json({ jsonrpc: "2.0", id: 1, error: { message: "BASE_MAINNET is not enabled for this app (secretkey)" } }, { status: 403 }) : Response.json({ result: { changes: [] } })) });
-  assert.match(part.selfTest, /^failed on 8453: BASE_MAINNET is not enabled for this app \(…\) \(ok on 1, 10, 137, 42161\)$/);
-  assert.ok(!part.selfTest.includes("secretkey"));
-  assert.equal(simulationStatus({ ALCHEMY_API_KEY: "x" }).on, true);
+  assert.equal((await simulationSelfTest({ env: { SIMULATION: "off" } })).selfTest, "off (SIMULATION=off)");
+  const ok = async () => Response.json({ jsonrpc: "2.0", id: 1, result: [{ calls: [SIM_OK] }] });
+  assert.equal((await simulationSelfTest({ env: {}, fetch: ok })).selfTest, "ok (public rpc: 1, 10, 56, 137, 8453, 42161)");
+  const part = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async (u) => {
+    if (u.includes("base-mainnet")) return Response.json({ jsonrpc: "2.0", id: 1, error: { message: "BASE_MAINNET is not enabled for this app (secretkey)" } });
+    if (u.includes("base-rpc")) return new Response("down", { status: 502 });
+    return u.includes("opt-mainnet") ? new Response("no", { status: 403 }) : ok();
+  } });
+  assert.equal(part.selfTest, "failed on 8453 (rpc chain 8453: Error: HTTP 502) (ok on alchemy: 1, 56, 137, 42161; public rpc: 10)");
+  assert.ok(!JSON.stringify(part).includes("secretkey"));
+  assert.equal(simulationStatus({}).on, true);
+  assert.equal(simulationStatus({ SIMULATION: "off" }).on, false);
 });

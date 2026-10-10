@@ -668,7 +668,7 @@ export async function analyze(req) {
     reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
   };
 
-  // What the transaction really does to the sender's wallet (only with `from`; Alchemy, src/simulate.js), asked
+  // What the transaction really does to the sender's wallet (only with `from`; eth_simulateV1, src/simulate.js), asked
   // first so the intent check below can compare the stated intent with the simulated balance changes.
   const simulation = req.from ? createSimulator().simulate({ chainId: req.chainId, from: req.from, to: req.target, data: req.data, value: req.value }) : Promise.resolve(null);
 
@@ -968,7 +968,7 @@ export async function analyze(req) {
     scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}). Not covered: eth_sign/personal_sign messages.` : "Not covered: eth_sign/personal_sign messages and transaction simulation."}`,
     ...(mandate && { mandate }),
     ...(sim && { simulation: sim }),
-    sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
+    sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
     checkedAt: new Date().toISOString(),
   };
 }
