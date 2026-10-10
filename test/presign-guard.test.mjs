@@ -953,6 +953,45 @@ test("intent check: signing that does more than the agent says is orange INTENT_
   } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
 });
 
+// x402 requirements (src/x402-requirements.js): the signature against the 402 entry the agent is paying.
+const accepted = (over = {}) => ({ accepted: { scheme: "exact", network: "eip155:8453", amount: "20000", asset: TOKEN, payTo: EOA, maxTimeoutSeconds: 300, extra: { name: "USD Coin", version: "2" }, ...over } });
+
+test("x402 payment that matches what the seller asked: green with X402_REQUIREMENTS_MATCH", async () => {
+  const r = await check({ ...payment(EOA, "20000"), x402: accepted() });
+  assert.equal(r.body.verdict, "green");
+  assert.ok(codes(r).includes("X402_REQUIREMENTS_MATCH"));
+});
+
+test("x402 payment for more, to someone else, in another token or on another chain than asked is red", async () => {
+  const more = await check({ ...payment(EOA, "2000000"), x402: accepted() });
+  assert.equal(more.body.verdict, "red");
+  const r = more.body.reasons.find((x) => x.code === "X402_AMOUNT_ABOVE_REQUIRED");
+  assert.equal(r.severity, "red");
+  assert.equal(r.details.required, "20000");
+  assert.equal(r.details.signing, "2000000");
+  assert.ok(codes(await check({ ...payment(EOA, "20000"), x402: accepted({ payTo: "0x2222222222222222222222222222222222222222" }) })).includes("X402_RECIPIENT_MISMATCH"));
+  assert.ok(codes(await check({ ...payment(EOA, "20000"), x402: accepted({ asset: "0x3333333333333333333333333333333333333333" }) })).includes("X402_ASSET_MISMATCH"));
+  assert.ok(codes(await check({ ...payment(EOA, "20000"), x402: { accepted: { ...accepted().accepted, network: "eip155:1" } } })).includes("X402_NETWORK_MISMATCH"));
+  assert.ok(!codes(await check({ ...payment(EOA, "20000"), x402: { ...accepted().accepted, network: "base", maxAmountRequired: "20000", amount: undefined } })).includes("X402_NETWORK_MISMATCH"), "v1 network names and maxAmountRequired, without the accepted wrapper");
+});
+
+test("x402: a signature valid far beyond the seller's timeout, or another EIP-712 domain, is orange", async () => {
+  const long = await check({ ...payment(EOA, "20000", String(Math.floor(Date.now() / 1000) + 7 * 86400)), x402: accepted() });
+  assert.equal(long.body.verdict, "orange");
+  assert.ok(codes(long).includes("X402_VALIDITY_TOO_LONG"));
+  const dom = await check({ ...payment(EOA, "20000"), x402: accepted({ extra: { name: "USDC", version: "2" } }) });
+  assert.ok(codes(dom).includes("X402_DOMAIN_MISMATCH"));
+  const less = await check({ ...payment(EOA, "10000"), x402: accepted() });
+  assert.equal(less.body.verdict, "green");
+  assert.ok(codes(less).includes("X402_AMOUNT_BELOW_REQUIRED"));
+});
+
+test("x402 field: only on EIP-3009 payments, and malformed values are a 400", async () => {
+  assert.equal((await check({ type: "approval", chainId: 8453, token: TOKEN, spender: EOA, amount: "1", x402: accepted() })).status, 400);
+  assert.equal((await check({ ...payment(EOA, "20000"), x402: accepted({ amount: "1.5" }) })).status, 400);
+  assert.equal((await check({ ...payment(EOA, "20000"), x402: accepted({ payTo: "nope" }) })).status, 400);
+});
+
 // Mandate check (x402 `authority` extension draft, src/mandate.js): the payment against the grant.
 const edKeys = generateKeyPairSync("ed25519");
 const mandateFor = (over = {}) => {
