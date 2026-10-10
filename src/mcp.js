@@ -50,6 +50,7 @@ const CHECK_INPUT = {
   value: z.string().optional().describe("transaction: native value in wei"),
   typedData: z.union([z.record(z.any()), z.string()]).optional().describe("signature: the exact eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)"),
   origin: z.string().optional().describe("optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange"),
+  intent: z.string().max(500).optional().describe("optional: what you are trying to do, in one sentence (e.g. \"swap 10 USDC for ETH on Uniswap\"); orange INTENT_MISMATCH when signing would do more or something else"),
 };
 const EXPLAIN_INPUT = { ...CHECK_INPUT, lang: z.enum(["en", "nl"]).optional().describe("Language of the explanation (default en)") };
 
