@@ -1166,3 +1166,44 @@ test("simulation self-test (GET /health): which source answered per chain, the r
   assert.equal(simulationStatus({}).on, true);
   assert.equal(simulationStatus({ SIMULATION: "off" }).on, false);
 });
+
+// ---------- plain messages (personal_sign, eth_sign) ----------
+const siwe = (domain, address = SENDER, extra = "") => `${domain} wants you to sign in with your Ethereum account:\n${address}\n\nSign in to the app.\n\nURI: https://${domain}/login\nVersion: 1\nChain ID: 8453\nNonce: 32891756\nIssued At: 2026-10-11T00:00:00Z${extra}`;
+const hexOf = (text) => "0x" + Buffer.from(text, "utf8").toString("hex");
+
+test("message: eth_sign is red, an unreadable personal_sign is orange, readable text is green", async () => {
+  const blind = await check({ type: "message", method: "eth_sign", message: "0x" + "ab".repeat(32) });
+  assert.equal(blind.status, 200);
+  assert.equal(blind.body.verdict, "red");
+  assert.deepEqual(codes(blind), ["ETH_SIGN"]);
+  const hash = await check({ type: "message", message: "0x" + "cd".repeat(32) });
+  assert.equal(hash.body.verdict, "orange");
+  assert.equal(hash.body.reasons.find((x) => x.code === "UNREADABLE_MESSAGE").details.looksLike, "a 32-byte hash");
+  const hello = await check({ type: "message", method: "personal_sign", message: hexOf("Hello from the agent") });
+  assert.equal(hello.body.verdict, "green");
+  assert.deepEqual(codes(hello), ["PLAIN_MESSAGE"]);
+  assert.equal(hello.body.subject.preview, "Hello from the agent");
+  assert.equal(hello.body.subject.kind, "message");
+});
+
+test("message: a sign-in message for another site than the one asking is red; for the same site it is green", async () => {
+  const relay = await check({ type: "message", message: siwe("app.uniswap.org"), origin: "https://uniswap-claim.example.org" });
+  assert.equal(relay.body.verdict, "red");
+  assert.equal(relay.body.reasons.find((x) => x.code === "SIGN_IN_DOMAIN_MISMATCH").details.origin, "uniswap-claim.example.org");
+  const same = await check({ type: "message", message: siwe("uniswap.org"), origin: "https://www.uniswap.org/" });
+  assert.ok(!codes(same).includes("SIGN_IN_DOMAIN_MISMATCH"));
+  assert.ok(codes(same).includes("SIGN_IN_REQUEST"));
+  assert.equal(same.body.subject.signIn.domain, "uniswap.org");
+  const other = await check({ type: "message", message: siwe("uniswap.org", EOA), from: SENDER, chainId: 1 });
+  assert.equal(other.body.verdict, "orange");
+  assert.ok(codes(other).includes("SIGN_IN_ADDRESS_MISMATCH"));
+  assert.ok(codes(other).includes("SIGN_IN_CHAIN_MISMATCH"));
+});
+
+test("message: bad input is refused before anything else", async () => {
+  assert.equal((await check({ type: "message", method: "eth_signTypedData", message: "hi" })).status, 400);
+  assert.equal((await check({ type: "message" })).status, 400);
+  assert.equal((await check({ type: "message", message: "x".repeat(16385) })).status, 400);
+  assert.equal((await check({ type: "message", message: "hi", from: "nope" })).status, 400);
+  assert.equal((await check({ type: "message", message: "hi", x402: { amount: "1" } })).status, 400);
+});

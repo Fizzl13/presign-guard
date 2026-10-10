@@ -165,6 +165,15 @@ Every approval with an orange or red code has `revoke: true`. The grades are the
 
 Supported chains: 1, 10, 56, 137, 8453, 42161.
 
+### Plain messages (personal_sign, eth_sign)
+
+```jsonc
+// The text or 0x-hex about to be signed; method defaults to personal_sign, chainId and from are optional
+{ "type": "message", "method": "personal_sign", "message": "app.example wants you to sign in with your Ethereum account:\n0x…", "origin": "https://app.example", "from": "0x…" }
+```
+
+A message moves no tokens by itself, but two kinds are traps. Red: `ETH_SIGN` (`eth_sign` signs a raw 32-byte hash, so nobody can see what is agreed to; it can be a transaction or permit in disguise), `SIGN_IN_DOMAIN_MISMATCH` (a Sign-In with Ethereum message, EIP-4361, for another site than the `origin` asking: a phishing site relaying a real site's login). Orange: `UNREADABLE_MESSAGE` (the bytes aren't readable text; `details.looksLike: "a 32-byte hash"` when it is exactly 32 bytes), `SIGN_IN_URI_MISMATCH` (the message's URI is on another site than its domain), `SIGN_IN_ADDRESS_MISMATCH` (it signs in another account than `from`), `SIGN_IN_CHAIN_MISMATCH` (its Chain ID differs from `chainId`). Info: `SIGN_IN_REQUEST` (the site, account, URI and expiry of a sign-in message), `PLAIN_MESSAGE`. The `origin` gets the same phishing-list and domain-age checks as any request, and `intent` works too. The answer's `subject` carries `kind: "message"`, the method and the first 200 characters of the text (`preview`).
+
 ### XRP Ledger transactions
 
 ```jsonc
@@ -270,7 +279,7 @@ The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it h
 
 ### Not covered
 
-`eth_sign` and `personal_sign` messages, and the simulation of signatures (only transactions are simulated). Treat a green verdict as "no known risk signals", not as a guarantee.
+The simulation of signatures (only transactions are simulated), and what a site does with a signed plain message. Treat a green verdict as "no known risk signals", not as a guarantee.
 
 ## Feedback
 
