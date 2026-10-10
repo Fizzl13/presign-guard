@@ -6,8 +6,9 @@
     { "id": "unlimited", "scene": "unlimited", "text": "An unlimited token approval? Orange: ask a person before you sign." },
     { "id": "permit", "scene": "permit", "text": "A permit that hands a plain wallet your tokens? Red. That is how most wallet drainers work." },
     { "id": "payment", "scene": "payment", "text": "And a normal x402 payment? Green. It moves one fixed amount, once." },
-    { "id": "agents", "scene": "agents", "text": "Agents pay one cent per check with x402, in USDC on Base, and get the verdict in the same request." },
+    { "id": "agents", "scene": "agents", "text": "Agents pay one cent per check, with x402 or MPP: USDC on Base, Solana or Algorand, RLUSD on the XRP Ledger, or a Tempo session. The verdict comes back in the same request." },
+    { "id": "intent", "scene": "card", "card": { "title": "Does it do what it says?", "sub": "Tell presign-guard what the agent means to do" }, "text": "New: your agent can also say what it means to do, like swap ten USDC for ETH. If the transaction does something else, presign-guard flags it." },
     { "id": "safe", "scene": "safe", "text": "Errors are never charged. And if a data source is down, there is no verdict, never a guessed green." },
-    { "id": "end", "scene": "card", "card": { "title": "presign-guard", "sub": "Check it before you sign it.", "note": "presign-guard.fizzl.eu · in the CDP Bazaar" }, "text": "presign-guard. Check it before you sign it." }
+    { "id": "end", "scene": "card", "card": { "title": "presign-guard", "sub": "Check it before you sign it.", "note": "presign-guard.fizzl.eu · Base, Solana, XRP Ledger, Algorand" }, "text": "presign-guard. Check it before you sign it." }
   ]
 }
