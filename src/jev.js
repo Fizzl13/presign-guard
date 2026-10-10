@@ -251,3 +251,34 @@ export async function jevSelfTest(opts = {}) {
   console.log(`[jev] self-test ${status.selfTest}`);
   return status;
 }
+
+// Does signing do what the agent says it is for? An agent passes `intent` ("swap 10 USDC for ETH on Uniswap",
+// "pay $0.01 for a price API") with the request; Jev compares it with what signing actually does (`effects`,
+// decoded by the check: the kind of action, who gets an allowance or tokens, how much, unlimited or not). A
+// prompt-injected agent that is about to sign something else than its user asked for gets INTENT_MISMATCH
+// (orange: ask the user). Same thresholds as the second opinion: sure is orange, in between Claude decides; a
+// clear match is an info line. Never green-washes a verdict and never makes one red.
+export const INTENT_QUESTION = {
+  type: "noul",
+  instructions: "An AI agent is about to sign something and says it does so to do what `intent` describes. `effects` is what signing actually does, decoded from the transaction or signature. Does signing do something the intent does not ask for, or something else than it says? For example: an allowance or permission for an address or contract the intent does not name or imply, approving another token or far more than the intent needs (unlimited for a one-time payment), sending tokens or native coin that the intent does not mention, or a different kind of action (a token approval, a Permit or a marketplace listing when the intent is a payment or a swap). An exact payment, swap or approval that the intent describes, or revoking an approval, matches.",
+  criteria: { true: "Signing does more than, or something else than, what the intent says", false: "Signing does what the intent says and nothing more" },
+};
+
+export async function intentCheck({ intent, effects }, opts = {}) {
+  const env = opts.env ?? process.env;
+  const text = typeof intent === "string" ? intent.trim().slice(0, 500) : "";
+  if (!text || !effects || !jevEnabled(env)) return { reasons: [], sources: [] };
+  const q = { state: { intent: text, effects }, questions: { intent_mismatch: INTENT_QUESTION } };
+  const probs = await askJev(q, opts);
+  const p = probs?.intent_mismatch;
+  if (typeof p !== "number") return { reasons: [], sources: [] };
+  const sure = num(env.JEV_SURE, 0.85), unsure = num(env.JEV_UNSURE, 0.5);
+  const claude = p >= unsure && p < sure ? await askClaude(q, ["intent_mismatch"], opts) : {};
+  const details = { intent: text, probability: Math.round(p * 100) / 100 };
+  const subject = effects.target ?? null;
+  const reasons = p >= sure ? [{ code: "INTENT_MISMATCH", severity: "orange", subject, details: { ...details, decidedBy: "jev" } }]
+    : claude.intent_mismatch === true ? [{ code: "INTENT_MISMATCH", severity: "orange", subject, details: { ...details, decidedBy: "jev+claude" } }]
+    : p < unsure || claude.intent_mismatch === false ? [{ code: "INTENT_MATCHES", severity: "info", subject, details: { ...details, decidedBy: claude.intent_mismatch === false ? "jev+claude" : "jev" } }]
+    : [];
+  return { reasons, sources: ["typesafe-jev", ...(Object.keys(claude).length ? ["claude"] : [])] };
+}

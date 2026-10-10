@@ -31,7 +31,7 @@ import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, 
 export const NEW_WALLET_DAYS = 7;
 export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
-import { secondOpinion } from "./jev.js";
+import { secondOpinion, intentCheck } from "./jev.js";
 import { checkMandatePayment } from "./mandate.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
@@ -592,6 +592,12 @@ export function parseRequest(body) {
     if (host === undefined) throw new ValidationError("origin must be a URL or hostname");
     if (host) req.origin = host;
   }
+  // Optional: what the agent says this is for, in its own words ("swap 10 USDC for ETH on Uniswap"); Jev checks
+  // that signing does that and nothing more (src/jev.js intentCheck).
+  if (body.intent !== undefined && body.intent !== null && body.intent !== "") {
+    if (typeof body.intent !== "string" || body.intent.length > 500) throw new ValidationError("intent must be a short text (up to 500 characters) saying what the agent wants to do");
+    req.intent = body.intent.trim();
+  }
   // Optional: the spending mandate (x402 `authority` extension, mandate.js) this EIP-3009 payment
   // claims to be made under: { mandate, alg, sig, paymentId }.
   if (body.mandate !== undefined && body.mandate !== null) {
@@ -726,6 +732,8 @@ export async function analyze(req) {
     // Skipped when the code already flags it (a Permit2 signature at another contract is NONCANONICAL_PERMIT2).
     domain: req.domainName && req.target && !(req.kind?.startsWith("permit2") && req.target !== PERMIT2) ? { name: req.domainName, verifyingContract: req.target } : null,
   }).catch(() => ({ reasons: [], sources: [] }));
+  // Does signing do what the agent says it is for (only when it passed intent)?
+  const intentAnswer = req.intent ? intentCheck({ intent: req.intent, effects: effectsOf(req, tokenMeta) }).catch(() => ({ reasons: [], sources: [] })) : null;
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
@@ -880,6 +888,10 @@ export async function analyze(req) {
     add(r.code, r.severity, r.subject, r.details);
   }
 
+  // The agent's stated intent against what signing does: INTENT_MISMATCH is orange, a match an info line.
+  const intent = intentAnswer ? await intentAnswer : { reasons: [], sources: [] };
+  for (const r of intent.reasons) add(r.code, r.severity, r.subject, r.details);
+
   // Outside the agent's mandate is red: signing would spend beyond what the principal granted.
   let mandate = null;
   if (req.mandate) {
@@ -924,8 +936,35 @@ export async function analyze(req) {
     },
     scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). Not covered: eth_sign/personal_sign messages and transaction simulation.",
     ...(mandate && { mandate }),
-    sources: ["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...ai.sources],
+    sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...ai.sources, ...intent.sources])],
     checkedAt: new Date().toISOString(),
+  };
+}
+
+// What signing does, in words Jev can compare with the agent's intent: the kind of action, the token symbols
+// where known, who gets an allowance, a payment or a transfer, how much and whether it is unlimited.
+const KIND_TEXT = {
+  native_transfer: "send native coin", contract_call: "call a contract (calldata not decoded)", token_approve: "approve a token allowance",
+  approval_for_all: "approve an operator for ALL NFTs of a collection", permit: "sign a Permit (an allowance without a transaction)",
+  permit2_allowance: "sign a Permit2 allowance", permit2_transfer: "sign a Permit2 transfer", transfer_authorization: "sign a token payment (EIP-3009, as in x402)",
+  marketplace_order: "sign a marketplace listing (Seaport order)", unknown_signature: "sign an unrecognized message",
+};
+export function effectsOf(req, tokenMeta = new Map()) {
+  const sym = (t) => tokenMeta.get(t)?.symbol || null;
+  const what = { allowance: "may spend", payment: "is paid", transfer: "receives" };
+  return {
+    action: KIND_TEXT[req.kind] || req.kind,
+    target: req.target ?? null,
+    ...(sym(req.target) && { target_token: sym(req.target) }),
+    ...(req.value > 0n && { native_value_wei: req.value.toString() }),
+    grants: req.grants.map((g) => ({
+      to: g.spender,
+      [g.allForAll ? "gets" : what[g.mode] ?? "gets"]: g.allForAll ? "permission over every NFT of the collection" : `${g.unlimited ? "UNLIMITED" : g.amount === null ? "?" : g.amount.toString()} ${sym(g.token) ?? g.token}${g.unlimited ? "" : " (base units)"}`,
+    })),
+    ...(req.revoke && { revokes_approval_of: req.revokedSpender ?? "?" }),
+    ...(req.order && { listing: { items_offered: req.order.offerCount, pays_the_signer: req.order.paysOfferer } }),
+    ...(req.primaryType && { signature_type: req.primaryType }),
+    ...(req.origin && { requested_by_site: req.origin }),
   };
 }
 

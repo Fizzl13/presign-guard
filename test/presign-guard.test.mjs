@@ -195,6 +195,7 @@ function mockClaude() {
 }
 
 let jevAnswers = {};
+const jevCalls = [];
 let server, base;
 before(async () => {
   globalThis.fetch = async (url, opts) => {
@@ -203,6 +204,7 @@ before(async () => {
     if (u.includes("api.anthropic.com")) return mockClaude();
     if (u.includes("api.typesafe.ai")) {
       const q = JSON.parse(opts.body).questions;
+      jevCalls.push(JSON.parse(opts.body));
       return Response.json({ model: "jev-test", answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: "noul", noul: jevAnswers[id] ?? 0.02 }])), usage: {} });
     }
     if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
@@ -919,6 +921,35 @@ test("Jev second opinion: a signature whose contract calls itself Uniswap is ora
     assert.equal(fake.body.verdict, "orange");
     const real = await check(sig("Permit", { owner: USER, spender: GOOD, value: "1000000", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN, name: "USD Coin" }));
     assert.ok(!codes(real).includes("AI_SIGNATURE_IMPERSONATION"));
+  } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
+});
+
+test("intent check: signing that does more than the agent says is orange INTENT_MISMATCH; a match is info; off without a key", async () => {
+  try {
+    const plain = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", intent: "pay 1 USDC for a price API" });
+    assert.ok(!codes(plain).some((c) => c.startsWith("INTENT_")), "no key: not asked");
+    process.env.TYPESAFE_API_KEY = "ts-test";
+    jevAnswers = { intent_mismatch: 0.93 };
+    jevCalls.length = 0;
+    const bad = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: MAX256, intent: "pay 1 USDC for a price API" });
+    const hit = bad.body.reasons.find((x) => x.code === "INTENT_MISMATCH");
+    assert.equal(hit.severity, "orange");
+    assert.equal(hit.details.intent, "pay 1 USDC for a price API");
+    assert.equal(hit.details.decidedBy, "jev");
+    assert.notEqual(bad.body.verdict, "green");
+    const asked = jevCalls.find((c) => c.questions.intent_mismatch);
+    assert.equal(asked.state.intent, "pay 1 USDC for a price API");
+    assert.match(asked.state.effects.action, /allowance/);
+    assert.match(asked.state.effects.grants[0]["may spend"], /^UNLIMITED/);
+    jevAnswers = { intent_mismatch: 0.05 };
+    const ok = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000", intent: "approve 1 USDC for the swap" });
+    assert.equal(ok.body.reasons.find((x) => x.code === "INTENT_MATCHES").severity, "info");
+    assert.ok(!codes(ok).includes("INTENT_MISMATCH"));
+    // Too long an intent is a 400; no intent, no question.
+    assert.equal((await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1", intent: "x".repeat(501) })).status, 400);
+    jevCalls.length = 0;
+    await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000" });
+    assert.ok(!jevCalls.some((c) => c.questions.intent_mismatch));
   } finally { delete process.env.TYPESAFE_API_KEY; jevAnswers = {}; }
 });
 

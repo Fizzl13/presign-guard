@@ -111,3 +111,20 @@ test("code rules: a dapp domain with a hyphen or another TLD, a signature named 
   assert.deepEqual(both.reasons.map((x) => [x.code, x.details.decidedBy]), [["AI_LOOKALIKE_SITE", "rule"], ["AI_LURE_SITE", "jev"]]);
   assert.deepEqual(both.sources, ["rules", "typesafe-jev"]);
 });
+
+test("intentCheck: sure mismatch is orange, in between Claude decides, a clear match is info; nothing without intent or key", async () => {
+  const { intentCheck } = await import("../src/jev.js");
+  const effects = { action: "approve a token allowance", target: USDC_BASE, grants: [{ to: FAKE, "may spend": "UNLIMITED USDC" }] };
+  assert.deepEqual(await intentCheck({ intent: "", effects }, { env, fetch: stub().fetch }), { reasons: [], sources: [] });
+  assert.deepEqual(await intentCheck({ intent: "pay", effects }, { env: {}, fetch: stub().fetch }), { reasons: [], sources: [] });
+  const sure = await intentCheck({ intent: "pay $0.01 for a price API", effects }, { env, fetch: stub({ jev: { intent_mismatch: 0.91 } }).fetch });
+  assert.deepEqual(sure.reasons.map((r) => [r.code, r.severity, r.details.decidedBy]), [["INTENT_MISMATCH", "orange", "jev"]]);
+  const s = stub({ jev: { intent_mismatch: 0.7 }, claude: { intent_mismatch: true } });
+  const between = await intentCheck({ intent: "pay $0.01", effects }, { env, fetch: s.fetch });
+  assert.deepEqual(between.reasons.map((r) => [r.code, r.details.decidedBy]), [["INTENT_MISMATCH", "jev+claude"]]);
+  assert.ok(between.sources.includes("claude"));
+  const ok = await intentCheck({ intent: "approve unlimited USDC for this spender", effects }, { env, fetch: stub({ jev: { intent_mismatch: 0.1 } }).fetch });
+  assert.deepEqual(ok.reasons.map((r) => [r.code, r.severity]), [["INTENT_MATCHES", "info"]]);
+  const failing = await intentCheck({ intent: "pay", effects }, { env, fetch: stub({ jevStatus: 529 }).fetch });
+  assert.deepEqual(failing.reasons, []);
+});
