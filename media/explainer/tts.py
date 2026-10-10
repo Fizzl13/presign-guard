@@ -23,6 +23,10 @@ PRONUNCIATION = [
     (r"\bx402\b", "ex four oh two"),
     (r"\b402\b", "four oh two"),
     (r"\bUSDC\b", "U S D C"),
+    (r"\bRLUSD\b", "R L U S D"),
+    (r"\bXRP\b", "X R P"),
+    (r"\bMPP\b", "M P P"),
+    (r"\bETH\b", "E T H"),
     (r"\bpresign-guard\b", "pre-sign guard"),
 ]
 
