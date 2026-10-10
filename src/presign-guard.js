@@ -36,6 +36,7 @@ import { checkMandatePayment } from "./mandate.js";
 import { parseRequirements, checkX402Payment } from "./x402-requirements.js";
 import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS } from "./simulate.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
+import { decodeMessage, parseSignIn, siteOf } from "./message.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 
@@ -622,8 +623,28 @@ export function parseRequest(body) {
   return req;
 }
 
+// A plain message signature: { type: "message", method: "personal_sign" | "eth_sign", message, chainId?, from? }.
+function parseMessage(body) {
+  const method = body.method ?? "personal_sign";
+  if (method !== "personal_sign" && method !== "eth_sign") throw new ValidationError('method must be "personal_sign" or "eth_sign"');
+  let decoded;
+  try { decoded = decodeMessage(body.message); } catch (err) { throw new ValidationError(err.message); }
+  let chainId;
+  if (body.chainId !== undefined && body.chainId !== null) {
+    chainId = Number(body.chainId);
+    if (!Number.isInteger(chainId) || chainId <= 0) throw new ValidationError("chainId must be a chain id number");
+  }
+  const from = body.from !== undefined && body.from !== null && body.from !== "" ? toAddress(body.from, "from") : undefined;
+  return {
+    kind: "message", method, offchain: true, value: 0n, grants: [], target: null,
+    ...(chainId && { chainId }), ...(from && { from }),
+    text: decoded.text, bytes: decoded.bytes, signIn: decoded.text !== null ? parseSignIn(decoded.text) : null,
+  };
+}
+
 function parseSubject(body) {
   if (!body || typeof body !== "object") throw new ValidationError("JSON body required");
+  if (body.type === "message") return parseMessage(body);
 
   const chainId = Number(body.chainId);
   if (!SUPPORTED_CHAINS.has(chainId)) {
@@ -655,12 +676,117 @@ function parseSubject(body) {
     return { chainId, offchain: true, value: 0n, ...parseSignature(body.typedData, chainId) };
   }
 
-  throw new ValidationError('type must be "approval", "transaction" or "signature"');
+  throw new ValidationError('type must be "approval", "transaction", "signature", "message" or "xrpl"');
 }
 
 // ---------- analysis ----------
 
+// The requesting site's reasons: domain age (PG1), phishing lists (PG1 and GoPlus) and MetaMask's site scanner.
+// domain is domainAge()'s answer, rep the [pg1, goplus, metamask] answers (null when not asked).
+function addOriginReasons(origin, domain, rep, add) {
+  let pg1Used = false;
+  if (origin) {
+    if (!domain) add("DOMAIN_AGE_UNAVAILABLE", "info", origin);
+    else {
+      pg1Used = true;
+      if (domain.found && domain.ageDays < NEW_DOMAIN_DAYS) add("NEW_DOMAIN", "orange", domain.domain, { ageDays: domain.ageDays, registered: domain.registered });
+      else if (!domain.found && domain.unregistered) add("DOMAIN_NOT_REGISTERED", "orange", domain.domain);
+      else if (!domain.found) add("DOMAIN_AGE_UNKNOWN", "info", domain.domain);
+      else add("DOMAIN_AGE", "info", domain.domain, { ageDays: domain.ageDays });
+    }
+  }
+
+  let metamaskUsed = false;
+  if (rep) {
+    const [pg1Rep, gpPhish, scan] = rep;
+    if (pg1Rep) pg1Used = true;
+    const flaggedBy = [...(pg1Rep?.verdict === "listed" ? ["pg1"] : []), ...(gpPhish?.phishing ? ["goplus"] : [])];
+    if (flaggedBy.length) {
+      add("PHISHING_SITE", "red", origin, {
+        flaggedBy,
+        ...(pg1Rep?.verdict === "listed" && { list: "MetaMask eth-phishing-detect", matchType: pg1Rep.matchType, listSynced: pg1Rep.listSynced }),
+        ...(pg1Rep?.lookalikeOf && { lookalikeOf: pg1Rep.lookalikeOf }),
+      });
+    } else if (pg1Rep?.verdict === "lookalike") {
+      add("LOOKALIKE_SITE", "orange", origin, { lookalikeOf: pg1Rep.lookalikeOf, listSynced: pg1Rep.listSynced });
+    } else if (pg1Rep?.verdict === "allowlisted") {
+      add("SITE_ALLOWLISTED", "info", origin, { list: "MetaMask eth-phishing-detect" });
+    }
+    if (scan) {
+      metamaskUsed = true;
+      if (scan.action === "BLOCK" || (scan.action && scan.action !== "NONE")) {
+        add("WALLET_BLOCKS_SITE", "orange", origin, { wallet: "MetaMask", action: scan.action, risks: scan.risks });
+      }
+    }
+    const unavailable = [...(pg1Rep ? [] : ["pg1"]), ...(gpPhish ? [] : ["goplus"]), ...(scan || process.env.METAMASK_SCAN !== "on" ? [] : ["metamask"])];
+    if (unavailable.length) add("SITE_REPUTATION_UNAVAILABLE", "info", origin, { sources: unavailable });
+  }
+  return { pg1Used, metamaskUsed };
+}
+
+// personal_sign / eth_sign. eth_sign is red: it signs a raw hash, so nobody can see what is agreed to. A message
+// that isn't readable text is orange for the same reason. A sign-in message (EIP-4361) for another site than the one
+// asking is red: that is a phishing site relaying a real site's login. The site itself is checked as for any request.
+async function analyzeMessage(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject)) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const s = req.signIn;
+  const intent = req.intent
+    ? intentCheck({ intent: req.intent, effects: {
+        signing: `a plain message (${req.method}); it moves no tokens by itself`,
+        message: req.text !== null ? req.text.slice(0, 1500) : `${req.bytes} bytes of unreadable binary data`,
+        ...(s && { sign_in: { site: s.domain, account: s.address, uri: s.uri, chainId: s.chainId } }),
+      } }).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+
+  if (req.method === "eth_sign") add("ETH_SIGN", "red", req.from ?? null, { bytes: req.bytes });
+  else if (req.text === null) add("UNREADABLE_MESSAGE", "orange", req.from ?? null, { bytes: req.bytes, ...(req.bytes === 32 && { looksLike: "a 32-byte hash" }) });
+
+  if (s) {
+    add("SIGN_IN_REQUEST", "info", s.domain, { address: s.address, uri: s.uri, chainId: s.chainId, ...(s.expirationTime && { expirationTime: s.expirationTime }) });
+    const site = siteOf(s.domain);
+    if (req.origin && site && site !== siteOf(req.origin)) add("SIGN_IN_DOMAIN_MISMATCH", "red", s.domain, { origin: req.origin });
+    const uriSite = siteOf(s.uri);
+    if (uriSite && site && /^https?:/i.test(s.uri) && uriSite !== site) add("SIGN_IN_URI_MISMATCH", "orange", s.uri, { domain: s.domain });
+    if (req.from && s.address.toLowerCase() !== req.from) add("SIGN_IN_ADDRESS_MISMATCH", "orange", s.address, { from: req.from });
+    if (req.chainId && s.chainId && s.chainId !== req.chainId) add("SIGN_IN_CHAIN_MISMATCH", "orange", s.domain, { messageChainId: s.chainId, chainId: req.chainId });
+  } else if (req.text !== null && req.method === "personal_sign") {
+    add("PLAIN_MESSAGE", "info", req.from ?? null, { characters: req.text.length });
+  }
+
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: {
+      kind: "message",
+      method: req.method,
+      ...(req.chainId && { chainId: req.chainId }),
+      ...(req.from && { from: req.from }),
+      ...(req.origin && { origin: req.origin }),
+      ...(s && { signIn: { domain: s.domain, address: s.address, uri: s.uri, chainId: s.chainId } }),
+      preview: req.text !== null ? req.text.slice(0, 200) : null,
+    },
+    scope: "Plain message signatures (personal_sign, eth_sign): eth_sign and unreadable messages, Sign-In with Ethereum messages for another site than the one asking, and the requesting site's phishing-list status and domain age. A message moves no tokens by itself; what a site does with a signed message is not covered.",
+    sources: [...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 export async function analyze(req) {
+  if (req.kind === "message") return analyzeMessage(req);
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";
@@ -807,43 +933,9 @@ export async function analyze(req) {
       add("SANCTIONS_SCREENED", "info", address, { list: "OFAC SDN", listed: false, listSynced: sc.listSynced });
     }
   }
-  if (req.origin) {
-    if (!domain) add("DOMAIN_AGE_UNAVAILABLE", "info", req.origin);
-    else {
-      pg1Used = true;
-      if (domain.found && domain.ageDays < NEW_DOMAIN_DAYS) add("NEW_DOMAIN", "orange", domain.domain, { ageDays: domain.ageDays, registered: domain.registered });
-      else if (!domain.found && domain.unregistered) add("DOMAIN_NOT_REGISTERED", "orange", domain.domain);
-      else if (!domain.found) add("DOMAIN_AGE_UNKNOWN", "info", domain.domain);
-      else add("DOMAIN_AGE", "info", domain.domain, { ageDays: domain.ageDays });
-    }
-  }
-
-  let metamaskUsed = false;
-  const rep = await reputation;
-  if (rep) {
-    const [pg1Rep, gpPhish, scan] = rep;
-    if (pg1Rep) pg1Used = true;
-    const flaggedBy = [...(pg1Rep?.verdict === "listed" ? ["pg1"] : []), ...(gpPhish?.phishing ? ["goplus"] : [])];
-    if (flaggedBy.length) {
-      add("PHISHING_SITE", "red", req.origin, {
-        flaggedBy,
-        ...(pg1Rep?.verdict === "listed" && { list: "MetaMask eth-phishing-detect", matchType: pg1Rep.matchType, listSynced: pg1Rep.listSynced }),
-        ...(pg1Rep?.lookalikeOf && { lookalikeOf: pg1Rep.lookalikeOf }),
-      });
-    } else if (pg1Rep?.verdict === "lookalike") {
-      add("LOOKALIKE_SITE", "orange", req.origin, { lookalikeOf: pg1Rep.lookalikeOf, listSynced: pg1Rep.listSynced });
-    } else if (pg1Rep?.verdict === "allowlisted") {
-      add("SITE_ALLOWLISTED", "info", req.origin, { list: "MetaMask eth-phishing-detect" });
-    }
-    if (scan) {
-      metamaskUsed = true;
-      if (scan.action === "BLOCK" || (scan.action && scan.action !== "NONE")) {
-        add("WALLET_BLOCKS_SITE", "orange", req.origin, { wallet: "MetaMask", action: scan.action, risks: scan.risks });
-      }
-    }
-    const unavailable = [...(pg1Rep ? [] : ["pg1"]), ...(gpPhish ? [] : ["goplus"]), ...(scan || process.env.METAMASK_SCAN !== "on" ? [] : ["metamask"])];
-    if (unavailable.length) add("SITE_REPUTATION_UNAVAILABLE", "info", req.origin, { sources: unavailable });
-  }
+  const site = await addOriginReasons(req.origin, domain, await reputation, add);
+  if (site.pg1Used) pg1Used = true;
+  const metamaskUsed = site.metamaskUsed;
 
   if (req.revoke) add("REVOKES_APPROVAL", "info", req.revokedSpender ?? req.target);
   const walletAges = await ages;
@@ -965,7 +1057,7 @@ export async function analyze(req) {
       ...(req.origin && { origin: req.origin }),
       value: req.value.toString(),
     },
-    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}). Not covered: eth_sign/personal_sign messages.` : "Not covered: eth_sign/personal_sign messages and transaction simulation."}`,
+    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
     ...(mandate && { mandate }),
     ...(sim && { simulation: sim }),
     sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],

@@ -186,7 +186,9 @@ export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_T
 export const INPUT_SCHEMA = {
   type: "object",
   properties: {
-    type: { type: "string", enum: ["approval", "transaction", "signature", "xrpl"], description: "What the agent is about to sign (xrpl: an XRP Ledger transaction)" },
+    type: { type: "string", enum: ["approval", "transaction", "signature", "message", "xrpl"], description: "What the agent is about to sign (message: a plain personal_sign / eth_sign message; xrpl: an XRP Ledger transaction)" },
+    method: { type: "string", enum: ["personal_sign", "eth_sign"], description: "message: how it is signed (default personal_sign); eth_sign is always red" },
+    message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
     chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction and signature" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1"], description: "xrpl: the ledger (default xrpl:0, mainnet)" },
     tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows and NFT giveaways" },
