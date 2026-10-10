@@ -7,7 +7,9 @@
     { "id": "permit", "scene": "permit", "text": "A permit that hands a plain wallet your tokens? Red. That is how most wallet drainers work." },
     { "id": "payment", "scene": "payment", "text": "And a normal x402 payment? Green. It moves one fixed amount, once." },
     { "id": "agents", "scene": "agents", "text": "Agents pay one cent per check, with x402 or MPP: USDC on Base, Solana or Algorand, RLUSD on the XRP Ledger, or a Tempo session. The verdict comes back in the same request." },
-    { "id": "intent", "scene": "card", "card": { "title": "Does it do what it says?", "sub": "Tell presign-guard what the agent means to do" }, "text": "New: your agent can also say what it means to do, like swap ten USDC for ETH. If the transaction does something else, presign-guard flags it." },
+    { "id": "intent", "scene": "card", "card": { "title": "Does it do what it says?", "sub": "Tell presign-guard what the agent means to do" }, "text": "Your agent can also say what it means to do, like swap ten USDC for ETH. If the transaction does something else, presign-guard flags it." },
+    { "id": "simulate", "scene": "card", "card": { "title": "What really leaves the wallet?", "sub": "Send the wallet, and the transaction is simulated first" }, "text": "New: presign-guard also runs the transaction first. A hidden approval, an NFT leaving the wallet, or a transaction that would fail: orange." },
+    { "id": "x402check", "scene": "card", "card": { "title": "Paying what the seller asked?", "sub": "x402 payments checked against the 402" }, "text": "Paying an x402 API? Send along what the seller asked for. A signature that pays more, or pays someone else, is red." },
     { "id": "safe", "scene": "safe", "text": "Errors are never charged. And if a data source is down, there is no verdict, never a guessed green." },
     { "id": "end", "scene": "card", "card": { "title": "presign-guard", "sub": "Check it before you sign it.", "note": "presign-guard.fizzl.eu · Base, Solana, XRP Ledger, Algorand" }, "text": "presign-guard. Check it before you sign it." }
   ]

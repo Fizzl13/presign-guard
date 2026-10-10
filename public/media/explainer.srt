@@ -1,36 +1,44 @@
 1
-00:00:01,025 --> 00:00:07,766
+00:00:01,088 --> 00:00:07,829
 AI agents now sign payments, approvals and permits on their own. One bad signature can empty a wallet.
 
 2
-00:00:08,219 --> 00:00:16,048
+00:00:08,288 --> 00:00:16,117
 presign-guard checks it first. Send what your agent is about to sign, and get back green, orange or red, with the reasons.
 
 3
-00:00:16,520 --> 00:00:20,829
+00:00:16,591 --> 00:00:20,900
 An unlimited token approval? Orange: ask a person before you sign.
 
 4
-00:00:21,284 --> 00:00:26,639
+00:00:21,354 --> 00:00:26,709
 A permit that hands a plain wallet your tokens? Red. That is how most wallet drainers work.
 
 5
-00:00:27,094 --> 00:00:32,065
+00:00:27,172 --> 00:00:32,143
 And a normal x402 payment? Green. It moves one fixed amount, once.
 
 6
-00:00:32,527 --> 00:00:47,418
+00:00:32,604 --> 00:00:47,495
 Agents pay one cent per check, with x402 or MPP: USDC on Base, Solana or Algorand, RLUSD on the XRP Ledger, or a Tempo session. The verdict comes back in the same request.
 
 7
-00:00:47,875 --> 00:00:57,966
-New: your agent can also say what it means to do, like swap ten USDC for ETH. If the transaction does something else, presign-guard flags it.
+00:00:47,954 --> 00:00:57,746
+Your agent can also say what it means to do, like swap ten USDC for ETH. If the transaction does something else, presign-guard flags it.
 
 8
-00:00:58,430 --> 00:01:04,297
-Errors are never charged. And if a data source is down, there is no verdict, never a guessed green.
+00:00:58,214 --> 00:01:07,430
+New: presign-guard also runs the transaction first. A hidden approval, an NFT leaving the wallet, or a transaction that would fail: orange.
 
 9
-00:01:04,759 --> 00:01:07,255
+00:01:07,896 --> 00:01:16,088
+Paying an x402 API? Send along what the seller asked for. A signature that pays more, or pays someone else, is red.
+
+10
+00:01:16,551 --> 00:01:22,418
+Errors are never charged. And if a data source is down, there is no verdict, never a guessed green.
+
+11
+00:01:22,879 --> 00:01:25,375
 presign-guard. Check it before you sign it.
 
