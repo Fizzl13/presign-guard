@@ -196,7 +196,7 @@ export const INPUT_SCHEMA = {
     to: { type: "string", description: "transaction: target contract" },
     data: { type: "string", description: "transaction: 0x-prefixed calldata" },
     value: { type: "string", description: "transaction: native value in wei" },
-    from: { type: "string", description: "transaction, optional: the wallet that would send it. With it the transaction is simulated (Alchemy, chains 1, 10, 137, 8453, 42161): the answer gets a simulation field with every asset that leaves or arrives, orange HIDDEN_APPROVAL (an approval the call does not show, e.g. inside a router or batch), SIMULATION_NFT_OUT or SIMULATION_FAILS, and the intent check compares your intent with the real balance changes" },
+    from: { type: "string", description: "transaction, optional: the wallet that would send it. With it the transaction is simulated (eth_simulateV1 on all six chains): the answer gets a simulation field with every asset that leaves or arrives, orange HIDDEN_APPROVAL (an approval the call does not show, e.g. inside a router or batch), SIMULATION_NFT_OUT or SIMULATION_FAILS, and the intent check compares your intent with the real balance changes" },
     typedData: { type: ["object", "string"], description: "signature: the eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)" },
     origin: { type: "string", description: "optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange" },
     intent: { type: "string", maxLength: 500, description: "optional: what the agent is trying to do, in one sentence (e.g. \"swap 10 USDC for ETH on Uniswap\"); orange INTENT_MISMATCH when signing would do more or something else (TypeSafe Jev)" },
