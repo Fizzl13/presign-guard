@@ -195,6 +195,10 @@ function mockClaude() {
 }
 
 let jevAnswers = {};
+// Alchemy's alchemy_simulateAssetChanges (src/simulate.js): the next answer, or an HTTP error.
+let alchemyResult = { changes: [], gasUsed: "0x5208", error: null };
+const alchemyCalls = [];
+const alchemyAnswer = () => (alchemyResult === "down" ? new Response("{}", { status: 503 }) : Response.json({ jsonrpc: "2.0", id: 1, result: alchemyResult }));
 const jevCalls = [];
 let server, base;
 before(async () => {
@@ -207,6 +211,7 @@ before(async () => {
       jevCalls.push(JSON.parse(opts.body));
       return Response.json({ model: "jev-test", answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: "noul", noul: jevAnswers[id] ?? 0.02 }])), usage: {} });
     }
+    if (u.includes("g.alchemy.com")) { alchemyCalls.push({ url: u, body: JSON.parse(opts.body) }); return alchemyAnswer(u, JSON.parse(opts.body)); }
     if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
     if (u.includes("dapp-scanning.api.cx.metamask.io")) return mockMetamask(u);
     if (/publicnode\.com|mainnet\.base\.org|arbitrum\.io/.test(u)) return mockRpc(opts);
@@ -1027,4 +1032,78 @@ test("a nonce that is not the mandate binding is red", async () => {
 test("a mandate on something other than an EIP-3009 payment is refused before payment", async () => {
   const r = await check({ ...payment(EOA, "20000"), type: "approval", token: TOKEN, spender: EOA, amount: "1", mandate: {} });
   assert.equal(r.status, 400);
+});
+
+// ---------- simulation (src/simulate.js, Alchemy) ----------
+const SENDER = USER;
+const ROUTER = "0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD"; // a contract (Uniswap's universal router)
+const withAlchemy = async (result, fn) => {
+  const before = process.env.ALCHEMY_API_KEY;
+  process.env.ALCHEMY_API_KEY = "test-key";
+  alchemyResult = result;
+  alchemyCalls.length = 0;
+  try { return await fn(); } finally { if (before === undefined) delete process.env.ALCHEMY_API_KEY; else process.env.ALCHEMY_API_KEY = before; alchemyResult = { changes: [], gasUsed: "0x5208", error: null }; }
+};
+
+test("simulation: a transaction with from is simulated; what leaves and arrives is in the answer and an info line", async () => {
+  const result = { gasUsed: "0x1", error: null, changes: [
+    { assetType: "ERC20", changeType: "TRANSFER", from: SENDER, to: ROUTER, rawAmount: "10000000", amount: "10", symbol: "USDC", decimals: 6, contractAddress: TOKEN },
+    { assetType: "NATIVE", changeType: "TRANSFER", from: ROUTER, to: SENDER, rawAmount: "3000000000000000", amount: "0.003", symbol: "ETH", decimals: 18 },
+  ] };
+  const r = await withAlchemy(result, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c", value: "0" }));
+  assert.equal(alchemyCalls.length, 1);
+  assert.match(alchemyCalls[0].url, /base-mainnet\.g\.alchemy\.com\/v2\/test-key/);
+  assert.deepEqual(alchemyCalls[0].body.params[0], { from: SENDER.toLowerCase(), to: ROUTER.toLowerCase(), data: "0x3593564c", value: "0x0" });
+  assert.equal(r.body.simulation.ok, true);
+  assert.equal(r.body.simulation.changes.length, 2);
+  const info = r.body.reasons.find((x) => x.code === "SIMULATED");
+  assert.deepEqual(info.details.leaves, [{ to: ROUTER.toLowerCase(), asset: "erc20", symbol: "USDC", amount: "10" }]);
+  assert.equal(info.details.arrives[0].symbol, "ETH");
+  assert.ok(r.body.sources.includes("alchemy"));
+  assert.match(r.body.scope, /simulated/);
+});
+
+test("simulation: an approval the call doesn't show, an NFT leaving, or a failing transaction is orange", async () => {
+  const hidden = await withAlchemy({ error: null, changes: [{ assetType: "ERC20", changeType: "APPROVE", from: SENDER, to: EOA, rawAmount: "115792089237316195423570985008687907853269984665640564039457584007913129639935", symbol: "USDC", contractAddress: TOKEN }] },
+    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
+  assert.equal(hidden.body.verdict, "orange");
+  assert.equal(hidden.body.reasons.find((x) => x.code === "HIDDEN_APPROVAL").subject, EOA);
+  const nft = await withAlchemy({ error: null, changes: [{ assetType: "ERC721", changeType: "TRANSFER", from: SENDER, to: EOA, tokenId: "7", contractAddress: ROUTER }] },
+    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
+  assert.ok(nft.body.reasons.some((x) => x.code === "SIMULATION_NFT_OUT" && x.details.tokenId === "7"));
+  const fails = await withAlchemy({ error: { message: "execution reverted" }, changes: [] },
+    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
+  assert.equal(fails.body.verdict, "orange");
+  assert.equal(fails.body.reasons.find((x) => x.code === "SIMULATION_FAILS").details.error, "execution reverted");
+  assert.equal(fails.body.simulation.ok, false);
+});
+
+test("simulation: a plain approve call is not a hidden approval; no from, no key, other chains or Alchemy down: no simulation", async () => {
+  const approve = await withAlchemy({ error: null, changes: [{ assetType: "ERC20", changeType: "APPROVE", from: SENDER, to: ROUTER, rawAmount: "1000000", contractAddress: TOKEN }] },
+    () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: approveData(ROUTER, 1000000) }));
+  assert.ok(!approve.body.reasons.some((x) => x.code === "HIDDEN_APPROVAL"));
+  const noFrom = await withAlchemy({ error: null, changes: [] }, () => check({ type: "transaction", chainId: 8453, to: ROUTER, data: "0x3593564c" }));
+  assert.equal(noFrom.body.simulation, undefined);
+  assert.equal(alchemyCalls.length, 0);
+  const bsc = await withAlchemy({ error: null, changes: [] }, () => check({ type: "transaction", chainId: 56, from: SENDER, to: ROUTER, data: "0x3593564c" }));
+  assert.equal(bsc.body.simulation, undefined);
+  const down = await withAlchemy("down", () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" }));
+  assert.equal(down.body.simulation, undefined);
+  assert.ok(!down.body.reasons.some((x) => x.code.startsWith("SIMULAT")));
+  const noKey = await check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c" });
+  assert.equal(noKey.body.simulation, undefined);
+  assert.match(noKey.body.scope, /transaction simulation/);
+  assert.equal((await check({ type: "transaction", chainId: 8453, from: "nope", to: ROUTER, data: "0x" })).status, 400);
+});
+
+test("simulation: the intent check sees the simulated balance changes", async () => {
+  jevCalls.length = 0;
+  const before = process.env.TYPESAFE_API_KEY;
+  process.env.TYPESAFE_API_KEY = "test";
+  try {
+    await withAlchemy({ error: null, changes: [{ assetType: "ERC20", changeType: "TRANSFER", from: SENDER, to: EOA, rawAmount: "5000000000", amount: "5000", symbol: "USDC", contractAddress: TOKEN }] },
+      () => check({ type: "transaction", chainId: 8453, from: SENDER, to: ROUTER, data: "0x3593564c", intent: "swap 10 USDC for ETH" }));
+  } finally { if (before === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = before; }
+  const asked = JSON.stringify(jevCalls.at(-1) ?? {});
+  assert.match(asked, /5000 USDC to 0xbad0000000000000000000000000000000000001/);
 });

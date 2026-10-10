@@ -34,6 +34,7 @@ import { metamaskSiteScan } from "./site-scan.js";
 import { secondOpinion, intentCheck } from "./jev.js";
 import { checkMandatePayment } from "./mandate.js";
 import { parseRequirements, checkX402Payment } from "./x402-requirements.js";
+import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS } from "./simulate.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
@@ -645,7 +646,9 @@ function parseSubject(body) {
     const data = body.data ?? "0x";
     if (typeof data !== "string" || !isHex(data)) throw new ValidationError("data must be 0x-prefixed hex");
     const value = toUint(body.value ?? "0", "value");
-    return { chainId, offchain: false, value, ...decodeTransaction(to, data.toLowerCase()) };
+    // Optional: the wallet that would send it. With it the transaction is simulated (src/simulate.js).
+    const from = body.from !== undefined && body.from !== null && body.from !== "" ? toAddress(body.from, "from") : undefined;
+    return { chainId, offchain: false, value, ...(from && { from, data: data.toLowerCase() }), ...decodeTransaction(to, data.toLowerCase()) };
   }
 
   if (body.type === "signature") {
@@ -664,6 +667,10 @@ export async function analyze(req) {
     if (reasons.some((r) => r.code === code && r.subject === subject && (r.details ? JSON.stringify(r.details) : "") === d)) return;
     reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
   };
+
+  // What the transaction really does to the sender's wallet (only with `from`; Alchemy, src/simulate.js), asked
+  // first so the intent check below can compare the stated intent with the simulated balance changes.
+  const simulation = req.from ? createSimulator().simulate({ chainId: req.chainId, from: req.from, to: req.target, data: req.data, value: req.value }) : Promise.resolve(null);
 
   // Revoked spenders are not looked up: revoking a bad address is safe.
   const subjects = new Set([req.target, ...req.grants.map((g) => g.spender)].filter(Boolean));
@@ -740,7 +747,9 @@ export async function analyze(req) {
     domain: req.domainName && req.target && !(req.kind?.startsWith("permit2") && req.target !== PERMIT2) ? { name: req.domainName, verifyingContract: req.target } : null,
   }).catch(() => ({ reasons: [], sources: [] }));
   // Does signing do what the agent says it is for (only when it passed intent)?
-  const intentAnswer = req.intent ? intentCheck({ intent: req.intent, effects: effectsOf(req, tokenMeta) }).catch(() => ({ reasons: [], sources: [] })) : null;
+  const intentAnswer = req.intent
+    ? simulation.then((sim) => intentCheck({ intent: req.intent, effects: { ...effectsOf(req, tokenMeta), ...(sim && { simulated: simulationEffects(sim, req.from) }) } })).catch(() => ({ reasons: [], sources: [] }))
+    : null;
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
@@ -899,6 +908,11 @@ export async function analyze(req) {
   const intent = intentAnswer ? await intentAnswer : { reasons: [], sources: [] };
   for (const r of intent.reasons) add(r.code, r.severity, r.subject, r.details);
 
+  // The simulation: an approval or NFT leaving the wallet that the decoded call doesn't show, or a transaction
+  // that would fail, is orange; what leaves and arrives is an info line and the answer's `simulation` field.
+  const sim = await simulation;
+  for (const r of simulationReasons(sim, { from: req.from, kind: req.kind })) add(r.code, r.severity, r.subject, r.details);
+
   // Not what the seller asked (x402 requirements): paying more, someone else, another token or chain is red.
   if (req.x402) {
     const g = req.grants[0];
@@ -951,9 +965,10 @@ export async function analyze(req) {
       ...(req.origin && { origin: req.origin }),
       value: req.value.toString(),
     },
-    scope: "On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). Not covered: eth_sign/personal_sign messages and transaction simulation.",
+    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}). Not covered: eth_sign/personal_sign messages.` : "Not covered: eth_sign/personal_sign messages and transaction simulation."}`,
     ...(mandate && { mandate }),
-    sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...ai.sources, ...intent.sources])],
+    ...(sim && { simulation: sim }),
+    sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
     checkedAt: new Date().toISOString(),
   };
 }
