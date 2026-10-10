@@ -150,13 +150,13 @@ function verdictHtml(r) {
 
 // The price an agent sees for the token verdict, from the live 402 challenge.
 async function liveTokenPrice() {
-  if (process.env.MOCK_LIVE === "1") return "$0.01 USDC on Base or Solana";
+  if (process.env.MOCK_LIVE === "1") return "$0.01 on Base, Solana, XRP Ledger or Algorand";
   const res = await fetch(`${LIVE}/v1/token?chain=solana&address=${BONK}`);
   if (res.status !== 402) throw new Error(`expected 402 from ${LIVE}/v1/token, got ${res.status}`);
   const challenge = JSON.parse(Buffer.from(res.headers.get("payment-required"), "base64").toString("utf8"));
   const nets = challenge.accepts.map((a) => (a.network.startsWith("solana:") ? "Solana" : a.network === "eip155:8453" ? "Base" : null)).filter(Boolean);
   if (!nets.includes("Base") || !nets.includes("Solana")) throw new Error(`live token route offers ${nets}, expected Base and Solana`);
-  return `$${(Number(challenge.accepts[0].amount) / 1e6).toFixed(2)} USDC on Base or Solana`;
+  return `$${(Number(challenge.accepts[0].amount) / 1e6).toFixed(2)} on Base, Solana, XRP Ledger or Algorand`;
 }
 
 // Captions: a bar at the bottom of every page, re-created after navigation.
@@ -191,13 +191,13 @@ const glow = (page, selector, color = "rgba(97,245,195,.55)") =>
 
 // The price an agent sees, from the live 402 challenge.
 async function livePrice() {
-  if (process.env.MOCK_LIVE === "1") return "$0.01 USDC on Base";
+  if (process.env.MOCK_LIVE === "1") return "$0.01 on Base, Solana, XRP Ledger or Algorand";
   const res = await fetch(`${LIVE}/v1/check`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   if (res.status !== 402) throw new Error(`expected 402 from ${LIVE}/v1/check, got ${res.status}`);
   const challenge = JSON.parse(Buffer.from(res.headers.get("payment-required"), "base64").toString("utf8"));
   const a = challenge.accepts.find((x) => x.network === "eip155:8453");
   if (!a) throw new Error("live service offers no Base option");
-  return `$${(Number(a.amount) / 1e6).toFixed(2)} USDC on Base`;
+  return `$${(Number(a.amount) / 1e6).toFixed(2)} on Base, Solana, XRP Ledger or Algorand`;
 }
 
 const EXPECT = { unlimited: "orange", permit: "red", payment: "green" };
