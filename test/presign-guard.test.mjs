@@ -197,6 +197,9 @@ function mockClaude() {
 let jevAnswers = {};
 // eth_simulateV1 (src/simulate.js), on Alchemy or the public RPC: the next call result, or "down" (HTTP error).
 const SIM_OK = { status: "0x1", logs: [], gasUsed: "0x5208" };
+// alchemy_getAssetTransfers (src/poisoning.js): the addresses the wallet has paid before, or "down".
+let historyAnswer = [];
+const historyCalls = [];
 let simResult = SIM_OK;
 let alchemyDown = false;
 const simCalls = [];
@@ -225,6 +228,7 @@ before(async () => {
     if (opts?.body && /g\.alchemy\.com|publicnode\.com/.test(u)) {
       const body = JSON.parse(opts.body);
       if (body.method === "eth_simulateV1") return simAnswer(u, body);
+      if (body.method === "alchemy_getAssetTransfers") { historyCalls.push(body.params[0]); return historyAnswer === "down" ? new Response("{}", { status: 503 }) : Response.json({ jsonrpc: "2.0", id: 1, result: { transfers: historyAnswer.map((to) => ({ to })) } }); }
       if (u.includes("g.alchemy.com") || (Array.isArray(body) && body.every((c) => ["0x95d89b41", "0x313ce567"].includes(c.params?.[0]?.data)))) return tokenMetaAnswer(body);
     }
     if (u.includes("pg1-ai-agent.vercel.app")) return mockPg1(opts);
@@ -1206,4 +1210,54 @@ test("message: bad input is refused before anything else", async () => {
   assert.equal((await check({ type: "message", message: "x".repeat(16385) })).status, 400);
   assert.equal((await check({ type: "message", message: "hi", from: "nope" })).status, 400);
   assert.equal((await check({ type: "message", message: "hi", x402: { amount: "1" } })).status, 400);
+});
+
+// ---------- address poisoning (src/poisoning.js) ----------
+test("lookalike: same start and end, another address; not the same address, not a chance match of a few characters", async () => {
+  const { lookalike } = await import("../src/poisoning.js");
+  const real = "0xa1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+  assert.equal(lookalike(real, real.slice(0, 8) + "9".repeat(30) + real.slice(-4)), true);
+  assert.equal(lookalike(real, real.toUpperCase().replace("0X", "0x")), false);
+  assert.equal(lookalike(real, real.slice(0, 4) + "9".repeat(36) + real.slice(-2)), false);
+  assert.equal(lookalike(real, "0x" + "0".repeat(36) + real.slice(-4)), false);
+});
+
+test("address poisoning: a transfer to a look-alike of an address the wallet paid before is red; a known or new recipient is info", async () => {
+  const PAID = "0xa1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+  const FAKE = PAID.slice(0, 8) + "9".repeat(30) + PAID.slice(-4);
+  const transferTo = (to) => "0xa9059cbb" + to.slice(2).padStart(64, "0") + (1000000n).toString(16).padStart(64, "0");
+  historyAnswer = [PAID, EOA.toLowerCase()];
+  historyCalls.length = 0;
+  try {
+    const poisoned = await withSim({ status: "0x1", logs: [logs.erc20(TOKEN, SENDER, FAKE, 1000000)] }, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(FAKE) }));
+    assert.equal(poisoned.body.verdict, "red");
+    const r = poisoned.body.reasons.find((x) => x.code === "ADDRESS_POISONING");
+    assert.equal(r.subject, FAKE);
+    assert.equal(r.details.lookalikeOf, PAID);
+    assert.equal(historyCalls[0].fromAddress, SENDER.toLowerCase());
+    const known = await withSim({ status: "0x1", logs: [logs.erc20(TOKEN, SENDER, PAID, 1000000)] }, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(PAID) }));
+    assert.ok(codes(known).includes("KNOWN_RECIPIENT"));
+    assert.ok(!codes(known).includes("ADDRESS_POISONING"));
+    // Without a simulation (every RPC down) the decoded transfer's recipient is checked.
+    const decoded = await withSim("down", () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(FAKE) }));
+    assert.ok(codes(decoded).includes("ADDRESS_POISONING"));
+    const fresh = "0x" + "77".repeat(20);
+    const other = await withSim({ status: "0x1", logs: [logs.erc20(TOKEN, SENDER, fresh, 1)] }, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(fresh) }));
+    assert.ok(codes(other).includes("NEW_RECIPIENT"));
+    // No key, or Alchemy down: no poisoning reasons, never a guessed green.
+    const noKey = await withSim(SIM_OK, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(FAKE) }), { key: null });
+    assert.ok(!codes(noKey).some((c) => /RECIPIENT|POISONING/.test(c)));
+    historyAnswer = "down";
+    const down = await withSim(SIM_OK, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(FAKE) }));
+    assert.ok(!codes(down).some((c) => /RECIPIENT|POISONING/.test(c)));
+  } finally { historyAnswer = []; }
+});
+
+test("address history self-test (GET /health): off without a key, ok when Alchemy answers, the reason without the key when it fails", async () => {
+  const { historySelfTest, historyStatus } = await import("../src/poisoning.js");
+  assert.equal((await historySelfTest({ env: {} })).selfTest, "off (no ALCHEMY_API_KEY)");
+  assert.equal((await historySelfTest({ env: { ALCHEMY_API_KEY: "k" }, fetch: async () => Response.json({ result: { transfers: [] } }) })).selfTest, "ok");
+  const bad = await historySelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async () => Response.json({ error: { message: "Unsupported method for secretkey" } }) });
+  assert.match(bad.selfTest, /^failed \(history chain 8453: Unsupported method for …\)$/);
+  assert.equal(historyStatus({}).on, false);
 });

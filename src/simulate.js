@@ -6,7 +6,7 @@
 // on 30 Sep 2026), else, or when Alchemy fails, from the chain's public RPC (RPC_URL_<chainId> overrides).
 // Needs the sender (`from`); a failure or timeout leaves the check as it was (never a guessed green).
 
-const ALCHEMY = { 1: "eth-mainnet", 10: "opt-mainnet", 56: "bnb-mainnet", 137: "polygon-mainnet", 8453: "base-mainnet", 42161: "arb-mainnet" };
+export const ALCHEMY = { 1: "eth-mainnet", 10: "opt-mainnet", 56: "bnb-mainnet", 137: "polygon-mainnet", 8453: "base-mainnet", 42161: "arb-mainnet" };
 const PUBLIC = {
   1: "https://ethereum-rpc.publicnode.com",
   10: "https://optimism-rpc.publicnode.com",
