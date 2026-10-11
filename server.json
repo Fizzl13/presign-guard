@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Fizzl13/presign-guard",
   "title": "presign-guard",
-  "description": "Is it safe to sign? Checks agent transactions, permits, tokens and approvals: green/orange/red.",
-  "version": "1.2.2",
+  "description": "Is it safe to sign? Checks EVM/Solana transactions, permits, tokens and approvals: green/orange/red.",
+  "version": "1.3.0",
   "repository": {
     "url": "https://github.com/Fizzl13/presign-guard",
     "source": "github"
