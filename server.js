@@ -47,7 +47,7 @@ if (!PAY_TO) throw new Error("PAY_TO is required");
 if (!/^0x[0-9a-fA-F]{40}$/.test(PAY_TO)) {
   throw new Error(`PAY_TO must be an EVM address: 0x followed by 40 hex characters (got ${PAY_TO.length} characters)`);
 }
-// Optional: a Solana wallet for USDC payments on Solana (token verdict only).
+// Optional: a Solana wallet for USDC payments on Solana (every paid route).
 const PAY_TO_SOLANA = process.env.PAY_TO_SOLANA?.trim() || null;
 if (PAY_TO_SOLANA && !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(PAY_TO_SOLANA)) {
   throw new Error("PAY_TO_SOLANA must be a Solana address (base58)");

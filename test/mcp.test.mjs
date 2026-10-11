@@ -205,12 +205,12 @@ test("XRP Ledger transactions: invalid input is refused before payment, valid in
   await client.close();
 });
 
-test("paid tool without payment: a $0.01 challenge on Base with Bazaar MCP metadata, nothing checked yet", async () => {
+test("paid tool without payment: a $0.01 challenge on Base and Solana with Bazaar MCP metadata, nothing checked yet", async () => {
   const client = await mcpClient();
   const result = await client.callTool({ name: "presign_check", arguments: APPROVAL });
   assert.ok(result.isError);
   const challenge = result.structuredContent || JSON.parse(result.content[0].text);
-  assert.deepEqual(challenge.accepts.map((a) => [a.network, a.amount, a.payTo]), [[BASE, "10000", PAY_TO]]);
+  assert.deepEqual(challenge.accepts.map((a) => [a.network, a.amount, a.payTo]), [[BASE, "10000", PAY_TO], [SOLANA, "10000", PAY_TO_SOLANA]]);
   assert.equal(challenge.extensions.bazaar.info.input.toolName, "presign_check");
   assert.equal(state.goplus, 0, "no lookups before payment");
   await client.close();

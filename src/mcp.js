@@ -171,9 +171,10 @@ const PAID_TOOLS = [
     input: CHECK_INPUT,
     validate,
     discovery: CHECK_DISCOVERY,
-    summary: "Green/orange/red verdict with reason codes before an agent signs an EVM transaction, token approval, EIP-712 signature or XRP Ledger transaction.",
+    summary: "Green/orange/red verdict with reason codes before an agent signs an EVM or Solana transaction, token approval, EIP-712 signature, plain message or XRP Ledger transaction.",
+    solana: true,
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
+      `Paid (${price} USDC via x402 on Base or Solana): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
     run: (request) => check(request),
   },
   {
@@ -184,8 +185,9 @@ const PAID_TOOLS = [
     validate,
     discovery: CHECK_DISCOVERY,
     summary: "The same verdict plus a short plain-language explanation for a person, in English or Dutch.",
+    solana: true,
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base): the same verdict and reason codes as presign_check, plus a 3 to 5 sentence plain-language explanation a person can read before approving (lang en or nl). Same as POST /v1/check/explain.`,
+      `Paid (${price} USDC via x402 on Base or Solana): the same verdict and reason codes as presign_check, plus a 3 to 5 sentence plain-language explanation a person can read before approving (lang en or nl). Same as POST /v1/check/explain.`,
     run: async (request, args) => {
       const result = await check(request);
       const lang = args.lang === "nl" ? "nl" : "en";
