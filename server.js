@@ -34,6 +34,7 @@ import { creditCosts, creditsRouter, packRoutes, payWithCredits, redisStore, wit
 import { trustProxyHops } from "./src/proxy.js";
 import { jevStatus, jevSelfTest } from "./src/jev.js";
 import { simulationStatus, simulationSelfTest } from "./src/simulate.js";
+import { historyStatus, historySelfTest } from "./src/poisoning.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const NETWORK = process.env.X402_NETWORK ?? "eip155:84532"; // Base Sepolia by default
@@ -145,9 +146,10 @@ app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus() }));
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus() }));
 jevSelfTest().catch(() => {});
 simulationSelfTest().catch(() => {});
+historySelfTest().catch(() => {});
 const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
 app.get("/", (req, res, next) => (res.vary("Accept"), req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
 // For search engines: the homepage is the one page to index.
