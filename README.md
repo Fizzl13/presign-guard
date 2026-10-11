@@ -174,6 +174,15 @@ Supported chains: 1, 10, 56, 137, 8453, 42161.
 
 A message moves no tokens by itself, but two kinds are traps. Red: `ETH_SIGN` (`eth_sign` signs a raw 32-byte hash, so nobody can see what is agreed to; it can be a transaction or permit in disguise), `SIGN_IN_DOMAIN_MISMATCH` (a Sign-In with Ethereum message, EIP-4361, for another site than the `origin` asking: a phishing site relaying a real site's login). Orange: `UNREADABLE_MESSAGE` (the bytes aren't readable text; `details.looksLike: "a 32-byte hash"` when it is exactly 32 bytes), `SIGN_IN_URI_MISMATCH` (the message's URI is on another site than its domain), `SIGN_IN_ADDRESS_MISMATCH` (it signs in another account than `from`), `SIGN_IN_CHAIN_MISMATCH` (its Chain ID differs from `chainId`). Info: `SIGN_IN_REQUEST` (the site, account, URI and expiry of a sign-in message), `PLAIN_MESSAGE`. The `origin` gets the same phishing-list and domain-age checks as any request, and `intent` works too. The answer's `subject` carries `kind: "message"`, the method and the first 200 characters of the text (`preview`).
 
+### Solana transactions
+
+```jsonc
+// The base64 wire transaction about to be signed (legacy or v0); from is optional (default: the fee payer)
+{ "type": "solana", "transaction": "AQAAAAAA…", "origin": "https://…" }
+```
+
+Solana has no allowances like EVM: drainers go after the account itself. The instructions are decoded and the transaction is simulated on the RPC (`simulateTransaction`, signatures not checked, `SOLANA_RPC_URL` overrides the public endpoint) to see what really happens to the wallet, also inside other programs. Red: `SOLANA_TOKEN_ACCOUNT_TAKEOVER` (SetAuthority gives the owner or close authority of the wallet's token account to someone else: the account and everything in it is theirs), `SOLANA_ACCOUNT_ASSIGN` (System Assign hands the wallet to a program). Orange: `SOLANA_UNLIMITED_DELEGATE` (Approve with an unlimited amount), `SOLANA_DURABLE_NONCE` (once signed it never expires), `SOLANA_CLOSE_TO_OTHER` (a token account closed with its SOL sent elsewhere), `SOLANA_SET_AUTHORITY` (another authority change), `HIDDEN_APPROVAL` (a delegate set that no instruction shows), `SIMULATION_FAILS`. Info: `SOLANA_TOKEN_DELEGATE` (a limited delegate), `SIMULATED` (the wallet's SOL and token changes), `SOLANA_LOOKUP_TABLES`, `SIMULATION_UNAVAILABLE`. A takeover or assign seen only in the simulation is red too (`details.hidden: true`). The answer carries `simulation: { ok, changes, fee }`; `origin` and `intent` work as for EVM.
+
 ### XRP Ledger transactions
 
 ```jsonc

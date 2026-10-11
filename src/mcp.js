@@ -38,7 +38,8 @@ const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
 
 // What the agent is about to sign; the same fields as the HTTP body.
 const CHECK_INPUT = {
-  type: z.enum(["approval", "transaction", "signature", "message", "xrpl"]).describe("What the agent is about to sign; message = a plain personal_sign / eth_sign message in message; xrpl = an unsigned XRP Ledger transaction in tx"),
+  type: z.enum(["approval", "transaction", "signature", "message", "solana", "xrpl"]).describe("What the agent is about to sign; message = a plain personal_sign / eth_sign message in message; solana = a Solana transaction in transaction; xrpl = an unsigned XRP Ledger transaction in tx"),
+  transaction: z.string().max(2400).optional().describe("solana: the base64 wire transaction about to be signed; decoded and simulated (red SOLANA_TOKEN_ACCOUNT_TAKEOVER, SOLANA_ACCOUNT_ASSIGN; orange SOLANA_UNLIMITED_DELEGATE, SOLANA_DURABLE_NONCE, HIDDEN_APPROVAL, SIMULATION_FAILS)"),
   chainId: z.number().int().optional().describe(`EVM chain id, required for approval, transaction and signature: ${CHAINS.join(", ")} (8453 = Base); optional for message`),
   method: z.enum(["personal_sign", "eth_sign"]).optional().describe("message: how it is signed (default personal_sign); eth_sign is always red"),
   message: z.string().max(16384).optional().describe("message: the text or 0x-hex about to be signed; a Sign-In with Ethereum message for another site than origin is red, unreadable bytes are orange"),

@@ -35,7 +35,7 @@ The free tools work right away. The paid tools ask for an x402 payment inside th
 
 Examples:
 
-- Before approving a token: `POST https://presign-guard.fizzl.eu/v1/check` with `{"type": "approval", "chainId": 8453, "token": "0x…", "spender": "0x…", "amount": "1000000"}` (max $0.01). Other request types: `"transaction"` (`to`, `data`, `value`, and `from` to simulate it), `"signature"` (`typedData`, the eth_signTypedData_v4 payload) and `"message"` (`message`, the personal_sign text or hex; `method: "eth_sign"` is always red; a sign-in message for another site than `origin` is red). Chains: 1, 10, 56, 137, 8453, 42161.
+- Before approving a token: `POST https://presign-guard.fizzl.eu/v1/check` with `{"type": "approval", "chainId": 8453, "token": "0x…", "spender": "0x…", "amount": "1000000"}` (max $0.01). Other request types: `"transaction"` (`to`, `data`, `value`, and `from` to simulate it), `"signature"` (`typedData`, the eth_signTypedData_v4 payload) and `"message"` (`message`, the personal_sign text or hex; `method: "eth_sign"` is always red; a sign-in message for another site than `origin` is red). A Solana transaction: `{"type": "solana", "transaction": "<base64 wire transaction>"}` (decoded and simulated; a token account or the wallet handed to someone else is red). Chains: 1, 10, 56, 137, 8453, 42161.
 - Before buying a token: `GET https://presign-guard.fizzl.eu/v1/token?chain=base&address=0x…` (max $0.01); `chain=solana` with a mint address works too.
 
 ## Free
