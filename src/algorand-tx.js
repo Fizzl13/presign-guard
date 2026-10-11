@@ -39,7 +39,8 @@ export class AlgorandValidationError extends Error {
 export const isAlgorandRequest = (body) => Boolean(body && typeof body === "object" && body.type === "algorand");
 
 const addr = (a) => (a ? a.toString() : undefined);
-const ZERO = algosdk.ALGORAND_ZERO_ADDRESS_STRING;
+export const ALGORAND_ZERO = algosdk.ALGORAND_ZERO_ADDRESS_STRING;
+const ZERO = ALGORAND_ZERO;
 const set = (a) => { const s = addr(a); return s && s !== ZERO ? s : undefined; };
 const algo = (micro) => Number(micro) / 1e6;
 

@@ -62,7 +62,7 @@ const EXPLAIN_INPUT = { ...CHECK_INPUT, lang: z.enum(["en", "nl"]).optional().de
 
 const TOKEN_INPUT = {
   chain: z.enum(TOKEN_INPUT_SCHEMA.properties.chain.enum).describe("Chain the token lives on"),
-  address: z.string().describe("Solana mint address (base58) or EVM token contract (0x...)"),
+  address: z.string().describe("Solana mint address (base58), EVM token contract (0x...), XRPL token as CURRENCY.rIssuer, or Algorand asset id (e.g. 31566704)"),
 };
 
 const APPROVALS_INPUT = {
@@ -206,7 +206,7 @@ const PAID_TOOLS = [
     solana: true,
     summary: "Is this token safe to buy, hold or accept? Verdict, grade, reason codes, one-line summary and market data for a Solana or EVM token.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc) and the token address or mint; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
+      `Paid (${price} USDC via x402 on Base or Solana): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc, xrpl, algorand) and the token address, mint, CURRENCY.rIssuer or Algorand asset id; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
     run: (request) => tokenVerdict(request),
   },
   {

@@ -24,6 +24,7 @@ import { permissionedToken } from "./token-acl.js";
 import { launchEscrows } from "./launch-escrow.js";
 import { secondOpinion } from "./jev.js";
 import { isXrplAddress, ledger, isRlusdCode, currencyName, RLUSD, LSF, BLACKHOLES, XRPL_NETWORKS } from "./xrpl.js";
+import { ALGORAND_NETWORKS, ALGORAND_ZERO } from "./algorand-tx.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1";
@@ -41,6 +42,8 @@ export const TOKEN_CHAINS = {
   bsc: { chainId: 56, dexscreener: "bsc" },
   // XRP Ledger: address is "CURRENCY.rIssuer" (a 3-letter code or its 40-hex form, e.g. RLUSD.rMxCK…).
   xrpl: { dexscreener: "xrpl" },
+  // Algorand: address is the asset id (ASA), e.g. 31566704 for USDC.
+  algorand: { dexscreener: "algorand" },
 };
 
 export const LOW_LIQUIDITY_USD = 50_000;
@@ -69,6 +72,11 @@ export function parseTokenRequest(query) {
   }
   const raw = String(query?.address ?? "").trim();
   if (chain === "xrpl") return parseXrplToken(raw);
+  if (chain === "algorand") {
+    if (/^(0|algo)$/i.test(raw)) throw new ValidationError("ALGO is the native coin and has no asset to check");
+    if (!/^\d{1,20}$/.test(raw) || BigInt(raw) >= 2n ** 64n) throw new ValidationError("address must be an Algorand asset id (ASA), e.g. 31566704");
+    return { chain, address: String(BigInt(raw)) };
+  }
   if (chain === "solana") {
     if (!SOLANA_ADDRESS.test(raw)) throw new ValidationError("address must be a Solana mint address (base58)");
     return { chain, address: raw };
@@ -355,6 +363,7 @@ const PHRASES = {
   TOKEN_FROZEN: () => "issuer froze all transfers",
   TOKEN_ISSUER_NOT_FOUND: () => "issuer account doesn't exist",
   CLAWBACK_ENABLED: () => "issuer can claw tokens back",
+  TOKEN_NOT_FOUND: () => "asset doesn't exist",
   HIGH_TRANSFER_FEE: (d) => `${d.feePct}% transfer fee`,
   TRANSFER_FEE: (d) => `${d.feePct}% transfer fee`,
   TOKEN_HIGH_TAX: (d) => `${pct1(Math.max(d.buyTax, d.sellTax) * 100)}% tax`,
@@ -368,8 +377,11 @@ const PHRASES = {
 export function oneLiner({ grade, reasons, market }) {
   const serious = reasons.filter((r) => r.severity !== "info");
   const phrases = serious.map((r) => PHRASES[r.code]?.(r.details ?? {}) ?? r.code.toLowerCase().replace(/_/g, " "));
+  const stable = reasons.find((r) => r.code === "KNOWN_STABLECOIN");
   if (!phrases.length && reasons.some((r) => r.code === "ISSUER_IS_RIPPLE")) {
     phrases.push("no red flags, Ripple's RLUSD");
+  } else if (!phrases.length && stable) {
+    phrases.push(`no red flags, ${stable.details.issuer}'s ${stable.details.symbol}`);
   } else if (!phrases.length && reasons.some((r) => r.code === "TOKEN_ON_TRUST_LIST")) {
     // DexScreener's liquidity and age undercount quote assets (USDT showed $863): leave them out.
     phrases.push("no red flags, on the GoPlus trust list");
@@ -450,8 +462,102 @@ async function xrplTokenVerdict({ address, currency, issuer }, now, { fetchImpl 
   };
 }
 
+// Known stablecoins on Algorand mainnet: their issuers keep clawback and freeze on purpose (context, not warnings).
+const ALGORAND_STABLECOINS = { 31566704: { symbol: "USDC", issuer: "Circle" }, 312769: { symbol: "USDt", issuer: "Tether" } };
+const ALGORAND_INDEXER = process.env.ALGORAND_INDEXER_URL || "https://mainnet-idx.algonode.cloud";
+const INDEXER_TIMEOUT_MS = 6000; // the public indexer answers in ~0.5 s, sometimes in 4–5
+const letters = (s) => String(s ?? "").replace(/[^a-z]/gi, "").toUpperCase();
+
+// An Algorand asset (ASA): what its control addresses allow (clawback takes tokens out of any account, freeze stops
+// them, default-frozen holdings need the freeze address to release them), whether it pretends to be USDC, USDt or
+// ALGO, who holds it and its DEX market. Supply is fixed at creation: there is no minting; the reserve holds what
+// isn't in circulation, so it is left out of the holder concentration, as are the DEX pool accounts.
+async function algorandTokenVerdict({ address }, now, { fetchImpl = globalThis.fetch } = {}) {
+  const { reasons, add } = reasonCollector();
+  const sources = ["algod", "dexscreener"];
+  const net = ALGORAND_NETWORKS["wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8="];
+  const id = Number(address);
+  const get = async (url, source, timeoutMs = FETCH_TIMEOUT_MS) => {
+    let res;
+    try { res = await fetchImpl(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(timeoutMs) }); } catch (err) { throw new UpstreamError(`${source} unreachable (${err.name})`); }
+    if (res.status === 404) return null;
+    if (!res.ok) throw new UpstreamError(`${source} HTTP ${res.status}`);
+    return res.json();
+  };
+  const [asset, pairs] = await Promise.all([
+    cached(`algo-asset:${address}`, () => get(`${net.api}/v2/assets/${address}`, "Algorand node")),
+    getMarket("algorand", address).catch(() => []),
+  ]);
+  const market = summarizeMarket(pairs, "algorand", address, now);
+  const stable = ALGORAND_STABLECOINS[id];
+  const token = { chain: "algorand", address, name: null, symbol: null };
+  if (!asset?.params) {
+    add("TOKEN_NOT_FOUND", "red", { assetId: id });
+  } else {
+    const p = asset.params;
+    Object.assign(token, { name: p.name ?? null, symbol: p["unit-name"] ?? null, decimals: p.decimals, creator: p.creator, ...(p.url && { url: p.url }) });
+    const power = stable ? "info" : "orange";
+    const names = [letters(p["unit-name"]), letters(p.name)];
+    if (!stable && names.some((n) => ["USDC", "USDT", "USD"].includes(n))) add("TOKEN_IMPERSONATION", "red", { realToken: "USDC 31566704 or USDt 312769", unitName: p["unit-name"], name: p.name });
+    else if (names.some((n) => n === "ALGO")) add("TOKEN_IMPERSONATION", "orange", { imitates: "ALGO, the native coin (not an asset)", unitName: p["unit-name"], name: p.name });
+    const set = (a) => (a && a !== ALGORAND_ZERO ? a : null); // algod leaves a cleared address out, the indexer writes the zero address
+    if (set(p.clawback)) add("CLAWBACK_ENABLED", power, { clawback: p.clawback });
+    if (p["default-frozen"]) add("PERMISSIONED_TOKEN", power, { standard: "algorand-default-frozen", freeze: set(p.freeze) });
+    else if (set(p.freeze)) add("FREEZE_AUTHORITY_ACTIVE", "info", { freeze: p.freeze });
+    if (!set(p.manager) && !set(p.clawback) && !set(p.freeze)) add("ISSUER_RENOUNCED", "info");
+    if (stable) add("KNOWN_STABLECOIN", "info", stable);
+
+    // Age and holders from the indexer, in parallel; missing indexer data is reported and skipped.
+    const indexer = (path) => get(`${ALGORAND_INDEXER}${path}`, "Algorand indexer", INDEXER_TIMEOUT_MS);
+    const down = (err) => add("INDEXER_UNAVAILABLE", "info", { message: String(err.message).slice(0, 120) });
+    const age = (async () => {
+      const info = await cached(`algo-asset-idx:${address}`, () => indexer(`/v2/assets/${address}?include-all=true`));
+      const round = info?.asset?.["created-at-round"];
+      const block = round ? await cached(`algo-block:${round}`, () => indexer(`/v2/blocks/${round}?header-only=true`)) : null;
+      if (!block?.timestamp) return;
+      token.createdAt = new Date(block.timestamp * 1000).toISOString();
+      const ageSeconds = Math.max(0, Math.floor(now / 1000 - block.timestamp));
+      if (ageSeconds < NEW_TOKEN_SECONDS) add("NEW_TOKEN", "orange", { ageSeconds, since: "asset created" }); // one NEW_TOKEN, also when the market is new
+    })().catch(down);
+    const holders = (async () => {
+      if (stable) return;
+      const reserveHolding = set(p.reserve) ? await get(`${net.api}/v2/accounts/${p.reserve}/assets/${address}`, "Algorand node").catch(() => null) : null;
+      const circulating = Number(p.total) - Number(reserveHolding?.["asset-holding"]?.amount ?? 0);
+      if (!(circulating > 0)) return;
+      const pools = new Set(pairs.map((x) => x?.pairAddress).filter(Boolean));
+      const list = await indexer(`/v2/assets/${address}/balances?currency-greater-than=${Math.floor(circulating * 0.01)}&limit=100`);
+      const rows = (list?.balances ?? []).filter((x) => !x.deleted).map((x) => ({ address: x.address, pct: (Number(x.amount) / circulating) * 100, excluded: x.address === p.reserve || pools.has(x.address) }));
+      holderReasons(concentration(rows), add);
+    })().catch(down);
+    await Promise.all([age, holders]);
+    if (!reasons.some((r) => r.code === "INDEXER_UNAVAILABLE")) sources.push("algorand-indexer");
+  }
+  marketReasons(market, add, { trusted: Boolean(stable) });
+  if (!stable && asset?.params && !reasons.some((r) => r.code === "TOKEN_IMPERSONATION")) {
+    const ai = await secondOpinion({ chainId: "algorand", tokens: [{ address, symbol: token.symbol ?? undefined, name: token.name ?? undefined }] }).catch(() => ({ reasons: [], sources: [] }));
+    for (const r of ai.reasons) add(r.code, r.severity, r.details);
+    sources.push(...ai.sources);
+  }
+  const order = { red: 0, orange: 1, info: 2 };
+  reasons.sort((x, y) => order[x.severity] - order[y.severity]);
+  const { verdict, grade } = gradeOf(reasons);
+  return {
+    version: "1",
+    verdict,
+    grade,
+    one_liner: oneLiner({ grade, reasons, market }),
+    reasons,
+    token,
+    market,
+    sources,
+    checkedAt: new Date(now).toISOString(),
+    disclaimer: "Automated on-chain and market checks, not financial advice. Green means no known red flags, not that the token will hold its value.",
+  };
+}
+
 export async function tokenVerdict(request, now = Date.now(), opts = {}) {
   if (request.chain === "xrpl") return xrplTokenVerdict(request, now, opts);
+  if (request.chain === "algorand") return algorandTokenVerdict(request, now, opts);
   const { chain, address } = request;
   const { reasons, add } = reasonCollector();
   const sources = ["goplus", "dexscreener"];
