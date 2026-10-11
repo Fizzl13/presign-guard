@@ -297,12 +297,45 @@ const OUTPUT_EXAMPLE = {
   reasons: [{ code: "UNLIMITED_APPROVAL", severity: "orange", subject: EXAMPLE_SPENDER.toLowerCase(), details: { token: EXAMPLE_TOKEN.toLowerCase() } }],
 };
 
+// The bazaar extension rides in the 402's PAYMENT-REQUIRED header, next to the accepts for four networks; Node
+// clients refuse headers over 16 KB. So the header carries the same fields, types and enums with short
+// descriptions; openapi.json has the full ones (reason codes, simulation, what each type needs).
+const SHORT = {
+  type: "What is about to be signed",
+  transaction: "solana: the base64 wire transaction; algorand: one base64 msgpack transaction",
+  transactions: "algorand: an atomic group, each base64 msgpack",
+  method: "message: personal_sign (default) or eth_sign",
+  message: "message: the text or 0x-hex to be signed",
+  chainId: "EVM chain; required for approval, transaction and signature",
+  network: "xrpl: xrpl:0 (default) or xrpl:1",
+  tx: "xrpl: the unsigned transaction JSON",
+  token: "approval: token contract",
+  spender: "approval: who gets the allowance",
+  amount: "approval: amount in base units (0 = revoke)",
+  to: "transaction: target contract",
+  data: "transaction: 0x-prefixed calldata",
+  value: "transaction: native value in wei",
+  from: "optional: your wallet; an EVM transaction is then simulated",
+  typedData: "signature: the eth_signTypedData_v4 payload",
+  origin: "optional: the site asking (URL or hostname)",
+  intent: "optional: what the agent means to do, in one sentence",
+  x402: "optional, EIP-3009 payments: the x402 accepts entry being paid",
+  mandate: "optional, EIP-3009 payments: the spending mandate paid under",
+  lang: "explain only: en or nl",
+};
+const shorten = (props) => Object.fromEntries(Object.entries(props).map(([k, v]) => [k, { ...v, description: SHORT[k] ?? String(v.description ?? "").slice(0, 80) }]));
+export const BAZAAR_INPUT_SCHEMA = { ...INPUT_SCHEMA, properties: shorten(INPUT_SCHEMA.properties) };
+const BAZAAR_OUTPUT_SCHEMA = {
+  ...OUTPUT_SCHEMA,
+  properties: { ...OUTPUT_SCHEMA.properties, receipt: { type: "object", description: "Signed receipt binding this verdict to your request; see openapi.json" } },
+};
+
 export const bazaarExtension = () => declareDiscoveryExtension({
   method: "POST",
   bodyType: "json",
   input: INPUT_EXAMPLE,
-  inputSchema: INPUT_SCHEMA,
-  output: { schema: OUTPUT_SCHEMA, example: OUTPUT_EXAMPLE },
+  inputSchema: BAZAAR_INPUT_SCHEMA,
+  output: { schema: BAZAAR_OUTPUT_SCHEMA, example: OUTPUT_EXAMPLE },
 });
 
 // Service metadata on every paid route (the x402 Bazaar indexes serviceName, tags and iconUrl).
