@@ -149,6 +149,8 @@ app.use(nohumansClaim());
 app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus() }));
 jevSelfTest().catch(() => {});
 simulationSelfTest().catch(() => {});
+// Again every 6 hours, so /health shows how simulation works now, not only how it did at startup.
+setInterval(() => simulationSelfTest().catch(() => {}), 6 * 3_600_000).unref();
 historySelfTest().catch(() => {});
 const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
 app.get("/", (req, res, next) => (res.vary("Accept"), req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));

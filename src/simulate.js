@@ -7,13 +7,14 @@
 // Needs the sender (`from`); a failure or timeout leaves the check as it was (never a guessed green).
 
 export const ALCHEMY = { 1: "eth-mainnet", 10: "opt-mainnet", 56: "bnb-mainnet", 137: "polygon-mainnet", 8453: "base-mainnet", 42161: "arb-mainnet" };
+// Two public RPCs per chain from different providers, so one node that falters doesn't stop the simulation.
 const PUBLIC = {
-  1: "https://ethereum-rpc.publicnode.com",
-  10: "https://optimism-rpc.publicnode.com",
-  56: "https://bsc-rpc.publicnode.com",
-  137: "https://polygon-bor-rpc.publicnode.com",
-  8453: "https://base-rpc.publicnode.com",
-  42161: "https://arbitrum-one-rpc.publicnode.com",
+  1: ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
+  10: ["https://optimism-rpc.publicnode.com", "https://mainnet.optimism.io"],
+  56: ["https://bsc-rpc.publicnode.com", "https://bsc-dataseed.bnbchain.org"],
+  137: ["https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"],
+  8453: ["https://base-rpc.publicnode.com", "https://mainnet.base.org"],
+  42161: ["https://arbitrum-one-rpc.publicnode.com", "https://arb1.arbitrum.io/rpc"],
 };
 export const SIMULATED_CHAINS = Object.keys(PUBLIC).map(Number);
 const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 8453: "ETH", 42161: "ETH" };
@@ -76,7 +77,7 @@ export function createSimulator({ env = process.env, fetch: fetchImpl, timeoutMs
   const enabled = env.SIMULATION !== "off";
   const urls = (chainId) => [
     ...(env.ALCHEMY_API_KEY && ALCHEMY[chainId] ? [{ url: `https://${ALCHEMY[chainId]}.g.alchemy.com/v2/${env.ALCHEMY_API_KEY}`, source: "alchemy" }] : []),
-    { url: env[`RPC_URL_${chainId}`] || PUBLIC[chainId], source: "rpc" },
+    ...(env[`RPC_URL_${chainId}`] ? [env[`RPC_URL_${chainId}`]] : PUBLIC[chainId] ?? []).map((url) => ({ url, source: "rpc" })),
   ];
   const rpc = async (url, body) => {
     const res = await (fetchImpl ?? globalThis.fetch)(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
