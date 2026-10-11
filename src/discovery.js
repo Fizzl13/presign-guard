@@ -234,6 +234,62 @@ const OUTPUT_SCHEMA = {
   required: ["verdict", "reasons"],
 };
 
+// The answer's simulation field (src/simulate.js for EVM, src/solana-tx.js for Solana). Only in openapi.json:
+// the 402 challenge already carries the bazaar schemas and stays well under the 16 KB header limit of Node clients.
+const SIMULATION_SCHEMA = {
+  type: "object",
+  description: "What the transaction would do, from a simulation: an EVM transaction sent with from, or a Solana transaction. Missing when it could not be simulated",
+  properties: {
+    ok: { type: "boolean", description: "false: the transaction would fail (error says why)" },
+    error: { type: "string" },
+    changes: {
+      type: "array",
+      maxItems: 50,
+      description: "EVM: transfers and approvals in the order they happen. Solana: the changes of the wallet and its token accounts",
+      items: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["transfer", "approve", "sol", "token", "closed", "owner", "delegate"], description: "EVM: transfer, approve. Solana: sol, token, closed (a token account closed), owner (an account handed to another owner or program), delegate" },
+          asset: { type: "string", enum: ["native", "erc20", "erc721", "erc1155", "nft_all"], description: "EVM: what moves or is approved" },
+          token: { type: "string", description: "EVM: the token contract" },
+          symbol: { type: "string", description: "EVM: the token symbol, when known" },
+          from: { type: "string", description: "EVM: sender or owner. Solana owner change: the old owner" },
+          to: { type: "string", description: "EVM: recipient or spender. Solana owner change: the new owner" },
+          rawAmount: { type: "string", description: "EVM: the amount in base units" },
+          amount: { type: ["string", "null"], description: "EVM: the amount in token units, when the decimals are known. Solana delegate: the delegated amount" },
+          tokenId: { type: "string", description: "EVM: the NFT id" },
+          account: { type: "string", description: "Solana: the account that changes (the wallet or one of its token accounts)" },
+          mint: { type: "string", description: "Solana: the token mint" },
+          change: { type: "number", description: "Solana: the change in SOL (sol) or in token units (token); negative when it leaves" },
+          lamports: { type: "string", description: "Solana sol: the exact change in lamports" },
+          raw: { type: "string", description: "Solana token: the exact change in base units" },
+          decimals: { type: "integer", description: "Solana token: the mint's decimals" },
+          delegate: { type: "string", description: "Solana delegate: who may now spend from the token account" },
+        },
+        required: ["type"],
+      },
+    },
+    partial: { type: "boolean", description: "Solana: the transaction writes more accounts than were read, so changes may be incomplete" },
+    fee: { type: "number", description: "Solana: the network fee in SOL" },
+    lookupTableAccounts: { type: "integer", description: "Solana: accounts loaded from address lookup tables" },
+    gasUsed: { type: "string", description: "EVM: gas used" },
+    source: { type: "string", description: "EVM: the RPC that simulated it" },
+  },
+  required: ["ok", "changes"],
+};
+
+// openapi.json's /v1/check schemas: what each type needs (chainId for the EVM types, transaction, tx, message), and the simulation field.
+const CHECK_INPUT_SCHEMA = {
+  ...INPUT_SCHEMA,
+  allOf: [
+    { if: { properties: { type: { enum: ["approval", "transaction", "signature"] } }, required: ["type"] }, then: { required: ["chainId"] } },
+    { if: { properties: { type: { const: "solana" } }, required: ["type"] }, then: { required: ["transaction"] } },
+    { if: { properties: { type: { const: "xrpl" } }, required: ["type"] }, then: { required: ["tx"] } },
+    { if: { properties: { type: { const: "message" } }, required: ["type"] }, then: { required: ["message"] } },
+  ],
+};
+const CHECK_OUTPUT_SCHEMA = { ...OUTPUT_SCHEMA, properties: { ...OUTPUT_SCHEMA.properties, simulation: SIMULATION_SCHEMA } };
+
 const OUTPUT_EXAMPLE = {
   verdict: "orange",
   reasons: [{ code: "UNLIMITED_APPROVAL", severity: "orange", subject: EXAMPLE_SPENDER.toLowerCase(), details: { token: EXAMPLE_TOKEN.toLowerCase() } }],
@@ -310,9 +366,9 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
           networks: tokenNetworks, // every network the server accepts (Base, Solana, XRPL, Algorand when set)
           asset: "USDC",
         },
-        requestBody: { required: true, content: { "application/json": { schema: INPUT_SCHEMA, example: INPUT_EXAMPLE } } },
+        requestBody: { required: true, content: { "application/json": { schema: CHECK_INPUT_SCHEMA, example: INPUT_EXAMPLE } } },
         responses: {
-          200: { description: "Verdict", content: { "application/json": { schema: OUTPUT_SCHEMA, example: OUTPUT_EXAMPLE } } },
+          200: { description: "Verdict", content: { "application/json": { schema: CHECK_OUTPUT_SCHEMA, example: OUTPUT_EXAMPLE } } },
           400: { description: "Invalid request; nothing is charged" },
           402: { description: "Payment Required" },
           503: { description: "A data source is down; nothing is charged, no verdict" },

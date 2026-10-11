@@ -119,3 +119,40 @@ test("Bazaar curation metadata: serviceName, category, iconUrl and tags in /.wel
     assert.ok(config.tags.length > 0, route);
   }
 });
+
+test("openapi /v1/check: chainId required for the EVM types only, and the simulation field in the answer", async () => {
+  const { default: Ajv2020 } = await import("ajv/dist/2020.js");
+  const { changesFromLogs } = await import("../src/simulate.js");
+  const ajv = new Ajv2020({ strict: false });
+  const spec = openApi("https://example.test", "eip155:8453", ["eip155:8453", SOLANA.network]);
+  for (const path of ["/v1/check", "/v1/check/explain"]) {
+    const op = spec.paths[path].post;
+    const input = ajv.compile(op.requestBody.content["application/json"].schema);
+    assert.equal(input({ type: "approval", token: "0x1", spender: "0x2", amount: "1" }), false, `${path}: approval without chainId`);
+    assert.equal(input({ type: "approval", chainId: 8453, token: "0x1", spender: "0x2", amount: "1" }), true);
+    assert.equal(input({ type: "signature", typedData: {} }), false, `${path}: signature without chainId`);
+    assert.equal(input({ type: "solana", transaction: "AQ==" }), true, `${path}: solana needs no chainId`);
+    assert.equal(input({ type: "message", message: "hello" }), true);
+    assert.equal(input({ type: "xrpl", tx: { TransactionType: "Payment" } }), true);
+    assert.equal(input({ type: "solana" }), false, `${path}: solana without transaction`);
+    assert.equal(input({ type: "xrpl", network: "xrpl:0" }), false, `${path}: xrpl without tx`);
+    assert.equal(input({ type: "message" }), false, `${path}: message without message`);
+
+    const schema = op.responses[200].content["application/json"].schema;
+    const output = ajv.compile(schema);
+    const item = schema.properties.simulation.properties.changes.items.properties;
+    const T = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    const pad = (a) => "0x" + a.slice(2).padStart(64, "0");
+    const evm = changesFromLogs([{ address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", topics: [T, pad("0x1111111111111111111111111111111111111111"), pad("0x2222222222222222222222222222222222222222")], data: pad("0x0f4240") }], 8453);
+    const solana = [
+      { type: "sol", account: "W", change: -0.000005, lamports: "-5000" },
+      { type: "token", account: "A", mint: "M", change: -1.5, raw: "-1500000", decimals: 6 },
+      { type: "owner", account: "A", mint: "M", from: "W", to: "X" },
+      { type: "delegate", account: "A", mint: "M", delegate: "D", amount: null },
+      { type: "closed", account: "A", mint: "M" },
+    ];
+    for (const c of [...evm, ...solana]) for (const k of Object.keys(c)) assert.ok(item[k], `${path}: simulation change field ${k} is in the schema`);
+    assert.equal(output({ verdict: "green", reasons: [], simulation: { ok: true, changes: evm, gasUsed: "21000", source: "base" } }), true, JSON.stringify(output.errors));
+    assert.equal(output({ verdict: "red", reasons: [], simulation: { ok: true, changes: solana, partial: true, fee: 0.000005 } }), true, JSON.stringify(output.errors));
+  }
+});
