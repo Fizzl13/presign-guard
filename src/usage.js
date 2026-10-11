@@ -92,6 +92,23 @@ function describeApprovalsCall(req, body) {
   };
 }
 
+// GET /v1/screen: which address format, the verdict, and the codes that are not context.
+function describeScreenCall(req, body) {
+  const q = req.query || {};
+  const b = body || {};
+  return {
+    route: "screen",
+    via: req.get && req.get("sec-fetch-site") === "same-origin" ? "web" : "api",
+    input: { format: b.address && b.address.format, target: typeof q.address === "string" ? q.address.slice(0, 120) : undefined },
+    result: {
+      verdict: b.verdict === null ? "none" : b.verdict,
+      grade: b.grade,
+      reasons: Array.isArray(b.reasons) ? b.reasons.filter((r) => r.severity !== "info").map((r) => r.code).join(", ") || undefined : undefined,
+      error: b.error,
+    },
+  };
+}
+
 export function describePresignCall(req, _res, body) {
   // Who reads the EIP-8004 registration (e.g. agent registries such as Metaplex).
   if (req.method === "GET" && req.path === "/.well-known/agent-registration.json") return { route: "agent registration", via: "discovery", input: {}, result: { status: _res.statusCode } };
@@ -103,6 +120,7 @@ export function describePresignCall(req, _res, body) {
     return { route: "token_quick", via: req.get && req.get("origin") ? "web" : "api", input: { chain: q.chain, address: typeof q.address === "string" ? q.address.slice(0, 64) : undefined }, result: { verdict: b.verdict, grade: b.grade, error: b.error } };
   }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
+  if (req.method === "GET" && req.path === "/v1/screen") return describeScreenCall(req, body);
   // Credit packs: the purchase (never the key itself) and balance lookups.
   const pack = req.method === "GET" && /^\/v1\/credits\/(\d+)$/.exec(req.path);
   if (pack) return { route: "credits pack", via: "api", input: { pack: pack[1] }, result: { credits: (body || {}).credits, error: (body || {}).error } };

@@ -33,6 +33,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval, its spender, and which to revoke (see below) |
+| `GET /v1/screen?address=…` | $0.01 USDC, Base or Solana | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
 | `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
@@ -45,7 +46,7 @@ Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict a
 
 ## Credit packs
 
-Agents that call presign-guard often can prepay: one x402 payment of **$0.80 for 100 credits** or **$7.00 for 1000 credits** (20% and 30% off), valid for a year. A credit is $0.01 of checks: `POST /v1/check` and `GET /v1/token` cost 1, `GET /v1/approvals` 2, `POST /v1/check/explain` 3.
+Agents that call presign-guard often can prepay: one x402 payment of **$0.80 for 100 credits** or **$7.00 for 1000 credits** (20% and 30% off), valid for a year. A credit is $0.01 of checks: `POST /v1/check`, `GET /v1/token` and `GET /v1/screen` cost 1, `GET /v1/approvals` 2, `POST /v1/check/explain` 3.
 
 ```bash
 # 1. Buy a pack (any x402 client); the answer holds your key
@@ -77,6 +78,7 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 | `token_quick_verdict` | free, shares the 10 calls/hour | The token verdict and grade only |
 | `token_verdict` | $0.01 USDC via x402 | The full token verdict, as `GET /v1/token` |
 | `wallet_approvals` | $0.02 USDC via x402 | The wallet approval audit, as `GET /v1/approvals` |
+| `screen_wallet` | $0.01 USDC via x402 | The wallet sanctions screen, as `GET /v1/screen` |
 | `feedback` | free | Report a bug or a missing feature, as `POST /feedback` |
 
 The three check tools also take an XRP Ledger transaction: `{"type": "xrpl", "tx": {…unsigned tx JSON…}, "network": "xrpl:0"}`, and an Algorand transaction or group: `{"type": "algorand", "transaction": "<base64 msgpack>"}` or `"transactions": [...]` (no `chainId`), with the same rules as `POST /v1/check`.
@@ -151,6 +153,35 @@ On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, fre
 | info | `UNLIMITED_APPROVAL_TRUSTED` (e.g. Permit2), `STALE_APPROVAL` (older than a year), `TOKEN_FLAGGED` (the approved token itself), `NO_APPROVALS` |
 
 Every approval with an orange or red code has `revoke: true`. The grades are the same as the token verdict. Source: GoPlus `token_approval_security` (ERC-20 allowances); NFT approvals are not covered. If GoPlus is down there is no verdict (503, not charged).
+
+## Wallet screen
+
+`GET /v1/screen?address=<address>` answers "may I pay this address, or accept money from it?". One address, any chain: the format tells which (EVM `0x…`, Solana, Tron, Bitcoin, XRP Ledger, Algorand, or another currency OFAC lists). For sellers screening who pays them, and for agents checking who they are about to pay.
+
+The address is matched exactly against every digital currency address in the **OFAC SDN list**, which presign-guard downloads from the US Treasury itself (`SDN.XML`) and re-checks every 6 hours. That matters beyond EVM: GoPlus answers `sanctioned: 0` for OFAC-listed Tron, Solana and XRPL addresses. EVM addresses also get the GoPlus address reports (theft, phishing, laundering, mixers).
+
+```json
+{
+  "verdict": "red",
+  "grade": "AVOID",
+  "one_liner": "AVOID: on the OFAC SDN list (BANK MARKAZI JOMHOURI ISLAMI IRAN)",
+  "reasons": [{ "code": "SANCTIONED_ADDRESS", "severity": "red", "details": { "list": "OFAC SDN", "matches": ["…"], "published": "2026-10-09" } }],
+  "address": { "address": "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81", "format": "tron" },
+  "sanctions": {
+    "list": "OFAC SDN", "listed": true, "published": "2026-10-09", "source": "ofac-sdn",
+    "matches": [{ "uid": 4632, "name": "BANK MARKAZI JOMHOURI ISLAMI IRAN", "type": "Entity", "programs": ["IRAN", "IFSR", "IRGC", "SDGT"], "currency": "TRX" }]
+  },
+  "sources": ["ofac-sdn"]
+}
+```
+
+| Severity | Codes |
+|---|---|
+| red | `SANCTIONED_ADDRESS` (on the OFAC SDN list), and GoPlus reports for EVM: `STEALING_ATTACK`, `PHISHING_ACTIVITIES`, `MONEY_LAUNDERING`, `SANCTIONED`, `CYBERCRIME`, `FINANCIAL_CRIME`, … |
+| orange | `MIXER`, `BLACKLIST_DOUBT` (GoPlus, EVM) |
+| info | `SANCTIONS_SCREENED` (not listed, with the list's publish date), `NO_REPORTS`, `REPUTATION_NOT_COVERED` (no scam data for this chain), `REPUTATION_UNAVAILABLE` (GoPlus down), `SANCTIONS_LIST_STALE` (no successful refresh for 3 days) |
+
+It is an exact match on the addresses OFAC publishes, not legal advice: it does not cover unlisted addresses of sanctioned persons or indirect exposure. Without any list (just started and the Treasury site down; PG1 stands in for EVM addresses) there is no verdict (503, not charged). `/health` shows the list's size and date under `ofac`.
 
 ## Request types
 
@@ -352,4 +383,4 @@ The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8
 
 ## Data sources
 
-Risk data comes from the [GoPlus Security API](https://gopluslabs.io). OFAC SDN sanctions screening and domain age come from [PG1](https://pg1-ai-agent.vercel.app) (public OFAC and RDAP data, credited as `pg1` in `sources`; set `PG1_API_KEY` to a PG1 membership key to be exempt from PG1's anonymous rate limit); the token verdict adds [RugCheck](https://rugcheck.xyz) (Solana) and [DexScreener](https://dexscreener.com) (market data). Transactions sent with `from` are simulated with the standard `eth_simulateV1` call, on [Alchemy](https://www.alchemy.com) when `ALCHEMY_API_KEY` is set (credited as `alchemy` in `sources`), else on the public RPC. Plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).
+Risk data comes from the [GoPlus Security API](https://gopluslabs.io). The wallet screen uses the [OFAC SDN list](https://sanctionslistservice.ofac.treas.gov/) straight from the US Treasury (`OFAC_SDN_URL` overrides the address, `OFAC_SDN=off` skips the download). OFAC SDN sanctions screening inside `/v1/check` and domain age come from [PG1](https://pg1-ai-agent.vercel.app) (public OFAC and RDAP data, credited as `pg1` in `sources`; set `PG1_API_KEY` to a PG1 membership key to be exempt from PG1's anonymous rate limit); the token verdict adds [RugCheck](https://rugcheck.xyz) (Solana) and [DexScreener](https://dexscreener.com) (market data). Transactions sent with `from` are simulated with the standard `eth_simulateV1` call, on [Alchemy](https://www.alchemy.com) when `ALCHEMY_API_KEY` is set (credited as `alchemy` in `sources`), else on the public RPC. Plus `eth_getCode` on a public RPC to recognise EIP-7702 wallets (override with `RPC_URL_<chainId>`). Explanations come from Claude (Anthropic).
