@@ -28,7 +28,7 @@ import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
 import { internalAccess, unlessInternal } from "./src/internal.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { signPageRouter } from "./src/sign-page.js";
 import { creditCosts, creditsRouter, packRoutes, payWithCredits, redisStore, withCreditsHint, CREDIT_HEADER } from "./src/credits.js";
 import { trustProxyHops } from "./src/proxy.js";
@@ -170,7 +170,16 @@ app.get("/", (_req, res) => res.json({
   openapi: `${PUBLIC_URL}/openapi.json`,
   signer: `${PUBLIC_URL}/.well-known/presign-guard-signer.json`,
 }));
-app.use("/media", express.static(fileURLToPath(new URL("./public/media", import.meta.url)), { maxAge: "1d" }));
+// The videos come from jsDelivr (a free CDN for public GitHub repos), pinned to the deployed commit, so a view
+// (5–10 MB) costs no Render bandwidth. Served from here when the commit isn't known (a local run).
+const MEDIA_DIR = fileURLToPath(new URL("./public/media", import.meta.url));
+const MEDIA_COMMIT = /^[0-9a-f]{40}$/.test(process.env.RENDER_GIT_COMMIT ?? "") ? process.env.RENDER_GIT_COMMIT : null;
+app.get("/media/:file", (req, res, next) => {
+  const file = req.params.file;
+  if (!MEDIA_COMMIT || !/^[\w-]+\.mp4$/.test(file) || !existsSync(`${MEDIA_DIR}/${file}`)) return next();
+  res.set("cache-control", "public, max-age=3600").redirect(302, `https://cdn.jsdelivr.net/gh/Fizzl13/presign-guard@${MEDIA_COMMIT}/public/media/${file}`);
+});
+app.use("/media", express.static(MEDIA_DIR, { maxAge: "1d" }));
 // Instructions an AI agent can read and follow ("Connect to presign-guard.fizzl.eu/skill.md").
 app.get("/favicon.ico", (_req, res) => res.set("cache-control", "public, max-age=86400").sendFile(fileURLToPath(new URL("./public/favicon.ico", import.meta.url))));
 app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
