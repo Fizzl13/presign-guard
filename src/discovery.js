@@ -278,10 +278,15 @@ const SIMULATION_SCHEMA = {
   required: ["ok", "changes"],
 };
 
-// openapi.json's /v1/check schemas: chainId required for the EVM types, and the simulation field.
+// openapi.json's /v1/check schemas: what each type needs (chainId for the EVM types, transaction, tx, message), and the simulation field.
 const CHECK_INPUT_SCHEMA = {
   ...INPUT_SCHEMA,
-  allOf: [{ if: { properties: { type: { enum: ["approval", "transaction", "signature"] } }, required: ["type"] }, then: { required: ["chainId"] } }],
+  allOf: [
+    { if: { properties: { type: { enum: ["approval", "transaction", "signature"] } }, required: ["type"] }, then: { required: ["chainId"] } },
+    { if: { properties: { type: { const: "solana" } }, required: ["type"] }, then: { required: ["transaction"] } },
+    { if: { properties: { type: { const: "xrpl" } }, required: ["type"] }, then: { required: ["tx"] } },
+    { if: { properties: { type: { const: "message" } }, required: ["type"] }, then: { required: ["message"] } },
+  ],
 };
 const CHECK_OUTPUT_SCHEMA = { ...OUTPUT_SCHEMA, properties: { ...OUTPUT_SCHEMA.properties, simulation: SIMULATION_SCHEMA } };
 

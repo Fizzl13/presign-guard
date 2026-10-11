@@ -134,6 +134,9 @@ test("openapi /v1/check: chainId required for the EVM types only, and the simula
     assert.equal(input({ type: "solana", transaction: "AQ==" }), true, `${path}: solana needs no chainId`);
     assert.equal(input({ type: "message", message: "hello" }), true);
     assert.equal(input({ type: "xrpl", tx: { TransactionType: "Payment" } }), true);
+    assert.equal(input({ type: "solana" }), false, `${path}: solana without transaction`);
+    assert.equal(input({ type: "xrpl", network: "xrpl:0" }), false, `${path}: xrpl without tx`);
+    assert.equal(input({ type: "message" }), false, `${path}: message without message`);
 
     const schema = op.responses[200].content["application/json"].schema;
     const output = ajv.compile(schema);
