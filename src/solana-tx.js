@@ -121,8 +121,12 @@ export async function simulateSolana(req, opts = {}) {
     const pre = before?.value ?? [];
     const post = v.accounts ?? [];
     const changes = [];
+    const tokenOwners = new Set(); // who owns the token accounts the transaction writes to: the real recipients
     addresses.forEach((address, i) => {
       const a = pre[i], b = post[i];
+      for (const owner of [a?.data?.parsed?.info?.owner, b?.data?.parsed?.info?.owner]) {
+        if (owner && owner !== req.wallet && [a, b].some((x) => x?.data?.parsed?.type === "account")) tokenOwners.add(owner);
+      }
       if (address === req.wallet) {
         if (a && b && b.lamports !== a.lamports) changes.push({ type: "sol", account: address, change: (b.lamports - a.lamports) / 1e9, lamports: String(BigInt(b.lamports) - BigInt(a.lamports)) });
         if (a && b && b.owner !== a.owner) changes.push({ type: "owner", account: address, from: a.owner, to: b.owner });
@@ -140,7 +144,7 @@ export async function simulateSolana(req, opts = {}) {
     });
     const error = v.err ? JSON.stringify(v.err).slice(0, 200) : null;
     // partial: more writable accounts than were read, so a change in one of the others isn't in changes.
-    return { ok: !v.err, changes, ...(all.length > addresses.length && { partial: true }), ...(v.fee !== undefined && { fee: v.fee / 1e9 }), ...(error && { error }), ...(v.loadedAddresses && { lookupTableAccounts: (v.loadedAddresses.writable?.length ?? 0) + (v.loadedAddresses.readonly?.length ?? 0) }) };
+    return { ok: !v.err, changes, ...(tokenOwners.size && { tokenOwners: [...tokenOwners] }), ...(all.length > addresses.length && { partial: true }), ...(v.fee !== undefined && { fee: v.fee / 1e9 }), ...(error && { error }), ...(v.loadedAddresses && { lookupTableAccounts: (v.loadedAddresses.writable?.length ?? 0) + (v.loadedAddresses.readonly?.length ?? 0) }) };
   } catch (err) {
     console.warn(`[solana-tx] simulation: ${err.message}`);
     return null;

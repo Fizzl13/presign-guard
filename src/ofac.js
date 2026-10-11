@@ -113,7 +113,31 @@ export function ofacStatus() {
 // list, a running load is waited for, or a new one started (at most once a minute while the Treasury site fails).
 export async function screenOfac(address, { now = () => Date.now() } = {}) {
   const s = state ?? (loading ? await loading : now() - lastAttempt > RETRY_MS ? await loadSdn({ now }) : null);
-  if (!s) return null;
+  return s ? lookup(s, address, now) : null;
+}
+
+// For the checks: the list in memory, without waiting or loading (null until the start-up load is done).
+export function screenOfacLoaded(address, { now = () => Date.now() } = {}) {
+  return state ? lookup(state, address, now) : null;
+}
+
+// The parties a transaction pays, hands control to or trades with, screened at once: a red SANCTIONED_ADDRESS per
+// listed address, else one info SANCTIONS_SCREENED (how many addresses, the list's date); no list in memory: one info
+// SANCTIONS_SCREEN_UNAVAILABLE. Returns { reasons, used }.
+export function partySanctionsReasons(addresses, { exclude = [], now } = {}) {
+  const parties = [...new Set(addresses.filter((a) => typeof a === "string" && a.length >= 20 && !exclude.includes(a)))];
+  if (!parties.length) return { reasons: [], used: false };
+  if (!state) return { reasons: [{ code: "SANCTIONS_SCREEN_UNAVAILABLE", severity: "info", details: { list: "OFAC SDN", addresses: parties.length } }], used: false };
+  const reasons = [];
+  for (const address of parties) {
+    const sc = lookup(state, address, now);
+    if (sc.listed) reasons.push({ code: "SANCTIONED_ADDRESS", severity: "red", subject: address, details: { list: "OFAC SDN", matches: sc.matches.map(({ name, programs, currency }) => ({ name, programs, currency })), listSynced: sc.published } });
+  }
+  if (!reasons.length) reasons.push({ code: "SANCTIONS_SCREENED", severity: "info", details: { list: "OFAC SDN", listed: false, addresses: parties.length, listSynced: state.published } });
+  return { reasons, used: true };
+}
+
+function lookup(s, address, now = () => Date.now()) {
   const matches = s.index.get(addressKey(address)) ?? [];
   return {
     listed: matches.length > 0,

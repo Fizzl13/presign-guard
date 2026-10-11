@@ -24,6 +24,7 @@ import {
 import { merchantExtension } from "./merchant.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
 import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, NEW_DOMAIN_DAYS } from "./pg1.js";
+import { screenOfacLoaded, partySanctionsReasons } from "./ofac.js";
 
 // A plain wallet that receives an allowance or transfer right and has no
 // history, or only a day of it, is how drainers work: fresh wallets, used once.
@@ -757,6 +758,12 @@ async function analyzeSolana(req) {
   for (const r of solanaSimulationReasons(sim, req, shown)) add(r.code, r.severity, r.subject, r.details);
   if (req.usesLookupTables) add("SOLANA_LOOKUP_TABLES", "info", req.wallet, { note: "some accounts come from address lookup tables; the simulation covers them, the instruction decoding does not" });
   if (!sim) add("SIMULATION_UNAVAILABLE", "info", req.wallet);
+  // Every account the transaction names, the new authorities and delegates, and the owners of the token accounts it
+  // writes to (a token transfer names the recipient's token account, not the recipient), against the OFAC SDN list.
+  const sanctions = partySanctionsReasons([
+    req.feePayer, ...req.instructions.flatMap((ix) => ix.accounts), ...reasons.map((r) => r.subject), ...(sim?.tokenOwners ?? []),
+  ], { exclude: [req.wallet] });
+  for (const r of sanctions.reasons) add(r.code, r.severity, r.subject, r.details);
 
   const site = await addOriginReasons(req.origin, await domain, await reputation, add);
   const intentAnswer = await intent;
@@ -775,8 +782,8 @@ async function analyzeSolana(req) {
       programs: [...new Set(req.instructions.map((ix) => ix.program).filter(Boolean))],
     },
     ...(sim && { simulation: sim }),
-    scope: "Solana transactions before signing: token accounts handed to another owner (SetAuthority), the wallet handed to a program (System Assign), token delegates (Approve), durable nonces, closing token accounts to someone else, all also when hidden inside other programs (simulateTransaction: SOL and token balances, owners and delegates after), plus the requesting site's phishing-list status and domain age. Not covered: what a program may do later with a delegate it was given.",
-    sources: ["solana-rpc", ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    scope: "Solana transactions before signing: token accounts handed to another owner (SetAuthority), the wallet handed to a program (System Assign), token delegates (Approve), durable nonces, closing token accounts to someone else, all also when hidden inside other programs (simulateTransaction: SOL and token balances, owners and delegates after), every account involved (and the owners of the token accounts written to) against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what a program may do later with a delegate it was given.",
+    sources: ["solana-rpc", ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
     checkedAt: new Date().toISOString(),
   };
 }
@@ -810,6 +817,10 @@ async function analyzeAlgorand(req) {
   for (const r of rules.reasons) add(r.code, r.severity, r.subject, r.details);
   const sim = await simulation;
   for (const r of algorandSimulationReasons(sim, req, reasons)) add(r.code, r.severity, r.subject, r.details);
+  // Everyone the group pays, closes to, rekeys to, claws back from or freezes, and the other senders in it, against
+  // the OFAC SDN list.
+  const sanctions = partySanctionsReasons(txns.flatMap((t) => [t.sender, t.receiver, t.closeTo, t.rekeyTo, t.clawbackFrom, t.freezeAccount]), { exclude: [req.wallet] });
+  for (const r of sanctions.reasons) add(r.code, r.severity, r.subject, r.details);
 
   const site = await addOriginReasons(req.origin, await domain, await reputation, add);
   const intentAnswer = await intent;
@@ -827,8 +838,8 @@ async function analyzeAlgorand(req) {
       ...(req.origin && { origin: req.origin }),
       transactions: txns,
     },
-    scope: "Algorand transactions before signing: rekeying the account to another key, closing the account or an asset holding to someone else, clawback transfers, fake USDC/USDt (and assets named ALGO), opting in to assets with a clawback or frozen by default, app updates, deletes and clear-state, asset control addresses handed over or cleared, giving up consensus participation, fees far above normal, transactions from a group that wasn't sent whole, and whether the group would fail (algod simulate, with the amounts a close would send), plus the requesting site's phishing-list status and domain age. Not covered: what an app's program does with the state it keeps for you.",
-    sources: [...(rules.nodeUsed || sim ? ["algod"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    scope: "Algorand transactions before signing: rekeying the account to another key, closing the account or an asset holding to someone else, clawback transfers, fake USDC/USDt (and assets named ALGO), opting in to assets with a clawback or frozen by default, app updates, deletes and clear-state, asset control addresses handed over or cleared, giving up consensus participation, fees far above normal, transactions from a group that wasn't sent whole, and whether the group would fail (algod simulate, with the amounts a close would send), every receiver, close-to, rekey and other sender against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what an app's program does with the state it keeps for you.",
+    sources: [...(rules.nodeUsed || sim ? ["algod"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
     checkedAt: new Date().toISOString(),
   };
 }
@@ -894,6 +905,14 @@ async function analyzeMessage(req) {
   };
 }
 
+// One address against the OFAC SDN list: our own copy of the Treasury list (src/ofac.js), PG1 while it isn't loaded.
+async function screenParty(address) {
+  const own = screenOfacLoaded(address);
+  if (own) return { listed: own.listed, matches: own.matches.map((m) => ({ sdnName: m.name, programs: m.programs })), listSynced: own.published, source: "ofac-sdn" };
+  const pg1 = await screenSanctions(address);
+  return pg1 && { ...pg1, source: "pg1" };
+}
+
 export async function analyze(req) {
   if (req.kind === "message") return analyzeMessage(req);
   if (req.kind === "solana") return analyzeSolana(req);
@@ -924,9 +943,10 @@ export async function analyze(req) {
   const ages = Promise.all(ageSubjects.map(async (address) => [address, await walletAge(address, req.chainId)]))
     .then((list) => new Map(list));
 
-  // PG1 (OFAC SDN and RDAP) runs alongside GoPlus; null = PG1 unavailable, never an error.
+  // OFAC SDN (our own copy of the Treasury list, PG1 while it isn't loaded) and RDAP (PG1) run alongside GoPlus;
+  // null = no list available, never an error.
   const pg1 = Promise.all([
-    Promise.all([...subjects].map(async (address) => [address, await screenSanctions(address)])),
+    Promise.all([...subjects].map(async (address) => [address, await screenParty(address)])),
     req.origin ? domainAge(req.origin) : Promise.resolve(undefined),
   ]);
   // The origin against phishing lists (PG1: MetaMask eth-phishing-detect + lookalikes;
@@ -1028,9 +1048,11 @@ export async function analyze(req) {
 
   const [sanctions, domain] = await pg1;
   let pg1Used = false;
+  let ofacUsed = false;
   for (const [address, sc] of sanctions) {
     if (!sc) { add("SANCTIONS_SCREEN_UNAVAILABLE", "info", address); continue; }
-    pg1Used = true;
+    if (sc.source === "pg1") pg1Used = true;
+    else ofacUsed = true;
     if (sc.listed) {
       // One sanctions reason per address: GoPlus's bare SANCTIONED flag folds into
       // the OFAC entry, credited in alsoFlaggedBy.
@@ -1173,10 +1195,10 @@ export async function analyze(req) {
       ...(req.origin && { origin: req.origin }),
       value: req.value.toString(),
     },
-    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
+    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening (the US Treasury list, PG1 as fallback) and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
     ...(mandate && { mandate }),
     ...(sim && { simulation: sim }),
-    sources: [...new Set(["goplus", "chain-rpc", ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" || pastRecipients ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
+    sources: [...new Set(["goplus", "chain-rpc", ...(ofacUsed ? ["ofac-sdn"] : []), ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" || pastRecipients ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
     checkedAt: new Date().toISOString(),
   };
 }

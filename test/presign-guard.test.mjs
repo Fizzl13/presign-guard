@@ -7,6 +7,8 @@ import { createCheckRouter } from "../src/presign-guard.js";
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { jcs, mandateDigest, eip3009Binding } from "../src/mandate.js";
 import { resetPg1, pg1Paused, pg1KeyStatus, pg1KeyStatusNow } from "../src/pg1.js";
+import { loadSdn, resetOfac } from "../src/ofac.js";
+import { SDN_XML } from "./fixtures/sdn.mjs";
 
 process.env.ANTHROPIC_API_KEY = "test-key";
 
@@ -700,6 +702,22 @@ test("PG1 down: GoPlus's SANCTIONED flag still makes a sanctioned spender red", 
     assert.ok(!codes(r).includes("SANCTIONED_ADDRESS"));
   } finally {
     pg1Down = false;
+  }
+});
+
+test("with our own copy of the Treasury list loaded, it screens instead of PG1 (credited as ofac-sdn)", async () => {
+  await loadSdn({ fetchImpl: async () => new Response(SDN_XML) });
+  try {
+    const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: SANCTIONED, amount: "1000000" });
+    const hit = r.body.reasons.find((x) => x.code === "SANCTIONED_ADDRESS");
+    assert.deepEqual(hit.details.matches, [{ name: "LAZARUS GROUP", programs: ["DPRK3"] }]);
+    assert.equal(hit.details.listSynced, "2026-10-09", "the list's publish date");
+    assert.ok(r.body.sources.includes("ofac-sdn"));
+    const CLEAN = "0x5eeded0000000000000000000000000000000003";
+    const clean = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: CLEAN, amount: "1" });
+    assert.deepEqual(clean.body.reasons.find((x) => x.code === "SANCTIONS_SCREENED" && x.subject === CLEAN).details, { list: "OFAC SDN", listed: false, listSynced: "2026-10-09" });
+  } finally {
+    resetOfac();
   }
 });
 

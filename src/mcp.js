@@ -90,7 +90,7 @@ const VERDICT = z.enum(["green", "orange", "red"]).describe("green: go ahead; or
 const REASONS = z.array(z.object({
   code: z.string().describe("Reason code, e.g. SPENDER_FLAGGED, UNLIMITED_ALLOWANCE, TOKEN_HONEYPOT"),
   severity: z.string().optional().describe("info, warn or critical"),
-  subject: z.string().optional().describe("The address or item the reason is about"),
+  subject: z.string().nullable().optional().describe("The address or item the reason is about (null or absent when it is about the whole request)"),
 }).passthrough()).describe("Why the verdict is what it is");
 const RECEIPT = z.record(z.string(), z.unknown()).describe("Signed receipt (EIP-191) binding the verdict to your arguments");
 const GRADE = z.string().describe("SAFE, CAUTION, RISKY or AVOID");
