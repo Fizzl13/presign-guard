@@ -1,7 +1,7 @@
 // MCP server (Streamable HTTP, stateless) on POST /mcp, so MCP clients (Claude,
 // Cursor, agent frameworks) and MCP directories can find and use presign-guard.
 //
-// Six tools:
+// Seven tools:
 // - presign_quick_check and token_quick_verdict (free, rate-limited together):
 //   the verdict only, green/orange/red.
 // - presign_check ($0.01) and presign_check_explain ($0.03), via x402: the same
@@ -9,6 +9,7 @@
 //   (_meta["x402/payment"]) at the same price and to the same payout wallet.
 // - token_verdict ($0.01, Base or Solana): the same as GET /v1/token.
 // - wallet_approvals ($0.02, Base or Solana): the same as GET /v1/approvals.
+// - screen_wallet ($0.01, Base or Solana): the same as GET /v1/screen.
 //
 // Invalid input is refused before payment; a failed check is not charged.
 
@@ -25,13 +26,15 @@ import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
 import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
+import { screenAddress, parseScreenRequest } from "./screen.js";
 import { paymentOf } from "./receipt.js";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, INPUT_SCHEMA, INPUT_EXAMPLE, TOKEN_INPUT_SCHEMA, TOKEN_INPUT_EXAMPLE,
   APPROVALS_INPUT_SCHEMA, APPROVALS_INPUT_EXAMPLE, serviceMetadata, tokenServiceMetadata, approvalsServiceMetadata,
+  SCREEN_ROUTE, SCREEN_INPUT_SCHEMA, SCREEN_INPUT_EXAMPLE, screenServiceMetadata,
 } from "./discovery.js";
 
-export const VERSION = "1.3.0";
+export const VERSION = "1.5.0";
 export const FREE_CALLS_PER_HOUR = 10;
 
 const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
@@ -68,6 +71,10 @@ const TOKEN_INPUT = {
 const APPROVALS_INPUT = {
   chain: z.enum(APPROVALS_INPUT_SCHEMA.properties.chain.enum).describe("EVM chain to audit"),
   address: z.string().describe("Wallet address (0x...)"),
+};
+
+const SCREEN_INPUT = {
+  address: z.string().min(20).max(120).describe("The wallet address to screen, any chain: EVM (0x...), Solana, Tron, Bitcoin, XRP Ledger, Algorand, or another currency OFAC lists"),
 };
 
 const text = (value) => ({ content: [{ type: "text", text: typeof value === "string" ? value : JSON.stringify(value) }] });
@@ -111,6 +118,12 @@ const OUTPUT = {
     approvals: z.array(z.record(z.string(), z.unknown())).nullable().optional().describe("Every open ERC-20 allowance with its spender"),
     revokeUrl: z.string().nullable().optional().describe("revoke.cash link for this wallet"),
   }),
+  screen_wallet: obj({
+    ...PAID,
+    grade: GRADE.nullable().optional(),
+    one_liner: z.string().nullable().optional().describe("One-line summary"),
+    sanctions: z.record(z.string(), z.unknown()).nullable().optional().describe("OFAC SDN result: listed, matches (name, programs, currency), published"),
+  }),
 };
 
 export function createRateLimiter(limit, windowMs) {
@@ -152,6 +165,14 @@ function validateToken(args) {
 function validateApprovals(args) {
   try {
     return { request: parseApprovalsRequest(args) };
+  } catch (err) {
+    return { error: err.message || "invalid request" };
+  }
+}
+
+function validateScreen(args) {
+  try {
+    return { request: parseScreenRequest(args) };
   } catch (err) {
     return { error: err.message || "invalid request" };
   }
@@ -223,9 +244,23 @@ const PAID_TOOLS = [
       `Paid (${price} USDC via x402 on Base or Solana): audit the open token approvals of an EVM wallet (base, ethereum, arbitrum, optimism, polygon, bsc), for example your agent's own wallet as a periodic check. Get back green/orange/red, a grade, a one-line summary and every ERC-20 allowance with its spender: flagged malicious (red), a plain wallet, on a doubt list, an unverified contract or an unlimited allowance to a spender not on the GoPlus trust list (orange), plus which ones to revoke and a revoke.cash link. NFT approvals are not covered. Same as GET /v1/approvals.`,
     run: (request) => walletApprovals(request),
   },
+  {
+    name: "screen_wallet",
+    route: SCREEN_ROUTE.path,
+    title: "Wallet sanctions screen",
+    input: SCREEN_INPUT,
+    validate: validateScreen,
+    discovery: { inputSchema: SCREEN_INPUT_SCHEMA, example: SCREEN_INPUT_EXAMPLE },
+    metadata: screenServiceMetadata,
+    solana: true,
+    summary: "Is this wallet sanctioned? Any chain's address against the OFAC SDN list (synced from the US Treasury), plus theft and phishing reports for EVM addresses.",
+    description: (price) =>
+      `Paid (${price} USDC via x402 on Base or Solana): call this before your agent pays an address, or before accepting money from one. Send any chain's wallet address (EVM 0x..., Solana, Tron, Bitcoin, XRP Ledger, Algorand, or another currency OFAC lists). Get back green/orange/red: red SANCTIONED_ADDRESS with the SDN entry (name, programs, currency) when the address is on the OFAC SDN list, red or orange when GoPlus reports theft, phishing, laundering or mixer use (EVM). Never pay or accept funds on red.`,
+    run: (request) => screenAddress(request),
+  },
 ];
 
-const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [APPROVALS_ROUTE.path]: APPROVALS_ROUTE };
+const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [APPROVALS_ROUTE.path]: APPROVALS_ROUTE, [SCREEN_ROUTE.path]: SCREEN_ROUTE };
 const priceOf = (tool) => `$${(OTHER_ROUTES[tool.route] ?? ROUTES[tool.route]).price}`;
 
 // accepts[] per paid tool, built once the facilitator is reachable.

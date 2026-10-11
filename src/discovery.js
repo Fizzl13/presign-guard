@@ -181,6 +181,65 @@ export const approvalsBazaarExtension = () => declareDiscoveryExtension({
   output: { schema: APPROVALS_OUTPUT_SCHEMA, example: APPROVALS_OUTPUT_EXAMPLE },
 });
 
+// GET /v1/screen: one address on any chain against the OFAC SDN list (and GoPlus reports for EVM).
+export const SCREEN_ROUTE = {
+  path: "/v1/screen",
+  price: "0.01",
+  operationId: "screenWallet",
+  summary: "Check if a wallet address is on the OFAC sanctions list",
+};
+
+export const SCREEN_INPUT_EXAMPLE = { address: "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81" };
+
+export const SCREEN_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    address: { type: "string", minLength: 20, maxLength: 120, description: "The wallet address to screen, any chain: EVM (0x...), Solana, Tron, Bitcoin, XRP Ledger, Algorand, or another currency OFAC lists. The format tells the chain." },
+  },
+  required: ["address"],
+};
+
+const SCREEN_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    verdict: { type: "string", enum: ["green", "orange", "red"] },
+    grade: { type: "string", enum: ["SAFE", "CAUTION", "RISKY", "AVOID"] },
+    one_liner: { type: "string" },
+    reasons: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { code: { type: "string" }, severity: { type: "string", enum: ["red", "orange", "info"] }, details: {} },
+        required: ["code", "severity"],
+      },
+    },
+    address: { type: "object", description: "address, format (evm, solana, tron, bitcoin, xrpl, algorand, other)" },
+    sanctions: { type: "object", description: "list (OFAC SDN), listed, matches (uid, name, type, programs, currency), published (the list's date), source" },
+    sources: { type: "array", items: { type: "string" } },
+    checkedAt: { type: "string" },
+    receipt: RECEIPT_SCHEMA,
+  },
+  required: ["verdict", "grade", "one_liner", "reasons", "sanctions"],
+};
+
+const SCREEN_MATCH_EXAMPLE = { uid: 4632, name: "BANK MARKAZI JOMHOURI ISLAMI IRAN", type: "Entity", programs: ["IRAN", "IFSR", "IRGC", "SDGT"], currency: "TRX" };
+const SCREEN_OUTPUT_EXAMPLE = {
+  verdict: "red",
+  grade: "AVOID",
+  one_liner: "AVOID: on the OFAC SDN list (BANK MARKAZI JOMHOURI ISLAMI IRAN)",
+  reasons: [{ code: "SANCTIONED_ADDRESS", severity: "red", details: { list: "OFAC SDN", matches: [SCREEN_MATCH_EXAMPLE], published: "2026-10-09" } }],
+  address: { address: SCREEN_INPUT_EXAMPLE.address, format: "tron" },
+  sanctions: { list: "OFAC SDN", listed: true, matches: [SCREEN_MATCH_EXAMPLE], published: "2026-10-09", source: "ofac-sdn" },
+  sources: ["ofac-sdn"],
+};
+
+export const screenBazaarExtension = () => declareDiscoveryExtension({
+  method: "GET",
+  input: SCREEN_INPUT_EXAMPLE,
+  inputSchema: SCREEN_INPUT_SCHEMA,
+  output: { schema: SCREEN_OUTPUT_SCHEMA, example: SCREEN_OUTPUT_EXAMPLE },
+});
+
 export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_TOKEN, spender: EXAMPLE_SPENDER, amount: "1000000" };
 
 export const INPUT_SCHEMA = {
@@ -344,6 +403,7 @@ export const CATEGORY = "security";
 export const serviceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "agents"], iconUrl: ICON_URL };
 export const tokenServiceMetadata = { serviceName: "presign-guard", tags: ["token-security", "due-diligence", "solana", "base", "agents"], iconUrl: ICON_URL };
 export const approvalsServiceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "approvals", "revoke", "agents"], iconUrl: ICON_URL };
+export const screenServiceMetadata = { serviceName: "presign-guard", tags: ["sanctions", "ofac", "aml", "compliance", "wallet-screening", "agents"], iconUrl: ICON_URL };
 
 // @x402/express puts the v2 challenge only in the PAYMENT-REQUIRED header and
 // sends an empty {} body; some clients read accepts[] from the body.
@@ -455,13 +515,35 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       },
     },
   };
+  paths[SCREEN_ROUTE.path] = {
+    get: {
+      operationId: SCREEN_ROUTE.operationId,
+      summary: SCREEN_ROUTE.summary,
+      tags: ["Wallet screening"],
+      "x-payment-info": {
+        price: { mode: "fixed", currency: "USD", amount: SCREEN_ROUTE.price },
+        protocols: [{ x402: {} }],
+        networks: tokenNetworks,
+        asset: "USDC",
+      },
+      parameters: Object.entries(SCREEN_INPUT_SCHEMA.properties).map(([name, schema]) => ({
+        name, in: "query", required: true, schema, example: SCREEN_INPUT_EXAMPLE[name],
+      })),
+      responses: {
+        200: { description: "Screen", content: { "application/json": { schema: SCREEN_OUTPUT_SCHEMA, example: SCREEN_OUTPUT_EXAMPLE } } },
+        400: { description: "Invalid request; nothing is charged" },
+        402: { description: "Payment Required" },
+        503: { description: "The sanctions list is not available; nothing is charged, no verdict" },
+      },
+    },
+  };
   return {
     openapi: "3.1.0",
     info: {
       title: "presign-guard",
-      version: "2.4.0",
-      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature, a Solana transaction (every instruction decoded, then simulated), an XRP Ledger transaction or an Algorand transaction or group (simulated). Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, and GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke. Every paid answer carries a signed receipt (EIP-191) binding the verdict to your request, verifiable later.",
-      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains, and intent (one sentence: what you are trying to do) to catch signing something else than you meant (INTENT_MISMATCH). For a transaction, pass from (your wallet) so it is simulated: you see what really leaves your wallet. For a Solana transaction, send type solana with the base64 wire transaction as transaction: it is decoded and simulated, and a token account handed to someone else is red. For an XRP Ledger transaction, send type xrpl with the unsigned transaction JSON as tx: a new regular key or signer list, a disabled master key, AccountDelete or fake RLUSD is red. For Algorand, send type algorand with the base64 msgpack transaction as transaction (or a whole group as transactions): a rekey, closing the account or an asset holding to someone else, or fake USDC is red. Paying an x402 challenge? Pass the accepts entry you chose as x402 to catch a signature that pays more, someone else or another token than the seller asked. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address, chain=algorand with an asset id): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke. Keep the receipt field of each answer: it is signed by the address at /.well-known/presign-guard-signer.json and proves which verdict you got for which request; POST /v1/verify checks one for free." + (credits ? CREDITS_GUIDANCE : ""),
+      version: "2.5.0",
+      description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature, a Solana transaction (every instruction decoded, then simulated), an XRP Ledger transaction or an Algorand transaction or group (simulated). Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke, and GET /v1/screen: any chain's wallet address against the OFAC SDN sanctions list. Every paid answer carries a signed receipt (EIP-191) binding the verdict to your request, verifiable later.",
+      "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains, and intent (one sentence: what you are trying to do) to catch signing something else than you meant (INTENT_MISMATCH). For a transaction, pass from (your wallet) so it is simulated: you see what really leaves your wallet. For a Solana transaction, send type solana with the base64 wire transaction as transaction: it is decoded and simulated, and a token account handed to someone else is red. For an XRP Ledger transaction, send type xrpl with the unsigned transaction JSON as tx: a new regular key or signer list, a disabled master key, AccountDelete or fake RLUSD is red. For Algorand, send type algorand with the base64 msgpack transaction as transaction (or a whole group as transactions): a rekey, closing the account or an asset holding to someone else, or fake USDC is red. Paying an x402 challenge? Pass the accepts entry you chose as x402 to catch a signature that pays more, someone else or another token than the seller asked. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address, chain=algorand with an asset id): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke. Before paying an address or accepting money from one, call GET /v1/screen?address=<address> (any chain: EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand): red when it is on the OFAC SDN list or reported for theft or phishing. Keep the receipt field of each answer: it is signed by the address at /.well-known/presign-guard-signer.json and proves which verdict you got for which request; POST /v1/verify checks one for free." + (credits ? CREDITS_GUIDANCE : ""),
     },
     servers: [{ url: origin }],
     paths: credits ? { ...paths, ...creditPaths() } : paths,
@@ -472,20 +554,21 @@ export function wellKnown(origin, { credits = false } = {}) {
   return {
     ...(credits ? { credits: { info: `${origin}/v1/credits`, packs: { 100: "$0.80", 1000: "$7.00" }, header: "x-credit-key" } } : {}),
     version: 1,
-    resources: [...Object.keys(ROUTES), TOKEN_ROUTE.path, APPROVALS_ROUTE.path].map((p) => origin + p),
+    resources: [...Object.keys(ROUTES), TOKEN_ROUTE.path, APPROVALS_ROUTE.path, SCREEN_ROUTE.path].map((p) => origin + p),
     x402Version: 2,
     kind: "resource-server",
     name: "presign-guard",
     serviceName: "presign-guard",
     category: CATEGORY,
     iconUrl: `${origin}/media/icon.png`,
-    tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "agents"],
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL and Algorand transactions, approvals and signatures, token verdicts for Solana and EVM tokens, and wallet approval audits. Every paid answer is signed (verifiable receipt).",
+    tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "aml", "agents"],
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL and Algorand transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits and OFAC sanctions screening for any chain's address. Every paid answer is signed (verifiable receipt).",
     signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
       { url: origin + TOKEN_ROUTE.path, method: "GET", description: TOKEN_ROUTE.summary },
       { url: origin + APPROVALS_ROUTE.path, method: "GET", description: APPROVALS_ROUTE.summary },
+      { url: origin + SCREEN_ROUTE.path, method: "GET", description: SCREEN_ROUTE.summary },
     ],
     openapi: `${origin}/openapi.json`,
     docs: "https://github.com/Fizzl13/presign-guard",
@@ -499,7 +582,7 @@ export function agentRegistration(origin) {
   return {
     type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     name: "presign-guard",
-    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana and Algorand transactions (decoded and simulated), XRP Ledger transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens) and wallet approval audits. Signed answers, paid per call over x402 (USDC on Base or Solana) or MPP (USDC on Base).",
+    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana and Algorand transactions (decoded and simulated), XRP Ledger transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits and OFAC sanctions screening for any chain's address. Signed answers, paid per call over x402 (USDC on Base or Solana) or MPP (USDC on Base).",
     image: `${origin}/media/og.jpg`,
     services: [
       { name: "web", endpoint: `${origin}/` },

@@ -9,7 +9,7 @@ const PAY_TO = "0x6B0F4651eD42893ab58139938175E4a69f175F25";
 const COSTS = creditCosts(x402Routes(PAY_TO));
 
 test("credit costs follow the x402 prices in cents", () => {
-  assert.deepEqual(COSTS, { "POST /v1/check": 1, "POST /v1/check/explain": 3, "GET /v1/token": 1, "GET /v1/approvals": 2 });
+  assert.deepEqual(COSTS, { "POST /v1/check": 1, "POST /v1/check/explain": 3, "GET /v1/token": 1, "GET /v1/approvals": 2, "GET /v1/screen": 1 });
 });
 
 test("pack routes: 100 for $0.80 and 1000 for $7.00, on Base and Solana", () => {

@@ -19,7 +19,7 @@
 import express from "express";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
-  approvalsBazaarExtension, approvalsServiceMetadata,
+  approvalsBazaarExtension, approvalsServiceMetadata, SCREEN_ROUTE, screenBazaarExtension, screenServiceMetadata,
 } from "./discovery.js";
 import { merchantExtension } from "./merchant.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
@@ -1272,6 +1272,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
   });
   const tokenPrice = `$${TOKEN_ROUTE.price}`;
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
+  const screenPrice = `$${SCREEN_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
       "Is this transaction, approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
@@ -1300,6 +1301,18 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       mimeType: "application/json",
       ...approvalsServiceMetadata,
       extensions: { ...approvalsBazaarExtension(), ...merchantExtension },
+    },
+    [`GET ${SCREEN_ROUTE.path}`]: {
+      accepts: [
+        { scheme: "exact", price: screenPrice, network, payTo },
+        ...(solana?.payTo ? [{ scheme: "exact", price: screenPrice, network: solana.network, payTo: solana.payTo }] : []),
+        ...xrplAccept(xrpl, screenPrice, `GET ${SCREEN_ROUTE.path}`),
+        ...algorandAccept(algorand, screenPrice),
+      ],
+      description: "Is this wallet sanctioned? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
+      mimeType: "application/json",
+      ...screenServiceMetadata,
+      extensions: { ...screenBazaarExtension(), ...merchantExtension },
     },
   };
 }

@@ -24,6 +24,8 @@ import { createTokenQuickRouter } from "./src/token-quick.js";
 import { fizzlCors } from "./src/fizzl-cors.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
+import { createScreenRouter, validateScreenQuery } from "./src/screen.js";
+import { ofacStatus, startOfacSync } from "./src/ofac.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
 import { internalAccess, unlessInternal } from "./src/internal.js";
@@ -146,7 +148,7 @@ app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus() }));
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus() }));
 jevSelfTest().catch(() => {});
 simulationSelfTest().catch(() => {});
 // Again every 6 hours, so /health shows how simulation works now, not only how it did at startup.
@@ -253,6 +255,7 @@ app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
 
 app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);
+app.use(validateScreenQuery);
 app.use(mirrorChallengeIntoBody);
 // Our own services (PlainText) skip the paywall with the internal key (src/internal.js).
 const isInternal = internalAccess();
@@ -268,6 +271,10 @@ app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
 app.use(createTokenRouter());
 app.use(createApprovalsRouter());
+app.use(createScreenRouter());
 if (creditStore) app.use(creditsRouter(express, { store: creditStore, costs: CREDIT_COSTS, publicUrl: PUBLIC_URL }));
+
+// The OFAC SDN list for GET /v1/screen: loaded now, re-checked every few hours (OFAC_SDN=off skips it, e.g. locally).
+if (process.env.OFAC_SDN !== "off") startOfacSync();
 
 app.listen(PORT, () => console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`));

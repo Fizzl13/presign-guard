@@ -81,6 +81,18 @@ test("usage log: a token verdict is logged with the chain, token, verdict and gr
   });
 });
 
+test("usage log: a wallet screen is logged with the address, its format and the codes that are not context", () => {
+  const req = { method: "GET", path: "/v1/screen", query: { address: "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81" }, get: () => undefined };
+  const body = { verdict: "red", grade: "AVOID", address: { format: "tron" }, reasons: [{ code: "SANCTIONED_ADDRESS", severity: "red" }, { code: "REPUTATION_NOT_COVERED", severity: "info" }] };
+  assert.deepEqual(describePresignCall(req, {}, body), {
+    route: "screen",
+    via: "api",
+    input: { format: "tron", target: "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81" },
+    result: { verdict: "red", grade: "AVOID", reasons: "SANCTIONED_ADDRESS", error: undefined },
+  });
+  assert.equal(describePresignCall(req, {}, { error: "invalid_request", verdict: null }).result.verdict, "none");
+});
+
 test("usage log: an MCP answer written as a Uint8Array is read (the verdict is logged)", async () => {
   const written = [];
   const fetchFn = async (url, opts = {}) => {

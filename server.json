@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Fizzl13/presign-guard",
   "title": "presign-guard",
-  "description": "Is it safe to sign? EVM, Solana, XRPL and Algorand transactions, permits, tokens: green/orange/red.",
-  "version": "1.4.0",
+  "description": "Safe to sign? EVM, Solana, XRPL, Algorand txs, permits, tokens; OFAC wallet screen: green/orange/red",
+  "version": "1.5.0",
   "repository": {
     "url": "https://github.com/Fizzl13/presign-guard",
     "source": "github"
