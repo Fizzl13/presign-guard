@@ -14,6 +14,16 @@ function typedDataOf(body) {
   return td && typeof td === "object" ? td : null;
 }
 
+// An XRP Ledger check: which ledger and which kind of transaction (TransactionType), so the dashboard can tell them apart.
+function xrplInput(a) {
+  if (!a || a.type !== "xrpl") return {};
+  const tx = a.tx && typeof a.tx === "object" ? a.tx : a.tx_json && typeof a.tx_json === "object" ? a.tx_json : {};
+  return {
+    network: typeof a.network === "string" ? a.network.slice(0, 16) : undefined,
+    txType: typeof tx.TransactionType === "string" ? tx.TransactionType.slice(0, 40) : undefined,
+  };
+}
+
 // An MCP tool call: which tool, the input summary, the verdict and the payment.
 function describeMcpCall(req, body) {
   const call = usageLog.mcpToolCall(req.body);
@@ -30,7 +40,7 @@ function describeMcpCall(req, body) {
     via: "mcp",
     input: a.address
       ? { chain: a.chain, target: a.address }
-      : { type: a.type, chainId: a.chainId, target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
+      : { type: a.type, chainId: a.chainId, ...xrplInput(a), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
     result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
     payment: usageLog.mcpPayment(req.body, body),
   };
@@ -94,6 +104,7 @@ export function describePresignCall(req, _res, body) {
     input: {
       type: input.type,
       chainId: input.chainId,
+      ...xrplInput(input),
       primaryType: td ? td.primaryType : undefined,
       target: input.to || input.token || (td && td.domain && td.domain.verifyingContract) || undefined,
       spender: input.spender || (td && td.message && (td.message.spender || td.message.to)) || undefined,
