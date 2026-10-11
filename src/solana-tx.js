@@ -109,7 +109,8 @@ async function rpc(method, params, { fetchImpl = globalThis.fetch, timeoutMs = 5
 
 // The wallet's SOL and token accounts before and after the transaction, or null when the RPC can't tell.
 export async function simulateSolana(req, opts = {}) {
-  const addresses = [...new Set([req.wallet, ...req.writable])].slice(0, 20);
+  const all = [...new Set([req.wallet, ...req.writable])];
+  const addresses = all.slice(0, 20);
   try {
     const [before, sim] = await Promise.all([
       rpc("getMultipleAccounts", [addresses, { encoding: "jsonParsed" }], opts),
@@ -123,20 +124,23 @@ export async function simulateSolana(req, opts = {}) {
     addresses.forEach((address, i) => {
       const a = pre[i], b = post[i];
       if (address === req.wallet) {
-        if (a && b && b.lamports !== a.lamports) changes.push({ type: "sol", account: address, change: (b.lamports - a.lamports) / 1e9 });
+        if (a && b && b.lamports !== a.lamports) changes.push({ type: "sol", account: address, change: (b.lamports - a.lamports) / 1e9, lamports: String(BigInt(b.lamports) - BigInt(a.lamports)) });
         if (a && b && b.owner !== a.owner) changes.push({ type: "owner", account: address, from: a.owner, to: b.owner });
       }
       const ai = a?.data?.parsed?.info, bi = b?.data?.parsed?.info;
       if (a?.data?.parsed?.type === "account" && ai?.owner === req.wallet) {
         const delta = Number(bi?.tokenAmount?.uiAmountString ?? 0) - Number(ai.tokenAmount?.uiAmountString ?? 0);
-        if (bi && delta !== 0) changes.push({ type: "token", account: address, mint: ai.mint, change: delta });
+        // raw: the exact change in base units, with the mint's decimals (change is the rounded display amount).
+        const raw = /^\d+$/.test(String(bi?.tokenAmount?.amount ?? 0)) && /^\d+$/.test(String(ai.tokenAmount?.amount ?? 0)) ? BigInt(bi?.tokenAmount?.amount ?? 0) - BigInt(ai.tokenAmount?.amount ?? 0) : null;
+        if (bi && delta !== 0) changes.push({ type: "token", account: address, mint: ai.mint, change: delta, ...(raw !== null && { raw: String(raw), decimals: ai.tokenAmount?.decimals }) });
         if (!b) changes.push({ type: "closed", account: address, mint: ai.mint });
         if (bi && bi.owner !== ai.owner) changes.push({ type: "owner", account: address, mint: ai.mint, from: ai.owner, to: bi.owner });
         if (bi?.delegate && bi.delegate !== ai.delegate) changes.push({ type: "delegate", account: address, mint: ai.mint, delegate: bi.delegate, amount: bi.delegatedAmount?.uiAmountString ?? null });
       }
     });
     const error = v.err ? JSON.stringify(v.err).slice(0, 200) : null;
-    return { ok: !v.err, changes, ...(v.fee !== undefined && { fee: v.fee / 1e9 }), ...(error && { error }), ...(v.loadedAddresses && { lookupTableAccounts: (v.loadedAddresses.writable?.length ?? 0) + (v.loadedAddresses.readonly?.length ?? 0) }) };
+    // partial: more writable accounts than were read, so a change in one of the others isn't in changes.
+    return { ok: !v.err, changes, ...(all.length > addresses.length && { partial: true }), ...(v.fee !== undefined && { fee: v.fee / 1e9 }), ...(error && { error }), ...(v.loadedAddresses && { lookupTableAccounts: (v.loadedAddresses.writable?.length ?? 0) + (v.loadedAddresses.readonly?.length ?? 0) }) };
   } catch (err) {
     console.warn(`[solana-tx] simulation: ${err.message}`);
     return null;

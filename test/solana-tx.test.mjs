@@ -75,7 +75,7 @@ function rpcStub({ before, after, err = null }) {
   };
 }
 const wallet = (lamports, owner = SYSTEM) => ({ lamports, owner, data: ["", "base64"] });
-const tokenAccount = (amount, { owner = W, delegate } = {}) => ({ lamports: 2039280, owner: TOKEN, data: { parsed: { type: "account", info: { owner, mint: USDC, tokenAmount: { uiAmountString: String(amount) }, ...(delegate && { delegate, delegatedAmount: { uiAmountString: "18446744073709.551615" } }) } } } });
+const tokenAccount = (amount, { owner = W, delegate } = {}) => ({ lamports: 2039280, owner: TOKEN, data: { parsed: { type: "account", info: { owner, mint: USDC, tokenAmount: { uiAmountString: String(amount), amount: String(BigInt(Math.round(amount * 1e6))), decimals: 6 }, ...(delegate && { delegate, delegatedAmount: { uiAmountString: "18446744073709.551615" } }) } } } });
 
 test("simulation: SOL and token changes of the wallet; an owner or delegate change the instructions don't show is red / orange; a failing transaction is orange", async () => {
   const req = parseSolanaRequest({ transaction: build([transfer()]) });
@@ -84,7 +84,8 @@ test("simulation: SOL and token changes of the wallet; an owner or delegate chan
 
   const moved = await simulateSolana(req, { fetchImpl: rpcStub({ before: at({ [W]: wallet(2_000_000_000) }), after: at({ [W]: wallet(1_998_995_000) }) }) });
   assert.equal(moved.ok, true);
-  assert.deepEqual(moved.changes, [{ type: "sol", account: W, change: -0.001005 }]);
+  assert.deepEqual(moved.changes, [{ type: "sol", account: W, change: -0.001005, lamports: "-1005000" }]);
+  assert.equal(moved.partial, undefined);
   assert.equal(solanaSimulationReasons(moved, req, new Set()).at(-1).code, "SIMULATED");
 
   // A token account of the wallet that changes owner or gets a delegate, though no instruction said so (a wrapper program).
@@ -97,11 +98,16 @@ test("simulation: SOL and token changes of the wallet; an owner or delegate chan
   const delegated = await simulateSolana(req2, { fetchImpl: rpcStub({ before: at2({ [W]: wallet(1e9), [TA]: tokenAccount(50) }), after: at2({ [W]: wallet(1e9), [TA]: tokenAccount(50, { delegate: OTHER }) }) }) });
   assert.equal(solanaSimulationReasons(delegated, req2, new Set()).find((x) => x.code === "HIDDEN_APPROVAL").subject, OTHER);
   const drained = await simulateSolana(req2, { fetchImpl: rpcStub({ before: at2({ [W]: wallet(1e9), [TA]: tokenAccount(50) }), after: at2({ [W]: wallet(1e9), [TA]: tokenAccount(0) }) }) });
-  assert.deepEqual(drained.changes.find((c) => c.type === "token"), { type: "token", account: TA, mint: USDC, change: -50 });
+  assert.deepEqual(drained.changes.find((c) => c.type === "token"), { type: "token", account: TA, mint: USDC, change: -50, raw: "-50000000", decimals: 6 });
 
   const fails = await simulateSolana(req, { fetchImpl: rpcStub({ before: at({}), after: at({}), err: { InstructionError: [0, { Custom: 1 }] } }) });
   assert.equal(fails.ok, false);
   assert.equal(solanaSimulationReasons(fails, req, new Set())[0].code, "SIMULATION_FAILS");
+
+  // More writable accounts than are read: marked partial, so a wallet doesn't take the changes as complete.
+  const many = { ...req, writable: Array.from({ length: 25 }, (_, i) => k.getAddressDecoder().decode(new Uint8Array(32).fill(i + 1))) };
+  const wide = await simulateSolana(many, { fetchImpl: rpcStub({ before: Array(20).fill(null), after: Array(20).fill(null) }) });
+  assert.equal(wide.partial, true);
 
   // The RPC down: no simulation (null), never a guessed green.
   assert.equal(await simulateSolana(req, { fetchImpl: async () => new Response("down", { status: 503 }) }), null);
