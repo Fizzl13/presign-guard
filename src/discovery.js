@@ -307,7 +307,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
         "x-payment-info": {
           price: { mode: "fixed", currency: "USD", amount: r.price },
           protocols: [{ x402: {} }],
-          networks: [network],
+          networks: tokenNetworks, // every network the server accepts (Base, Solana, XRPL, Algorand when set)
           asset: "USDC",
         },
         requestBody: { required: true, content: { "application/json": { schema: INPUT_SCHEMA, example: INPUT_EXAMPLE } } },

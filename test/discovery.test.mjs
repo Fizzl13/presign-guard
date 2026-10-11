@@ -27,14 +27,15 @@ test("token verdict: $0.01 on Base, plus Solana only when a Solana wallet is set
   const both = x402Routes(PAY_TO, "eip155:8453", SOLANA)["GET /v1/token"];
   assert.deepEqual(both.accepts.map((a) => [a.network, a.payTo]), [["eip155:8453", PAY_TO], [SOLANA.network, SOLANA.payTo]]);
   assert.deepEqual(both.extensions.bazaar.info.input.queryParams, { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" });
-  // The pre-sign checks stay Base only.
-  assert.equal(x402Routes(PAY_TO, "eip155:8453", SOLANA)["POST /v1/check"].accepts.length, 1);
+  // The pre-sign checks too: they cover Solana transactions, so Solana agents pay them on Solana.
+  assert.deepEqual(x402Routes(PAY_TO, "eip155:8453", SOLANA)["POST /v1/check"].accepts.map((a) => a.network), ["eip155:8453", SOLANA.network]);
+  assert.equal(x402Routes(PAY_TO, "eip155:8453")["POST /v1/check"].accepts.length, 1);
 });
 
 test("openapi and well-known list all paid routes", () => {
   const spec = openApi("https://example.test", "eip155:8453", ["eip155:8453", SOLANA.network]);
   assert.deepEqual(Object.keys(spec.paths), ["/v1/check", "/v1/check/explain", "/v1/token", "/v1/approvals"]);
-  assert.deepEqual(spec.paths["/v1/check"].post["x-payment-info"].networks, ["eip155:8453"]);
+  assert.deepEqual(spec.paths["/v1/check"].post["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/token"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/token"].get.parameters.map((p) => p.name), ["chain", "address"]);
   assert.deepEqual(spec.paths["/v1/approvals"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);

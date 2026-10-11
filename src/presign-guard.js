@@ -1202,7 +1202,13 @@ export async function explain(result, lang) {
 export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
   const route = (path, description) => ({
-    accepts: [{ scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo }, ...xrplAccept(xrpl, `$${ROUTES[path].price}`, `POST ${path}`), ...algorandAccept(algorand, `$${ROUTES[path].price}`)],
+    accepts: [
+      { scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo },
+      // Solana agents pay the check in USDC on Solana: it covers their own transactions too.
+      ...(solana?.payTo ? [{ scheme: "exact", price: `$${ROUTES[path].price}`, network: solana.network, payTo: solana.payTo }] : []),
+      ...xrplAccept(xrpl, `$${ROUTES[path].price}`, `POST ${path}`),
+      ...algorandAccept(algorand, `$${ROUTES[path].price}`),
+    ],
     description,
     mimeType: "application/json",
     ...serviceMetadata,
@@ -1212,7 +1218,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
-      "Is this transaction, approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
+      "Is this transaction, approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
     "POST /v1/check/explain": route("/v1/check/explain",
       "Is this transaction, approval or signature safe to sign, explained for a person? The same pre-sign verdict as /v1/check (green/orange/red + reason codes) plus a short plain-language explanation in English or Dutch, for an agent to show its user before asking for approval"),
     [`GET ${TOKEN_ROUTE.path}`]: {

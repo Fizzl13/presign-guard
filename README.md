@@ -81,7 +81,7 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 
 The three check tools also take an XRP Ledger transaction: `{"type": "xrpl", "tx": {…unsigned tx JSON…}, "network": "xrpl:0"}` (no `chainId`), with the same rules as `POST /v1/check`.
 
-The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base (`token_verdict` and `wallet_approvals` also on Solana; all paid tools also in RLUSD on the XRP Ledger), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
+The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base or Solana (all paid tools also in RLUSD on the XRP Ledger), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Token verdict
 
@@ -327,7 +327,7 @@ The script makes a valid call, which should return 200 with a settlement receipt
 
 The live service runs on Base mainnet: `render.yaml` sets `X402_NETWORK=eip155:8453`, which needs `CDP_API_KEY_ID` and `CDP_API_KEY_SECRET` (Coinbase CDP facilitator; the service refuses to start on mainnet without them). After the first paid call settles through CDP, the routes are listed in the CDP Bazaar. To test without real money, set `X402_NETWORK=eip155:84532` (Base Sepolia, public x402.org facilitator); without `X402_NETWORK` the code also defaults to Base Sepolia.
 
-`PAY_TO_SOLANA` (optional) is a Solana address for USDC payments on Solana, offered for the token verdict only; those payments settle through the PayAI facilitator (`SOLANA_FACILITATOR_URL` to override). Without it, the token verdict is paid on Base only.
+`PAY_TO_SOLANA` (optional) is a Solana address for USDC payments on Solana, offered on every paid route (the checks, the token verdict and the approvals audit); those payments settle through the PayAI facilitator (`SOLANA_FACILITATOR_URL` to override). Without it, they are paid on Base (and XRPL / Algorand when set).
 
 `ALGORAND_PAY_TO` (optional) is an Algorand address for USDC payments on Algorand (ASA 31566704), offered on every paid route and credit pack at the same dollar price; those payments settle through GoPlausible's public facilitator (`ALGORAND_FACILITATOR_URL` to override), which pays the Algorand fee. The account must have opted in to USDC. Unset or `off`: no Algorand option.
 
