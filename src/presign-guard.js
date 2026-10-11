@@ -10,6 +10,7 @@
 //   { type: "transaction", chainId, to, data, value? }
 //   { type: "signature",   chainId, typedData }   // eth_signTypedData_v4 payload (object or JSON string)
 //   { type: "xrpl",        network?, tx }          // an unsigned XRP Ledger transaction (src/xrpl.js)
+//   { type: "algorand",    transaction | transactions, from? } // base64 msgpack Algorand transaction(s) (src/algorand-tx.js)
 //   Add lang: "nl" | "en" on /v1/check/explain.
 //
 // Fail-closed rule: every error returns a non-2xx status and verdict: null, never "green".
@@ -39,6 +40,7 @@ import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { decodeMessage, parseSignIn, siteOf } from "./message.js";
 import { createHistory, poisoningReasons, transferRecipients } from "./poisoning.js";
 import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons } from "./solana-tx.js";
+import { parseAlgorandRequest, algorandReasons, simulateAlgorand, algorandSimulationReasons, describeAlgorandTxn, ALGORAND_NETWORKS } from "./algorand-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 
@@ -648,6 +650,7 @@ function parseSubject(body) {
   if (!body || typeof body !== "object") throw new ValidationError("JSON body required");
   if (body.type === "message") return parseMessage(body);
   if (body.type === "solana") return { kind: "solana", offchain: false, value: 0n, grants: [], target: null, ...parseSolanaRequest(body) };
+  if (body.type === "algorand") return { kind: "algorand", offchain: false, value: 0n, grants: [], target: null, ...parseAlgorandRequest(body) };
 
   const chainId = Number(body.chainId);
   if (!SUPPORTED_CHAINS.has(chainId)) {
@@ -679,7 +682,7 @@ function parseSubject(body) {
     return { chainId, offchain: true, value: 0n, ...parseSignature(body.typedData, chainId) };
   }
 
-  throw new ValidationError('type must be "approval", "transaction", "signature", "message", "solana" or "xrpl"');
+  throw new ValidationError('type must be "approval", "transaction", "signature", "message", "solana", "xrpl" or "algorand"');
 }
 
 // ---------- analysis ----------
@@ -778,6 +781,58 @@ async function analyzeSolana(req) {
   };
 }
 
+// Algorand transactions (src/algorand-tx.js): every transaction the wallet sends judged by its fields (rekey, close,
+// clawback, app update or clear, asset control), then the group simulated on a public node; the site and intent as
+// for any request.
+async function analyzeAlgorand(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject)) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  const net = ALGORAND_NETWORKS[req.network];
+  const txns = req.txns.map(describeAlgorandTxn);
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const simulation = simulateAlgorand(req);
+  const intent = req.intent
+    ? simulation.then((sim) => intentCheck({ intent: req.intent, effects: {
+        chain: net.name,
+        wallet: req.wallet,
+        transactions: txns,
+        ...(sim && { simulated: sim.ok ? { closing: sim.closing } : { would_fail: sim.error } }),
+      } })).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+
+  const rules = await algorandReasons(req);
+  for (const r of rules.reasons) add(r.code, r.severity, r.subject, r.details);
+  const sim = await simulation;
+  for (const r of algorandSimulationReasons(sim, req, reasons)) add(r.code, r.severity, r.subject, r.details);
+
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: {
+      kind: "algorand_transaction",
+      network: net.caip2,
+      wallet: req.wallet,
+      ...(req.origin && { origin: req.origin }),
+      transactions: txns,
+    },
+    scope: "Algorand transactions before signing: rekeying the account to another key, closing the account or an asset holding to someone else, clawback transfers, fake USDC/USDt (and assets named ALGO), opting in to assets with a clawback or frozen by default, app updates, deletes and clear-state, asset control addresses handed over or cleared, giving up consensus participation, fees far above normal, transactions from a group that wasn't sent whole, and whether the group would fail (algod simulate, with the amounts a close would send), plus the requesting site's phishing-list status and domain age. Not covered: what an app's program does with the state it keeps for you.",
+    sources: [...(rules.nodeUsed || sim ? ["algod"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 // personal_sign / eth_sign. eth_sign is red: it signs a raw hash, so nobody can see what is agreed to. A message
 // that isn't readable text is orange for the same reason. A sign-in message (EIP-4361) for another site than the one
 // asking is red: that is a phishing site relaying a real site's login. The site itself is checked as for any request.
@@ -842,6 +897,7 @@ async function analyzeMessage(req) {
 export async function analyze(req) {
   if (req.kind === "message") return analyzeMessage(req);
   if (req.kind === "solana") return analyzeSolana(req);
+  if (req.kind === "algorand") return analyzeAlgorand(req);
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";

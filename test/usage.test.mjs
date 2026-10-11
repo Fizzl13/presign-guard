@@ -45,6 +45,31 @@ test("usage log: other routes are not logged", () => {
   assert.equal(describePresignCall({ method: "GET", path: "/health" }, {}, {}), null);
 });
 
+test("usage log: an XRP Ledger check is logged with the ledger and the kind of transaction", () => {
+  const req = { method: "POST", path: "/v1/check", body: { type: "xrpl", network: "xrpl:1", tx: { TransactionType: "SetRegularKey", Account: "rAccount", RegularKey: "rOther" } }, get: () => undefined };
+  const event = describePresignCall(req, {}, { verdict: "red", reasons: [{ code: "XRPL_REGULAR_KEY_CHANGE", severity: "red" }] });
+  assert.equal(event.input.type, "xrpl");
+  assert.equal(event.input.network, "xrpl:1");
+  assert.equal(event.input.txType, "SetRegularKey");
+  const json = describePresignCall({ ...req, body: { type: "xrpl", tx_json: { TransactionType: "Payment" } } }, {}, { verdict: "green", reasons: [] });
+  assert.equal(json.input.txType, "Payment");
+  assert.equal(json.input.network, undefined);
+  const evm = describePresignCall({ ...req, body: { type: "approval", chainId: 8453, token: "0xT", spender: "0xS", network: "xrpl:0" } }, {}, { verdict: "green", reasons: [] });
+  assert.equal(evm.input.network, undefined, "only an xrpl check logs a network");
+});
+
+test("usage log: an Algorand check is logged with the network and the kinds of transaction from the answer", () => {
+  const req = { method: "POST", path: "/v1/check", body: { type: "algorand", transactions: ["a", "b"] }, get: () => undefined };
+  const body = { verdict: "red", reasons: [{ code: "ALGORAND_REKEY", severity: "red" }], subject: { network: "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=", transactions: [{ type: "pay" }, { type: "axfer" }, { type: "pay" }] } };
+  const event = describePresignCall(req, {}, body);
+  assert.equal(event.input.type, "algorand");
+  assert.equal(event.input.network, "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=");
+  assert.equal(event.input.txType, "pay,axfer");
+  assert.equal(event.input.txCount, 2);
+  const refused = describePresignCall(req, {}, { error: "invalid_request", verdict: null });
+  assert.equal(refused.input.network, undefined, "a refused request has no subject");
+});
+
 test("usage log: a token verdict is logged with the chain, token, verdict and grade", () => {
   const req = { method: "GET", path: "/v1/token", query: { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" }, get: () => undefined };
   const body = { verdict: "orange", grade: "CAUTION", reasons: [{ code: "NEW_TOKEN", severity: "orange" }, { code: "NO_SOCIALS", severity: "info" }] };

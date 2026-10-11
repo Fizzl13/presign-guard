@@ -38,8 +38,9 @@ const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
 
 // What the agent is about to sign; the same fields as the HTTP body.
 const CHECK_INPUT = {
-  type: z.enum(["approval", "transaction", "signature", "message", "solana", "xrpl"]).describe("What the agent is about to sign; message = a plain personal_sign / eth_sign message in message; solana = a Solana transaction in transaction; xrpl = an unsigned XRP Ledger transaction in tx"),
-  transaction: z.string().max(2400).optional().describe("solana: the base64 wire transaction about to be signed; decoded and simulated (red SOLANA_TOKEN_ACCOUNT_TAKEOVER, SOLANA_ACCOUNT_ASSIGN; orange SOLANA_UNLIMITED_DELEGATE, SOLANA_DURABLE_NONCE, HIDDEN_APPROVAL, SIMULATION_FAILS)"),
+  type: z.enum(["approval", "transaction", "signature", "message", "solana", "xrpl", "algorand"]).describe("What the agent is about to sign; message = a plain personal_sign / eth_sign message in message; solana = a Solana transaction in transaction; xrpl = an unsigned XRP Ledger transaction in tx; algorand = an Algorand transaction in transaction, or a group in transactions"),
+  transaction: z.string().max(12000).optional().describe("solana: the base64 wire transaction about to be signed; decoded and simulated (red SOLANA_TOKEN_ACCOUNT_TAKEOVER, SOLANA_ACCOUNT_ASSIGN; orange SOLANA_UNLIMITED_DELEGATE, SOLANA_DURABLE_NONCE, HIDDEN_APPROVAL, SIMULATION_FAILS). algorand: one base64 msgpack transaction (unsigned or signed); red ALGORAND_REKEY, ALGORAND_CLOSE_ACCOUNT, ALGORAND_ASSET_CLOSE, ALGORAND_FAKE_STABLECOIN; simulated"),
+  transactions: z.array(z.string().max(12000)).max(16).optional().describe("algorand: an atomic group, each a base64 msgpack transaction; send the whole group so every transaction is checked"),
   chainId: z.number().int().optional().describe(`EVM chain id, required for approval, transaction and signature: ${CHAINS.join(", ")} (8453 = Base); optional for message`),
   method: z.enum(["personal_sign", "eth_sign"]).optional().describe("message: how it is signed (default personal_sign); eth_sign is always red"),
   message: z.string().max(16384).optional().describe("message: the text or 0x-hex about to be signed; a Sign-In with Ethereum message for another site than origin is red, unreadable bytes are orange"),
@@ -171,10 +172,10 @@ const PAID_TOOLS = [
     input: CHECK_INPUT,
     validate,
     discovery: CHECK_DISCOVERY,
-    summary: "Green/orange/red verdict with reason codes before an agent signs an EVM or Solana transaction, token approval, EIP-712 signature, plain message or XRP Ledger transaction.",
+    summary: "Green/orange/red verdict with reason codes before an agent signs an EVM, Solana, XRP Ledger or Algorand transaction, token approval, EIP-712 signature or plain message.",
     solana: true,
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
+      `Paid (${price} USDC via x402 on Base or Solana): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. On Algorand (type algorand, base64 msgpack transaction or group in transactions): rekeys, closing the account or an asset to someone else, clawbacks, fake USDC, app update/delete/clear, simulated. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
     run: (request) => check(request),
   },
   {
@@ -266,7 +267,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
     {
       title: "Quick pre-sign verdict (free)",
       description:
-        `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature or XRP Ledger transaction (type xrpl) your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
+        `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature, XRP Ledger transaction (type xrpl) or Algorand transaction (type algorand) your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
       inputSchema: CHECK_INPUT,
       outputSchema: OUTPUT.presign_quick_check,
       annotations: { readOnlyHint: true, openWorldHint: true },
