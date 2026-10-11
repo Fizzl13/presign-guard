@@ -24,6 +24,18 @@ function xrplInput(a) {
   };
 }
 
+// An Algorand check: the network and the kinds of transaction (pay, axfer, appl, …), read from the answer's subject.
+function algorandInput(a, answer) {
+  if (!a || a.type !== "algorand") return {};
+  const s = answer && answer.subject;
+  const types = s && Array.isArray(s.transactions) ? [...new Set(s.transactions.map((t) => t && t.type).filter((t) => typeof t === "string"))] : [];
+  return {
+    network: s && typeof s.network === "string" ? s.network.slice(0, 64) : undefined,
+    txType: types.length ? types.join(",").slice(0, 40) : undefined,
+    txCount: Array.isArray(a.transactions) ? a.transactions.length : undefined,
+  };
+}
+
 // An MCP tool call: which tool, the input summary, the verdict and the payment.
 function describeMcpCall(req, body) {
   const call = usageLog.mcpToolCall(req.body);
@@ -40,7 +52,7 @@ function describeMcpCall(req, body) {
     via: "mcp",
     input: a.address
       ? { chain: a.chain, target: a.address }
-      : { type: a.type, chainId: a.chainId, ...xrplInput(a), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
+      : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
     result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
     payment: usageLog.mcpPayment(req.body, body),
   };
@@ -105,6 +117,7 @@ export function describePresignCall(req, _res, body) {
       type: input.type,
       chainId: input.chainId,
       ...xrplInput(input),
+      ...algorandInput(input, b),
       primaryType: td ? td.primaryType : undefined,
       target: input.to || input.token || (td && td.domain && td.domain.verifyingContract) || undefined,
       spender: input.spender || (td && td.message && (td.message.spender || td.message.to)) || undefined,
