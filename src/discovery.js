@@ -186,7 +186,8 @@ export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_T
 export const INPUT_SCHEMA = {
   type: "object",
   properties: {
-    type: { type: "string", enum: ["approval", "transaction", "signature", "message", "xrpl"], description: "What the agent is about to sign (message: a plain personal_sign / eth_sign message; xrpl: an XRP Ledger transaction)" },
+    type: { type: "string", enum: ["approval", "transaction", "signature", "message", "solana", "xrpl"], description: "What the agent is about to sign (message: a plain personal_sign / eth_sign message; solana: a Solana transaction; xrpl: an XRP Ledger transaction)" },
+    transaction: { type: "string", maxLength: 2400, description: "solana: the base64 wire transaction about to be signed (legacy or v0). Decoded and simulated: red SOLANA_TOKEN_ACCOUNT_TAKEOVER (SetAuthority hands a token account to someone else) and SOLANA_ACCOUNT_ASSIGN (the wallet handed to a program); orange SOLANA_UNLIMITED_DELEGATE, SOLANA_DURABLE_NONCE, SOLANA_CLOSE_TO_OTHER, HIDDEN_APPROVAL, SIMULATION_FAILS. from (optional) names the wallet if it is not the fee payer" },
     method: { type: "string", enum: ["personal_sign", "eth_sign"], description: "message: how it is signed (default personal_sign); eth_sign is always red" },
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
     chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction and signature" },

@@ -38,6 +38,7 @@ import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { decodeMessage, parseSignIn, siteOf } from "./message.js";
 import { createHistory, poisoningReasons, transferRecipients } from "./poisoning.js";
+import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons } from "./solana-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 
@@ -646,6 +647,7 @@ function parseMessage(body) {
 function parseSubject(body) {
   if (!body || typeof body !== "object") throw new ValidationError("JSON body required");
   if (body.type === "message") return parseMessage(body);
+  if (body.type === "solana") return { kind: "solana", offchain: false, value: 0n, grants: [], target: null, ...parseSolanaRequest(body) };
 
   const chainId = Number(body.chainId);
   if (!SUPPORTED_CHAINS.has(chainId)) {
@@ -677,7 +679,7 @@ function parseSubject(body) {
     return { chainId, offchain: true, value: 0n, ...parseSignature(body.typedData, chainId) };
   }
 
-  throw new ValidationError('type must be "approval", "transaction", "signature", "message" or "xrpl"');
+  throw new ValidationError('type must be "approval", "transaction", "signature", "message", "solana" or "xrpl"');
 }
 
 // ---------- analysis ----------
@@ -723,6 +725,57 @@ function addOriginReasons(origin, domain, rep, add) {
     if (unavailable.length) add("SITE_REPUTATION_UNAVAILABLE", "info", origin, { sources: unavailable });
   }
   return { pg1Used, metamaskUsed };
+}
+
+// A Solana transaction (src/solana-tx.js): its instructions decoded, then simulated on the RPC to see what really
+// leaves the wallet; the site and intent as for any request.
+async function analyzeSolana(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject)) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const simulation = simulateSolana(req);
+  const intent = req.intent
+    ? simulation.then((sim) => intentCheck({ intent: req.intent, effects: {
+        chain: "solana",
+        programs: [...new Set(req.instructions.map((ix) => ix.program).filter(Boolean))],
+        ...(sim && { simulated: sim.ok ? { wallet_changes: sim.changes } : { would_fail: sim.error } }),
+      } })).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+
+  for (const r of instructionReasons(req)) add(r.code, r.severity, r.subject, r.details);
+  const sim = await simulation;
+  const shown = new Set(reasons.map((r) => r.code));
+  for (const r of solanaSimulationReasons(sim, req, shown)) add(r.code, r.severity, r.subject, r.details);
+  if (req.usesLookupTables) add("SOLANA_LOOKUP_TABLES", "info", req.wallet, { note: "some accounts come from address lookup tables; the simulation covers them, the instruction decoding does not" });
+  if (!sim) add("SIMULATION_UNAVAILABLE", "info", req.wallet);
+
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: {
+      kind: "solana_transaction",
+      network: "solana:mainnet",
+      wallet: req.wallet,
+      ...(req.origin && { origin: req.origin }),
+      programs: [...new Set(req.instructions.map((ix) => ix.program).filter(Boolean))],
+    },
+    ...(sim && { simulation: sim }),
+    scope: "Solana transactions before signing: token accounts handed to another owner (SetAuthority), the wallet handed to a program (System Assign), token delegates (Approve), durable nonces, closing token accounts to someone else, all also when hidden inside other programs (simulateTransaction: SOL and token balances, owners and delegates after), plus the requesting site's phishing-list status and domain age. Not covered: what a program may do later with a delegate it was given.",
+    sources: ["solana-rpc", ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    checkedAt: new Date().toISOString(),
+  };
 }
 
 // personal_sign / eth_sign. eth_sign is red: it signs a raw hash, so nobody can see what is agreed to. A message
@@ -788,6 +841,7 @@ async function analyzeMessage(req) {
 
 export async function analyze(req) {
   if (req.kind === "message") return analyzeMessage(req);
+  if (req.kind === "solana") return analyzeSolana(req);
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";
