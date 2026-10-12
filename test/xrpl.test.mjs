@@ -24,7 +24,9 @@ function ledger({ accounts = {}, lines = {}, down = false } = {}) {
   };
 }
 const run = async (tx, opts = {}, body = {}) => analyzeXrpl(await parseXrplRequest({ type: "xrpl", tx: { Account: ME, ...tx }, ...body }), { fetchImpl: ledger(opts) });
-const codes = (r) => r.reasons.map((x) => `${x.severity}:${x.code}`);
+// The OFAC context line (SANCTIONS_SCREENED, or SANCTIONS_SCREEN_UNAVAILABLE without a list) is left out here:
+// the sanctions screen of the parties is tested in check-sanctions.test.mjs.
+const codes = (r) => r.reasons.filter((x) => !/^SANCTIONS_SCREEN/.test(x.code)).map((x) => `${x.severity}:${x.code}`);
 
 test("addresses and requests: checksum, required fields, network", async () => {
   assert.equal(isXrplAddress(ME), true);

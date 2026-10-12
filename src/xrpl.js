@@ -14,6 +14,7 @@
 import { createHash } from "node:crypto";
 import { domainAge, hostnameReputation, NEW_DOMAIN_DAYS } from "./pg1.js";
 import { secondOpinion } from "./jev.js";
+import { partySanctionsReasons } from "./ofac.js";
 
 export const XRPL_NETWORKS = {
   "xrpl:0": { name: "XRP Ledger", rpc: "https://xrplcluster.com", rlusdIssuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
@@ -283,6 +284,16 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     const address = `${name}.${a.issuer}`;
     if (!seen.has(address)) { seen.add(address); tokens.push({ address, symbol: name }); }
   }
+  // Everyone the transaction pays, hands the account to, trusts or trades with (destinations, new keys and signers,
+  // token issuers), against the OFAC SDN list.
+  const parties = [
+    ...["Destination", "RegularKey", "Owner", "Authorize", "Unauthorize", "Issuer", "Holder"].map((k) => tx[k]),
+    ...["Amount", "SendMax", "DeliverMin", "LimitAmount", "TakerGets", "TakerPays"].map((k) => (isIssued(tx[k]) ? tx[k].issuer : null)),
+    ...(Array.isArray(tx.SignerEntries) ? tx.SignerEntries.map((e) => e?.SignerEntry?.Account) : []),
+  ];
+  const sanctions = partySanctionsReasons(parties, { exclude: [tx.Account] });
+  for (const r of sanctions.reasons) add(r.code, r.severity, r.subject, r.details);
+
   let aiSources = [];
   if (tokens.length) {
     const ai = await secondOpinion({ chainId: "xrpl", tokens }).catch(() => ({ reasons: [], sources: [] }));
@@ -303,8 +314,8 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
-    sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, every destination, new key or signer and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
+    sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
     checkedAt: new Date().toISOString(),
   };
 }

@@ -155,6 +155,17 @@ test("lists the free quick checks and the paid tools with their prices", async (
   await client.close();
 });
 
+test("a reason about the whole request (subject null, e.g. a message without from) passes the paid tools' output schema", async () => {
+  const client = await mcpClient();
+  const { tools } = await client.listTools();
+  const subject = tools.find((t) => t.name === "presign_check").outputSchema.properties.reasons.anyOf?.find((x) => x.type === "array")?.items?.properties?.subject
+    ?? tools.find((t) => t.name === "presign_check").outputSchema.properties.reasons.items?.properties?.subject;
+  assert.ok(subject, "reasons[].subject is in the schema");
+  const types = [subject.type, ...(subject.anyOf ?? []).map((x) => x.type)].flat().filter(Boolean);
+  assert.ok(types.includes("null"), `subject allows null: ${JSON.stringify(subject)}`);
+  await client.close();
+});
+
 test("every tool lists valid example arguments in _meta.examples: paid tools answer them with the payment requirement", async () => {
   const client = await mcpClient();
   const { tools } = await client.listTools();
