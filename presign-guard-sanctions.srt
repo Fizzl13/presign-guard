@@ -1,0 +1,32 @@
+1
+00:00:00,230 --> 00:00:04,966
+Your agent is about to pay an address it has never seen. Is that wallet sanctioned?
+
+2
+00:00:05,441 --> 00:00:15,020
+presign-guard checks it against the US Treasury's own sanctions list. This Tron address: red. It belongs to Bank Markazi, Iran's central bank.
+
+3
+00:00:15,485 --> 00:00:19,794
+The usual free source says sanctioned: zero, for the very same address.
+
+4
+00:00:20,257 --> 00:00:27,574
+Any chain works. Vitalik's wallet: green. This one: red. It is the Lazarus Group's, and reported for theft.
+
+5
+00:00:28,037 --> 00:00:36,613
+Agents pay one cent per screen over x402, on Base, Solana, the XRP Ledger or Algorand. Every answer is signed.
+
+6
+00:00:37,073 --> 00:00:44,582
+The list itself is free, open data. And sellers get a middleware that turns away a sanctioned payer before the payment settles.
+
+7
+00:00:45,044 --> 00:00:53,748
+x402 Doctor runs the same screen on the seller's payout address before an agent pays, so it never pays a sanctioned seller either.
+
+8
+00:00:54,208 --> 00:00:58,091
+presign-guard. Is this wallet sanctioned? One cent, any chain.
+
