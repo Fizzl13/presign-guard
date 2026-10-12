@@ -240,7 +240,7 @@ app.use(usageLog.middleware((req, res, body) => {
 // After the usage log, so reads of the registration are logged.
 app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
 // Free, open data: every digital currency address on the OFAC SDN list with its entry, for anyone who wants to screen
-// locally (x402-payer-screen does). The same list GET /v1/screen and the checks use. After the usage log, so who
+// locally (presign-guard-payer-screen does). The same list GET /v1/screen and the checks use. After the usage log, so who
 // downloads it is counted.
 app.get("/v1/sanctions", (_req, res) => {
   const list = sanctionsList();

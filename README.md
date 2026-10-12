@@ -34,7 +34,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval, its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC, Base or Solana | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
-| `GET /v1/sanctions` | free | Open data: every digital currency address on the OFAC SDN list with its entry (name, programs, currency), the list's publish date; refreshed every 6 hours. For screening locally, e.g. with [`x402-payer-screen`](https://www.npmjs.com/package/x402-payer-screen) |
+| `GET /v1/sanctions` | free | Open data: every digital currency address on the OFAC SDN list with its entry (name, programs, currency), the list's publish date; refreshed every 6 hours. For screening locally, e.g. with [`presign-guard-payer-screen`](https://www.npmjs.com/package/presign-guard-payer-screen) |
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
 | `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
