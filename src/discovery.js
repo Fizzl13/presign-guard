@@ -403,7 +403,8 @@ export const CATEGORY = "security";
 export const serviceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "agents"], iconUrl: ICON_URL };
 export const tokenServiceMetadata = { serviceName: "presign-guard", tags: ["token-security", "due-diligence", "solana", "base", "agents"], iconUrl: ICON_URL };
 export const approvalsServiceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "approvals", "revoke", "agents"], iconUrl: ICON_URL };
-export const screenServiceMetadata = { serviceName: "presign-guard", tags: ["sanctions", "ofac", "aml", "compliance", "wallet-screening", "agents"], iconUrl: ICON_URL };
+// At most 5 tags per route: the x402 PaymentRequired schema refuses more (test/x402-schema.test.mjs).
+export const screenServiceMetadata = { serviceName: "presign-guard", tags: ["sanctions", "ofac", "aml", "compliance", "wallet-screening"], iconUrl: ICON_URL };
 
 // @x402/express puts the v2 challenge only in the PAYMENT-REQUIRED header and
 // sends an empty {} body; some clients read accepts[] from the body.
