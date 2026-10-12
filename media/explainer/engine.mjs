@@ -1,10 +1,13 @@
 // The check engine for the video: the same code as the live service, without
-// the paywall, on localhost only. Serves the homepage and POST /v1/check so the
-// recording shows real verdicts (live GoPlus data) without anyone paying.
+// the paywall, on localhost only. Serves the homepage, POST /v1/check, GET /v1/token
+// and GET /v1/screen, so the recording shows real verdicts (live GoPlus data, the
+// Treasury's SDN list) without anyone paying.
 import express from "express";
 import { fileURLToPath } from "node:url";
 import { createCheckRouter } from "../../src/presign-guard.js";
 import { createTokenRouter, validateTokenQuery } from "../../src/token-verdict.js";
+import { createScreenRouter, validateScreenQuery } from "../../src/screen.js";
+import { startOfacSync } from "../../src/ofac.js";
 
 // Local test without network access: GoPlus answers "plain wallet" for 0x6B0F…, "verified contract" otherwise;
 // the token video gets a safe, a risky (new, thin) and a trust-list token.
@@ -42,4 +45,8 @@ app.use(express.static(fileURLToPath(new URL("../../public", import.meta.url))))
 app.use(createCheckRouter());
 app.use(validateTokenQuery);
 app.use(createTokenRouter());
+// The sanctions video: the same screen code, on the US Treasury's own SDN list (downloaded at start-up).
+startOfacSync();
+app.use(validateScreenQuery);
+app.use(createScreenRouter());
 app.listen(PORT, "127.0.0.1", () => console.log(`video engine on http://127.0.0.1:${PORT}`));

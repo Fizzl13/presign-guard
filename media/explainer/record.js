@@ -1,6 +1,8 @@
 // Records the explainer video's picture: drives a real browser through the
 // presign-guard homepage, timed to the narration (out/durations.json), with
 // burned-in captions. Writes out/screen.webm and out/timeline.json.
+// SCRIPT=token.json records the token verdict video, SCRIPT=screen.json the
+// wallet sanctions screen (GET /v1/screen on the Treasury's own SDN list).
 //
 // The page is served by engine.mjs (the same check code, no paywall, localhost),
 // so the verdicts on screen are real and nobody pays. The price in the agent
@@ -159,6 +161,104 @@ async function liveTokenPrice() {
   return `$${(Number(challenge.accepts[0].amount) / 1e6).toFixed(2)} on Base, Solana, XRP Ledger or Algorand`;
 }
 
+// ---------- sanctions video ----------
+
+const TRON_MARKAZI = "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81";
+const VITALIK = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+const LAZARUS = "0x098B716B8Aaf21512996dC57EB0615e2383E2f96";
+// A real $0.01 x402 payment for GET /v1/screen?address=TNiq9… on Base, settled by the CDP facilitator (12 Oct 2026).
+const PAID_TX = "0xcc760f0d2af04db2b200c744aa0a7108ac12da9c8363bd31d78399c971db51e1";
+const short = (a) => `${a.slice(0, 8)}…${a.slice(-4)}`;
+
+async function screenLocal(address) {
+  const res = await fetch(`${SITE}/v1/screen?address=${address}`);
+  const out = await res.json();
+  if (!res.ok) throw new Error(`screen ${address}: HTTP ${res.status} ${JSON.stringify(out)}`);
+  return out;
+}
+const sdnNames = (r) => (r.sanctions?.matches || []).map((m) => m.name);
+
+// GoPlus, the usual free source, on the same Tron address (the narration says it answers sanctioned: 0).
+async function goplusTron() {
+  if (process.env.MOCK_LIVE === "1") return { sanctioned: "0", stealing_attack: "0", phishing_activities: "0" };
+  const j = await (await fetch(`https://api.gopluslabs.io/api/v1/address_security/${TRON_MARKAZI}?chain_id=tron`)).json();
+  if (j?.result?.sanctioned !== "0") throw new Error(`GoPlus now answers sanctioned=${j?.result?.sanctioned} for ${TRON_MARKAZI}: rewrite s_goplus`);
+  return j.result;
+}
+
+// The free open list and x402 Doctor's index, as they are live.
+async function openNumbers() {
+  if (process.env.MOCK_LIVE === "1") return { count: 1050, published: "2026-10-09", endpoints: 34474, sellers: 1847 };
+  const list = await (await fetch(`${LIVE}/v1/sanctions`)).json();
+  const trust = await (await fetch("https://x402-doctor.fizzl.eu/api/trust/summary")).json();
+  const l = trust.latest || {};
+  return { count: list.count, published: list.published, endpoints: (l.go || 0) + (l.caution || 0) + (l.no_go || 0) + (l.unreachable || 0), sellers: trust.services?.sellers };
+}
+
+// The verdicts the narration names, checked before anything is recorded.
+async function screenData() {
+  const tron = await screenLocal(TRON_MARKAZI);
+  if (tron.verdict !== "red" || !sdnNames(tron).some((n) => /MARKAZI/i.test(n))) throw new Error(`Tron: expected red (Bank Markazi), got ${tron.verdict} ${sdnNames(tron)}`);
+  const vitalik = await screenLocal(VITALIK);
+  if (vitalik.verdict !== "green") throw new Error(`vitalik.eth: expected green, got ${vitalik.verdict}`);
+  const lazarus = await screenLocal(LAZARUS);
+  if (lazarus.verdict !== "red" || !sdnNames(lazarus).some((n) => /LAZARUS/i.test(n)) || !lazarus.reasons.some((x) => x.code === "STEALING_ATTACK")) {
+    throw new Error(`Lazarus: expected red, on the list and reported for theft, got ${lazarus.verdict} ${lazarus.reasons.map((x) => x.code)}`);
+  }
+  for (const r of [tron, vitalik, lazarus]) console.log(`${short(r.address.address)}: ${r.verdict} | ${r.one_liner}`);
+  return { tron, vitalik, lazarus, goplus: await goplusTron(), open: await openNumbers() };
+}
+
+const VERDICT_BG = { green: "var(--bull)", orange: "#fdba74", red: "var(--red)" };
+
+// One screen result: the request, the address and chain, the verdict, the reasons and the SDN entry.
+function screenCard(r, { compact = false, label = "" } = {}) {
+  const m = (r.sanctions?.matches || [])[0];
+  const reasons = r.reasons.filter((x) => x.severity !== "info").slice(0, 3);
+  const info = reasons.length ? [] : r.reasons.filter((x) => x.severity === "info").slice(0, 2);
+  return `<div class="v ${compact ? "compact" : ""}">
+    <div class="req r">GET /v1/screen?address=${esc(short(r.address.address))}</div>
+    <div class="top r"><h1>${esc(label || short(r.address.address))}</h1><span class="chain">${esc(FORMAT[r.address.format] || r.address.format)}</span><span class="badge" style="background:${VERDICT_BG[r.verdict]}">${esc(r.verdict)}</span></div>
+    <div class="one r">${esc(r.one_liner)}</div>
+    <ul class="r">${[...reasons, ...info].map((x) => `<li><b style="color:${SEV[x.severity]}">${esc(x.severity)}</b>${esc(x.code)}</li>`).join("")}</ul>
+    ${m ? `<div class="sdn r"><span>OFAC SDN entry</span><strong>${esc(m.name)}</strong><em>programs ${esc(m.programs.join(", "))} · list published ${esc(r.sanctions.published)}</em></div>` : `<div class="sdn r"><span>OFAC SDN list</span><strong>not listed</strong><em>list published ${esc(r.sanctions.published)}</em></div>`}
+  </div>`;
+}
+const FORMAT = { evm: "EVM", tron: "Tron", bitcoin: "Bitcoin", xrpl: "XRP Ledger", algorand: "Algorand", solana: "Solana", other: "other chain" };
+
+function screenHtml(cards) {
+  return `<!doctype html><html><head><style>${THEME}
+    body { display:flex; align-items:center; justify-content:center; gap: 40px; box-sizing: border-box; padding-bottom: 230px; }
+    .v { width: 1500px; background: var(--panel); border:1px solid var(--line); border-radius: 22px; padding: 44px 56px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+    .v.compact { width: 820px; padding: 36px 40px; box-sizing: border-box; }
+    .req { font: 26px ui-monospace, 'DejaVu Sans Mono', monospace; color: var(--soft); margin-bottom: 26px; }
+    .top { display:flex; align-items:center; gap: 24px; }
+    h1 { font-family: 'Space Grotesk','DM Sans',sans-serif; font-size: 56px; margin: 0; } .compact h1 { font-size: 44px; }
+    .chain { color: var(--soft); font-size: 30px; }
+    .badge { margin-left:auto; font-size: 44px; font-weight: 800; padding: 8px 28px; border-radius: 14px; color:#0f1115; text-transform: uppercase; }
+    .one { font-size: 34px; margin: 24px 0; } .compact .one { font-size: 28px; min-height: 3.9em; }
+    ul { list-style:none; padding:0; margin:0 0 26px; font: 28px/1.7 ui-monospace, 'DejaVu Sans Mono', monospace; } .compact ul { font-size: 24px; min-height: 5.1em; }
+    li b { display:inline-block; width: 110px; font-weight: 600; } .compact li b { width: 96px; }
+    .sdn { background: var(--bg); border:1px solid var(--line); border-radius: 12px; padding: 18px 22px; }
+    .sdn span { display:block; color: var(--soft); font-size: 22px; } .sdn strong { display:block; font-size: 34px; margin: 4px 0; } .compact .sdn strong { font-size: 28px; }
+    .sdn em { font-style: normal; color: var(--soft); font-size: 22px; }
+    .r { opacity: 0; transform: translateY(10px); transition: all .4s; } .r.on { opacity: 1; transform: none; }
+  </style></head><body>${cards.join("")}</body></html>`;
+}
+
+// The price an agent sees for a wallet screen, from the live 402 challenge.
+async function liveScreenPrice() {
+  if (process.env.MOCK_LIVE === "1") return "$0.01 on Base, Solana, XRP Ledger or Algorand";
+  const res = await fetch(`${LIVE}/v1/screen?address=${TRON_MARKAZI}`);
+  if (res.status !== 402) throw new Error(`expected 402 from ${LIVE}/v1/screen, got ${res.status}`);
+  const challenge = JSON.parse(Buffer.from(res.headers.get("payment-required"), "base64").toString("utf8"));
+  const nets = challenge.accepts.map((a) => a.network);
+  const has = (p) => nets.some((n) => n.startsWith(p));
+  if (!(has("eip155:8453") && has("solana:") && has("xrpl:") && has("algorand:"))) throw new Error(`live screen route offers ${nets}, expected Base, Solana, XRPL and Algorand`);
+  const base = challenge.accepts.find((a) => a.network === "eip155:8453");
+  return `$${(Number(base.amount) / 1e6).toFixed(2)} on Base, Solana, XRP Ledger or Algorand`;
+}
+
 // Captions: a bar at the bottom of every page, re-created after navigation.
 async function caption(page, text) {
   await page.evaluate(
@@ -236,8 +336,10 @@ async function showPreset(page, preset, ms) {
 
 async function main() {
   const tokenVideo = script.segments.some((seg) => seg.scene.startsWith("token"));
-  const price = tokenVideo ? await liveTokenPrice() : await livePrice();
+  const screenVideo = script.segments.some((seg) => seg.scene.startsWith("screen"));
+  const price = tokenVideo ? await liveTokenPrice() : screenVideo ? await liveScreenPrice() : await livePrice();
   const tokens = tokenVideo ? await tokenData() : null;
+  const screens = screenVideo ? await screenData() : null;
   const agentLines = [
     { cls: "", text: "$ POST presign-guard.fizzl.eu/v1/check   { what the agent is about to sign }" },
     { cls: "in", text: `\u2190 402 Payment Required: ${price}` },
@@ -278,6 +380,41 @@ async function main() {
     { cls: "", text: "MCP  token_quick_verdict { chain: \"solana\", address: … }" },
     { cls: "ok", text: `\u2190 { "verdict": "${tokens.safe.verdict}", "grade": "${tokens.safe.grade}" }   free, 10 calls an hour` },
   ];
+  const screenGoplusLines = screens && [
+    { cls: "", text: `$ GET api.gopluslabs.io/api/v1/address_security/${short(TRON_MARKAZI)}?chain_id=tron` },
+    { cls: "in", text: `\u2190 { "sanctioned": "${screens.goplus.sanctioned}", "stealing_attack": "${screens.goplus.stealing_attack}", "phishing_activities": "${screens.goplus.phishing_activities}", \u2026 }` },
+    { cls: "dim", text: " " },
+    { cls: "", text: `$ GET presign-guard.fizzl.eu/v1/screen?address=${short(TRON_MARKAZI)}` },
+    { cls: "ok", text: `\u2190 { "verdict": "${screens.tron.verdict}", "reasons": [{ "code": "SANCTIONED_ADDRESS" }],` },
+    { cls: "ok", text: `    "sanctions": { "matches": [{ "name": "${sdnNames(screens.tron)[0]}" }] } }` },
+  ];
+  const screenAgentLines = screens && [
+    { cls: "", text: `$ GET presign-guard.fizzl.eu/v1/screen?address=${short(TRON_MARKAZI)}` },
+    { cls: "in", text: `\u2190 402 Payment Required: ${price}` },
+    { cls: "dim", text: "\u2192 agent pays and retries" },
+    { cls: "ok", text: `\u2190 200 OK  { "verdict": "${screens.tron.verdict}", "grade": "${screens.tron.grade}",` },
+    { cls: "ok", text: `           "reasons": [{ "code": "SANCTIONED_ADDRESS", "severity": "red" }],` },
+    { cls: "ok", text: `           "receipt": { \u2026 EIP-191 signature } }` },
+    { cls: "dim", text: " " },
+    { cls: "dim", text: `A real payment for this call (12 Oct 2026): basescan.org/tx/${PAID_TX.slice(0, 10)}\u2026${PAID_TX.slice(-4)}` },
+  ];
+  const screenOpenLines = screens && [
+    { cls: "", text: "$ GET presign-guard.fizzl.eu/v1/sanctions                    free, no key" },
+    { cls: "ok", text: `\u2190 { "count": ${screens.open.count}, "published": "${screens.open.published}", "addresses": [ \u2026 ] }` },
+    { cls: "dim", text: " " },
+    { cls: "", text: "$ npm i presign-guard-payer-screen                            for x402 sellers" },
+    { cls: "", text: "app.use(screenPayers());   // before your x402 payment middleware" },
+    { cls: "ok", text: "\u2190 451 for a sanctioned payer: the payment never settles" },
+  ];
+  const screenDoctorLines = screens && [
+    { cls: "", text: "$ GET x402-doctor.fizzl.eu/api/v1/preflight?url=<the seller's endpoint>" },
+    { cls: "dim", text: "  screens the seller's payout address (x402 payTo, MPP recipient) against the same list" },
+    { cls: "in", text: '\u2190 when it is listed:  { "verdict": "no_go", "reasons": ["payto_sanctioned"] }' },
+    { cls: "dim", text: " " },
+    { cls: "ok", text: `x402 Doctor's Trust Index: ${screens.open.endpoints.toLocaleString("en-US")} paid endpoints from ${screens.open.sellers.toLocaleString("en-US")} sellers, checked daily` },
+  ];
+  // The sanctions video's terminals hold more lines: keep them above the caption bar.
+  const aboveCaption = () => page.evaluate(() => { document.body.style.boxSizing = "border-box"; document.body.style.paddingBottom = "230px"; });
   // Pages are loaded in a prepare step, before the caption is drawn; the scene only reveals.
   const reveal = async (selector, ms, share) => {
     const steps = await page.evaluate((sel) => document.querySelectorAll(sel).length, selector);
@@ -309,6 +446,44 @@ async function main() {
     },
     async tokenAgents(seg, ms) {
       await reveal(".l", ms, 0.8);
+      await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
+    },
+    async "prepare:screenTron"() { await setPage(page, screenHtml([screenCard(screens.tron, { label: "Tron address" })]), { waitUntil: "load" }); },
+    async screenTron(seg, ms) { await reveal(".r", ms, 0.6); },
+    async "prepare:screenGoplus"() {
+      await setPage(page, terminalHtml("The same Tron address, two sources", screenGoplusLines), { waitUntil: "load" });
+      await aboveCaption();
+    },
+    async screenGoplus(seg, ms) {
+      await reveal(".l", ms, 0.75);
+      await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
+    },
+    async "prepare:screenEvm"() {
+      await setPage(page, screenHtml([screenCard(screens.vitalik, { compact: true, label: "vitalik.eth" }), screenCard(screens.lazarus, { compact: true })]), { waitUntil: "load" });
+    },
+    async screenEvm(seg, ms) { await reveal(".r", ms, 0.7); },
+    async "prepare:screenAgent"() {
+      await setPage(page, terminalHtml("An AI agent screening a wallet before it pays", screenAgentLines), { waitUntil: "load" });
+      await aboveCaption();
+    },
+    async screenAgent(seg, ms) {
+      await reveal(".l", ms, 0.8);
+      await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
+    },
+    async "prepare:screenOpen"() {
+      await setPage(page, terminalHtml("Free open data, and a screen for sellers", screenOpenLines), { waitUntil: "load" });
+      await aboveCaption();
+    },
+    async screenOpen(seg, ms) {
+      await reveal(".l", ms, 0.75);
+      await page.evaluate(() => { for (const el of document.querySelectorAll(".l.ok")) el.classList.add("hl"); });
+    },
+    async "prepare:screenDoctor"() {
+      await setPage(page, terminalHtml("x402 Doctor's pre-payment check, for buyers", screenDoctorLines), { waitUntil: "load" });
+      await aboveCaption();
+    },
+    async screenDoctor(seg, ms) {
+      await reveal(".l", ms, 0.75);
       await page.evaluate(() => { for (const el of document.querySelectorAll(".l.in, .l.ok")) el.classList.add("hl"); });
     },
     async card(seg) {

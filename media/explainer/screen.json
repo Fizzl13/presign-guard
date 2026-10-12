@@ -1,0 +1,14 @@
+{
+  "title": "presign-guard: is this wallet sanctioned?",
+  "name": "presign-guard-sanctions",
+  "segments": [
+    { "id": "s_hook", "scene": "card", "card": { "title": "Is this wallet sanctioned?", "sub": "Agents pay addresses they have never seen." }, "text": "Your agent is about to pay an address it has never seen. Is that wallet sanctioned?" },
+    { "id": "s_tron", "scene": "screenTron", "text": "presign-guard checks it against the US Treasury's own sanctions list. This Tron address: red. It belongs to Bank Markazi, Iran's central bank." },
+    { "id": "s_goplus", "scene": "screenGoplus", "text": "The usual free source says sanctioned: zero, for the very same address." },
+    { "id": "s_evm", "scene": "screenEvm", "text": "Any chain works. Vitalik's wallet: green. This one: red. It is the Lazarus Group's, and reported for theft." },
+    { "id": "s_agent", "scene": "screenAgent", "text": "Agents pay one cent per screen over x402, on Base, Solana, the XRP Ledger or Algorand. Every answer is signed." },
+    { "id": "s_open", "scene": "screenOpen", "text": "The list itself is free, open data. And sellers get a middleware that turns away a sanctioned payer before the payment settles." },
+    { "id": "s_doctor", "scene": "screenDoctor", "text": "x402 Doctor runs the same screen on the seller's payout address before an agent pays, so it never pays a sanctioned seller either." },
+    { "id": "s_end", "scene": "card", "card": { "title": "presign-guard", "sub": "Is this wallet sanctioned? One cent, any chain.", "note": "presign-guard.fizzl.eu/v1/screen · MCP: screen_wallet" }, "text": "presign-guard. Is this wallet sanctioned? One cent, any chain." }
+  ]
+}
