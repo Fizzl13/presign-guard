@@ -25,7 +25,7 @@ import { fizzlCors } from "./src/fizzl-cors.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { createScreenRouter, validateScreenQuery } from "./src/screen.js";
-import { ofacStatus, startOfacSync } from "./src/ofac.js";
+import { ofacStatus, startOfacSync, sanctionsList } from "./src/ofac.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
 import { internalAccess, unlessInternal } from "./src/internal.js";
@@ -239,6 +239,14 @@ app.use(usageLog.middleware((req, res, body) => {
 }));
 // After the usage log, so reads of the registration are logged.
 app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
+// Free, open data: every digital currency address on the OFAC SDN list with its entry, for anyone who wants to screen
+// locally (x402-payer-screen does). The same list GET /v1/screen and the checks use. After the usage log, so who
+// downloads it is counted.
+app.get("/v1/sanctions", (_req, res) => {
+  const list = sanctionsList();
+  if (!list) return res.status(503).set("Retry-After", "60").json({ error: "list_loading", message: "The OFAC list is not loaded yet; try again in a minute" });
+  res.set("Cache-Control", "public, max-age=3600").set("Access-Control-Allow-Origin", "*").json(list);
+});
 
 // POST /feedback (and the MCP tool feedback): agents report a bug or a missing
 // feature. Free; it lands in the usage log and a person reads it (src/feedback.cjs).

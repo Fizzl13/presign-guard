@@ -149,4 +149,27 @@ function lookup(s, address, now = () => Date.now()) {
   };
 }
 
+// The whole list for GET /v1/sanctions (free, open data): every address with its SDN entry, sorted, or null before
+// the first load. Built once per loaded list.
+let exported = null;
+export function sanctionsList() {
+  if (!state) return null;
+  if (exported?.state === state) return exported.body;
+  const addresses = [...state.index.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([address, entries]) => ({
+    address,
+    entries: entries.map(({ uid, name, type, programs, currency }) => ({ uid, name, type, programs, currency })),
+  }));
+  const body = {
+    list: "OFAC SDN",
+    source: "US Treasury, Office of Foreign Assets Control: Specially Designated Nationals list (SDN.XML), digital currency addresses",
+    published: state.published,
+    checkedAt: new Date(state.checkedAt).toISOString(),
+    count: addresses.length,
+    match: "exact; EVM and bech32 addresses lowercased, all others as published",
+    addresses,
+  };
+  exported = { state, body };
+  return body;
+}
+
 export function resetOfac() { state = null; loading = null; lastError = null; lastAttempt = 0; }

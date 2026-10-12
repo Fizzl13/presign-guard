@@ -537,6 +537,18 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       },
     },
   };
+  // Free, open data: the list behind the screen and the checks.
+  paths["/v1/sanctions"] = {
+    get: {
+      operationId: "sanctionsList",
+      summary: "Get every OFAC-listed crypto address, free (open data)",
+      tags: ["Wallet screening"],
+      responses: {
+        200: { description: "list, source, published, checkedAt, count, addresses: [{ address, entries: [{ uid, name, type, programs, currency }] }]" },
+        503: { description: "The list is not loaded yet; try again in a minute" },
+      },
+    },
+  };
   return {
     openapi: "3.1.0",
     info: {

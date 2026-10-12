@@ -3,7 +3,7 @@
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
-import { parseSdnXml, loadSdn, screenOfac, addressKey, resetOfac, ofacStatus } from "../src/ofac.js";
+import { parseSdnXml, loadSdn, screenOfac, addressKey, resetOfac, ofacStatus, sanctionsList } from "../src/ofac.js";
 import { parseScreenRequest, addressFormat, screenAddress, validateScreenQuery, createScreenRouter } from "../src/screen.js";
 import { resetPg1 } from "../src/pg1.js";
 import { SDN_XML, TRON, SOL, XRP, ETH, BTC } from "./fixtures/sdn.mjs";
@@ -177,6 +177,22 @@ test("refresh: a 304 keeps the list, a failed refresh keeps the last good list, 
   resetOfac();
   const tiny = await loadSdn({ fetchImpl: async () => new Response(SDN_XML.replace(/<sdnEntry>[\s\S]*?FILLER[\s\S]*?<\/sdnEntry>/g, "")) });
   assert.equal(tiny, null, "fewer than 100 addresses is a broken file");
+});
+
+test("the open list (GET /v1/sanctions): every address with its entries, sorted; null before the first load", async () => {
+  assert.equal(sanctionsList(), null);
+  await loadSdn();
+  const list = sanctionsList();
+  assert.equal(list.list, "OFAC SDN");
+  assert.equal(list.published, "2026-10-09");
+  assert.equal(list.count, list.addresses.length);
+  assert.equal(list.count, 116, "117 ids, one address listed twice (ETH and USDT)");
+  const tron = list.addresses.find((a) => a.address === TRON);
+  assert.deepEqual(tron.entries, [{ uid: 4632, name: "BANK MARKAZI JOMHOURI ISLAMI IRAN", type: "Entity", programs: ["IRAN", "SDGT"], currency: "TRX" }]);
+  assert.ok(list.addresses.some((a) => a.address === ETH.toLowerCase()), "EVM lowercased");
+  const keys = list.addresses.map((a) => a.address);
+  assert.deepEqual(keys, [...keys].sort(), "sorted");
+  assert.equal(sanctionsList(), list, "built once per loaded list");
 });
 
 test("a list without a successful check for days is marked stale", async () => {
