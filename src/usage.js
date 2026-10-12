@@ -121,7 +121,7 @@ export function describePresignCall(req, _res, body) {
   }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method === "GET" && req.path === "/v1/screen") return describeScreenCall(req, body);
-  // The free open list: who downloads it (x402-payer-screen and others), never the list itself.
+  // The free open list: who downloads it (presign-guard-payer-screen and others), never the list itself.
   if (req.method === "GET" && req.path === "/v1/sanctions") return { route: "sanctions list", via: "api", input: {}, result: { status: _res.statusCode, count: (body || {}).count } };
   // Credit packs: the purchase (never the key itself) and balance lookups.
   const pack = req.method === "GET" && /^\/v1\/credits\/(\d+)$/.exec(req.path);
