@@ -114,6 +114,7 @@ test("credit packs show up in OpenAPI and /.well-known/x402 only when they are o
 test("x402scan: contact e-mail, and the free routes declared public while the paid ones are not", () => {
   const spec = openApi("https://pg.test", "eip155:8453");
   assert.equal(spec.info.contact.email, "Fizzl13@protonmail.com");
+  assert.match(spec["x-agentcash-provenance"].ownershipProofs[0], /^0x[0-9a-f]{130}$/, "the payout wallet's ownership proof for x402scan");
   assert.deepEqual(spec.paths["/v1/sanctions"].get.security, []);
   for (const [path, ops] of Object.entries(spec.paths)) {
     for (const op of Object.values(ops)) if (op["x-payment-info"]) assert.equal(op.security, undefined, path);
