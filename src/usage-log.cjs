@@ -131,6 +131,23 @@ function visitorOf(ip, secret) {
   return crypto.createHmac('sha256', secret).update(address).digest('hex').slice(0, 12);
 }
 
+// Why an x402 payment was refused. The 402 that answers it says so: PAYMENT-RESPONSE carries
+// errorReason when settlement failed, PAYMENT-REQUIRED carries error when verification failed.
+// Only the first line is kept, with URLs blanked: an RPC error could name a URL with a key in it.
+function x402Refusal(res) {
+  for (const [header, field] of [['payment-response', 'errorReason'], ['payment-required', 'error']]) {
+    const value = res.getHeader(header);
+    if (!value) continue;
+    try {
+      const reason = JSON.parse(Buffer.from(String(value), 'base64').toString('utf8'))[field];
+      if (reason) return String(reason).split('\n')[0].replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '<url>').slice(0, 160);
+    } catch {
+      // not an x402 header
+    }
+  }
+  return null;
+}
+
 function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch, now = () => new Date(), log = console, flushDelayMs = 10 * 60 * 1000, exitOnSignal = !fetchFnGiven(fetchFn) } = {}) {
   const token = env.USAGE_LOG_TOKEN;
   const repo = env.USAGE_LOG_REPO || DEFAULT_REPO;
@@ -275,6 +292,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
         // An MPP credential (Authorization: Payment …, mpp-pay.js) counts as an offered payment too.
         const mppOffered = /(?:^|,)\s*Payment\s/i.test(String(req.headers.authorization || ''));
         const offered = Boolean(req.headers['payment-signature'] || req.headers['x-payment']) || mppOffered;
+        const refusal = quote && offered && !mppOffered ? x402Refusal(res) : null;
         record({
           route: described.route,
           via: described.via || 'http',
@@ -282,7 +300,7 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
           ms: Date.now() - started,
           paid: Boolean(payment),
           ...(payment || {}),
-          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp', ...(res.locals && res.locals.mppRefused ? { reason: res.locals.mppRefused } : {}) } : {}), ...(attemptedNetwork(req) ? { network: attemptedNetwork(req) } : {}) } : {}) } : {}),
+          ...(quote ? { quote: true, ...(offered ? { payment_failed: true, ...(mppOffered ? { protocol: 'mpp', ...(res.locals && res.locals.mppRefused ? { reason: res.locals.mppRefused } : {}) } : refusal ? { reason: refusal } : {}), ...(attemptedNetwork(req) ? { network: attemptedNetwork(req) } : {}) } : {}) } : {}),
           agent: agentOf(req.headers['user-agent']),
           visitor: visitorOf(req.ip || (req.socket && req.socket.remoteAddress), visitorSecret),
           input: described.input,
