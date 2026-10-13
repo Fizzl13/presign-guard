@@ -449,6 +449,9 @@ function creditPaths() {
 }
 
 export const CONTACT = { name: "Fizzl", url: "https://fizzl.eu", email: "Fizzl13@protonmail.com" };
+// x402scan and AgentCash: the payout wallet's personal_sign of "https://presign-guard.fizzl.eu" (signed 13 Oct 2026 on
+// x402-doctor.fizzl.eu/sign-ownership, verified with x402scan's verifyOwnership), so the origin shows as ownership verified.
+export const OWNERSHIP_PROOFS = ["0x6392852e7aeda7d513712b56663040d0f297727c058e28df5c084abf90228d486cfe9c5816faee14625c55e9827f9c8cce630d130d01fab38d0c33193bbc3ec91c"];
 
 export function openApi(origin, network, tokenNetworks = [network], { credits = false } = {}) {
   const paths = {};
@@ -566,6 +569,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
     },
     servers: [{ url: origin }],
     paths: credits ? { ...paths, ...creditPaths() } : paths,
+    "x-agentcash-provenance": { ownershipProofs: OWNERSHIP_PROOFS },
   };
 }
 
