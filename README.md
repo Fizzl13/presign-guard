@@ -337,6 +337,18 @@ The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it h
 
 The simulation of signatures (only transactions are simulated), and what a site does with a signed plain message. Treat a green verdict as "no known risk signals", not as a guarantee.
 
+## Payment security (Five Attacks on x402)
+
+[Five Attacks on x402](https://arxiv.org/abs/2605.11781) (Li, Wang and Wang, 2026) describes five ways an x402 payment can go wrong between the HTTP request and the chain, and maps each to a mitigation. How this service handles them:
+
+| Attack | What goes wrong | Here |
+|---|---|---|
+| I-A Revert-grant | The answer is released before the payment is final, and the payment then fails | The answer is held until the settlement is confirmed: `@x402/express` buffers it, and the XRPL and Solana paths wait for a validated, successful transaction. A failed settlement answers 402, never the content. |
+| I-B Settlement preemption | Someone who sees the payment header submits the authorization first, so the server's own settlement fails | A protocol-level issue; the paper's fix is settlement bound to the facilitator. Here the payment header only travels over HTTPS and is never logged. |
+| II Replay | One payment buys several answers | Each payment is claimed once: EIP-3009 nonces on Base, a settlement cache keyed by the transaction on XRPL and Solana, and an MPP Tempo transfer must carry the memo of one challenge (valid for minutes) and is claimed by its hash. An XRPL payment's `InvoiceID` names this service and route, MPP sessions pay with cumulative vouchers (an old voucher buys nothing new), and credits are taken atomically. |
+| III Cache and header confusion | A shared cache (CDN, proxy) stores a paid answer and serves it to someone who did not pay | 402 challenges are `Cache-Control: no-store`; paid answers carry `private` (added by `@x402/express`) or `no-store`. |
+| IV Server selection | Fake or manipulated listings steer agents to the wrong seller | `openapi.json` carries an ownership proof signed by the payout wallet (x402scan). Before paying another seller, x402 Doctor's pre-payment check (`/api/v1/preflight`, $0.001) flags impersonation, bait and payout addresses on the OFAC list. |
+
 ## Feedback
 
 Found a bug, or missing something? Send it with `POST /feedback` (free, no payment) or the MCP tool `feedback`:
