@@ -26,26 +26,54 @@ export const isT54Payload = (payload) => Boolean(payload && payload.payload && t
 const T54_CLAIM_MS = 7 * 24 * 3600 * 1000;
 function createClaims({ ttlMs = T54_CLAIM_MS, now = () => Date.now() } = {}) {
   const until = new Map();
+  const failed = new Map();
+  const prune = (map, t) => { for (const [k, u] of map) if (u <= t) map.delete(k); };
   return {
     claim(key) {
       const t = now();
-      for (const [k, u] of until) if (u <= t) until.delete(k);
+      prune(until, t);
       if (until.has(key)) return false;
       until.set(key, t + ttlMs);
       return true;
     },
-    release: (key) => until.delete(key),
+    release(key) {
+      until.delete(key);
+      failed.set(key, now() + ttlMs);
+    },
+    failedHere(key) {
+      prune(failed, now());
+      return failed.has(key);
+    },
   };
 }
 const blobKey = (payload) => createHash("sha256").update(String(payload.payload.signedTxBlob || "")).digest("hex");
 
-export function createXrplFacilitator({ network = XRPL_NETWORK, wsUrl = "wss://xrplcluster.com", scheme, t54Url = process.env.XRPL_T54_URL || "https://xrpl-facilitator-mainnet.t54.ai", t54, now } = {}) {
+// The claims live in memory, and t54's /verify also passes a blob that is already on the ledger (tested on testnet,
+// 13 Oct 2026), so after a restart a replayed payment would pass again. So verify first asks the ledger: a blob whose
+// transaction is already in a ledger was paid before. A blob whose settle failed in this process may be retried (t54
+// may have submitted it anyway), and a failed lookup lets the payment through (the claims still hold).
+export const txHash = (blob) => createHash("sha512").update(Buffer.concat([Buffer.from("54584E00", "hex"), Buffer.from(String(blob), "hex")])).digest().subarray(0, 32).toString("hex").toUpperCase();
+const ledgerLookup = (rpcUrl) => async (blob) => {
+  try {
+    const res = await fetch(rpcUrl, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ method: "tx", params: [{ transaction: txHash(blob) }] }), signal: AbortSignal.timeout(4000) });
+    const { result } = await res.json();
+    return Boolean(result && result.status === "success" && result.hash);
+  } catch {
+    return false;
+  }
+};
+
+export function createXrplFacilitator({ network = XRPL_NETWORK, wsUrl = "wss://xrplcluster.com", rpcUrl = process.env.XRPL_RPC_URL || wsUrl.replace(/^ws(s?):/, "http$1:"), scheme, t54Url = process.env.XRPL_T54_URL || "https://xrpl-facilitator-mainnet.t54.ai", t54, onLedger = ledgerLookup(rpcUrl), now } = {}) {
   const facilitator = new x402Facilitator().register(network, scheme || new ExactXrplScheme({ wsUrlByNetwork: { [network]: wsUrl } }));
   const remote = t54 || (t54Url && t54Url !== "off" ? new HTTPFacilitatorClient({ url: t54Url }) : null);
   const claims = createClaims({ now });
   return {
     getSupported: async () => facilitator.getSupported(),
-    verify: (payload, requirements) => (remote && isT54Payload(payload) ? remote.verify(payload, requirements) : facilitator.verify(payload, requirements)),
+    async verify(payload, requirements) {
+      if (!(remote && isT54Payload(payload))) return facilitator.verify(payload, requirements);
+      if (!claims.failedHere(blobKey(payload)) && (await onLedger(payload.payload.signedTxBlob))) return { isValid: false, invalidReason: "duplicate_settlement", payer: "" };
+      return remote.verify(payload, requirements);
+    },
     async settle(payload, requirements) {
       if (!(remote && isT54Payload(payload))) return facilitator.settle(payload, requirements);
       const key = blobKey(payload);

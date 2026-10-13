@@ -5,7 +5,8 @@ import { x402ResourceServer } from "@x402/core/server";
 import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { x402Routes } from "../src/presign-guard.js";
 import { packRoutes } from "../src/credits.js";
-import { createXrplFacilitator, XRPL_NETWORK } from "../src/xrpl-facilitator.js";
+import { createXrplFacilitator, XRPL_NETWORK, txHash } from "../src/xrpl-facilitator.js";
+import http from "node:http";
 import usageLog from "../src/usage-log.cjs";
 
 const XRPL = { network: XRPL_NETWORK, payTo: "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw" };
@@ -71,4 +72,59 @@ test("a t54 payment settles once: the same signed blob again is a duplicate (t54
   assert.equal((await fac.settle(pay("AA"), {})).success, true, "after a week the claim is gone");
   const parallel = await Promise.all([fac.settle(pay("DD"), {}), fac.settle(pay("DD"), {})]);
   assert.deepEqual(parallel.map((r) => r.success).sort(), [false, true], "two at once: one settles");
+});
+
+// A t54 payment signed on testnet (13 Oct 2026) and the id the ledger gave it.
+const TESTNET_BLOB = "120000232FF676FC2401482F00201B01482F3F50118D33D3DD43B9E4F4C3360F499765BF00C90F302CB7AFB9545FA67F79DDFF9072614000000000004E2068400000000000000A7321ED17C5501C694D47A4944A4552C61EF6E164EDD54F86D4216CF9D6CB98F992542A74405456FA9362161C17565A68893F3CFCFA3623F56C48DA0047C67A1BB6CD30F5DCA5D3F046FE250901574F1A1256548346409ECFCD00D573766309F43445ED6C0F81147731F4DF42A63D35BB8A06341856FE28535F197083140C8A850AAB95254D89763620F3DEC18E86F471F4F9EA7D2A696368696D6F6B752D7369676E616C2E66697A7A6C2E657520474554202F7369676E616C2F3A70616972E1F1";
+const TESTNET_HASH = "1266EDE7843F07B65D172AB8C74F09A36F784CE499A3087E8E95C538DA3B1E46";
+
+test("a t54 payment whose transaction is already on the ledger is a replay, even after a restart; a failed settle may still be retried", async () => {
+  assert.equal(txHash(TESTNET_BLOB), TESTNET_HASH, "the id is SHA-512Half of TXN\\0 + the blob");
+  const onLedger = new Set(["OLD"]);
+  const asked = [];
+  const verified = [];
+  let fail = false;
+  const t54 = { verify: async (p) => (verified.push(p.payload.signedTxBlob), { isValid: true }), settle: async () => (fail ? { success: false, errorReason: "timeout" } : { success: true, transaction: "ABC" }) };
+  const fac = createXrplFacilitator({ wsUrl: "wss://127.0.0.1:9", t54, onLedger: async (blob) => (asked.push(blob), onLedger.has(blob)) });
+  const pay = (blob) => ({ x402Version: 2, accepted: { network: XRPL_NETWORK }, payload: { signedTxBlob: blob, invoiceId: "presign-guard.fizzl.eu POST /v1/check" } });
+  assert.deepEqual(await fac.verify(pay("OLD"), {}), { isValid: false, invalidReason: "duplicate_settlement", payer: "" }, "a fresh process still refuses an old payment");
+  assert.equal((await fac.verify(pay("NEW"), {})).isValid, true);
+  assert.deepEqual(verified, ["NEW"], "the replay never reaches t54");
+  fail = true;
+  assert.equal((await fac.settle(pay("NEW"), {})).success, false);
+  onLedger.add("NEW");
+  fail = false;
+  asked.length = 0;
+  assert.equal((await fac.verify(pay("NEW"), {})).isValid, true, "t54 may have submitted it before the failure: the retry goes on");
+  assert.deepEqual(asked, [], "no ledger lookup for a retry");
+  assert.equal((await fac.settle(pay("NEW"), {})).success, true);
+});
+
+test("the ledger lookup asks rippled for the transaction by id; not found or no answer lets the payment through", async () => {
+  const seen = [];
+  const srv = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      const { method, params } = JSON.parse(body);
+      seen.push([method, params[0].transaction]);
+      const found = params[0].transaction === TESTNET_HASH;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ result: found ? { status: "success", hash: TESTNET_HASH, validated: true } : { status: "error", error: "txnNotFound" } }));
+    });
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const rpcUrl = `http://127.0.0.1:${srv.address().port}`;
+  const t54 = { verify: async () => ({ isValid: true }), settle: async () => ({ success: true }) };
+  const pay = (blob) => ({ x402Version: 2, payload: { signedTxBlob: blob, invoiceId: "x" } });
+  try {
+    const fac = createXrplFacilitator({ wsUrl: "wss://127.0.0.1:9", rpcUrl, t54 });
+    assert.equal((await fac.verify(pay(TESTNET_BLOB), {})).invalidReason, "duplicate_settlement");
+    assert.equal((await fac.verify(pay("1200"), {})).isValid, true);
+    assert.deepEqual(seen, [["tx", TESTNET_HASH], ["tx", txHash("1200")]]);
+  } finally {
+    srv.close();
+  }
+  const down = createXrplFacilitator({ wsUrl: "wss://127.0.0.1:9", rpcUrl: "http://127.0.0.1:9", t54 });
+  assert.equal((await down.verify(pay(TESTNET_BLOB), {})).isValid, true, "rippled unreachable: the in-memory claims still hold");
 });
