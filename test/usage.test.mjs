@@ -31,6 +31,27 @@ test("usage log: a check is logged with what was sent and the verdict", async ()
   assert.ok(!JSON.stringify(event).includes("127.0.0.1"), "never the IP itself");
 });
 
+test("usage log: a refused x402 payment is logged with the reason the 402 gives", async () => {
+  const written = [];
+  const fetchFn = async (url, opts = {}) => {
+    if ((opts.method || "GET") === "GET") return new Response("{}", { status: 404 });
+    written.push(Buffer.from(JSON.parse(opts.body).content, "base64").toString("utf8"));
+    return Response.json({}, { status: 201 });
+  };
+  const usageLog = createUsageLog({ service: "presign", env: { USAGE_LOG_TOKEN: "t" }, fetchFn, log: { warn() {}, error() {} } });
+  const app = express();
+  app.use(usageLog.middleware(describePresignCall));
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64");
+  app.post("/v1/check", (_req, res) => res.set("PAYMENT-REQUIRED", b64({ x402Version: 2, error: "invalid_exact_evm_payload_signature", accepts: [] })).status(402).json({}));
+  const server = app.listen(0);
+  await fetch(`http://127.0.0.1:${server.address().port}/v1/check`, { method: "POST", headers: { "content-type": "application/json", "payment-signature": b64({ x402Version: 2 }) }, body: "{}" });
+  await new Promise((r) => setTimeout(r, 30));
+  await usageLog.flush();
+  server.close();
+  const event = JSON.parse(written[0].trim());
+  assert.deepEqual([event.status, event.payment_failed, event.reason], [402, true, "invalid_exact_evm_payload_signature"]);
+});
+
 test("visitor code: stable per IP and secret, different per secret, none without one", async () => {
   const { default: usageLog } = await import("../src/usage-log.cjs");
   const { visitorOf } = usageLog;
