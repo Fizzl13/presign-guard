@@ -1,0 +1,43 @@
+name: Dependency audit
+# Every Monday: npm audit on presign-guard's production dependencies (Dependabot alerts are off on this repo).
+# A high or critical finding the server can reach opens one issue labelled dependency-audit (GitHub
+# emails the owner), or adds the new list to the open one; the next clean run closes it.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch: {}
+  push:
+    branches: ['claude/**']
+    paths: ['.github/scripts/audit-check.mjs', '.github/workflows/audit.yml']
+permissions:
+  contents: read
+  issues: write
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # npm audit exits non-zero whenever it finds anything; the next step decides what counts.
+      - run: npm audit --omit=dev --package-lock-only --json > "$RUNNER_TEMP/audit.json" || true
+      - name: High and critical findings the server can reach
+        run: node "$GITHUB_WORKSPACE/.github/scripts/audit-check.mjs" "$RUNNER_TEMP/audit.json" package-lock.json > "$RUNNER_TEMP/report.md"
+      - name: Keep one issue open while findings remain
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          report="$RUNNER_TEMP/report.md"
+          num=$(gh issue list --label dependency-audit --state open --json number --jq '.[0].number // empty')
+          if [ -s "$report" ]; then
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$num" ]; then gh issue comment "$num" --body-file "$report"; exit 0; fi
+            gh label create dependency-audit --color B60205 --description "Weekly npm audit found a high or critical advisory" 2>/dev/null || true
+            gh issue create --title "Dependency audit: high or critical advisory" --label dependency-audit --body-file "$report"
+          else
+            echo "No high or critical findings the server can reach." >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$num" ]; then gh issue close "$num" --comment "The weekly audit is clean again."; fi
+          fi
