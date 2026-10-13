@@ -105,8 +105,19 @@ test("credit packs show up in OpenAPI and /.well-known/x402 only when they are o
   assert.equal(on.paths["/v1/credits/100"].get["x-payment-info"].price.amount, "0.80");
   assert.equal(on.paths["/v1/credits/1000"].get["x-payment-info"].price.amount, "7.00");
   assert.match(on.info["x-guidance"], /x-credit-key/);
+  assert.deepEqual(on.paths["/v1/credits"].get.security, [], "the free price list is declared public");
+  assert.equal(on.paths["/v1/credits/100"].get.security, undefined, "the packs stay paid");
   assert.equal(wellKnown("https://pg.test").credits, undefined);
   assert.equal(wellKnown("https://pg.test", { credits: true }).credits.header, "x-credit-key");
+});
+
+test("x402scan: contact e-mail, and the free routes declared public while the paid ones are not", () => {
+  const spec = openApi("https://pg.test", "eip155:8453");
+  assert.equal(spec.info.contact.email, "Fizzl13@protonmail.com");
+  assert.deepEqual(spec.paths["/v1/sanctions"].get.security, []);
+  for (const [path, ops] of Object.entries(spec.paths)) {
+    for (const op of Object.values(ops)) if (op["x-payment-info"]) assert.equal(op.security, undefined, path);
+  }
 });
 
 test("Bazaar curation metadata: serviceName, category, iconUrl and tags in /.well-known/x402 and on every paid route", () => {

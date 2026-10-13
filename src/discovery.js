@@ -442,11 +442,13 @@ function creditPaths() {
     },
   });
   return {
-    "/v1/credits": { get: { operationId: "credits", summary: "Free: pack prices, credit cost per call, and your balance with the x-credit-key header", responses: { 200: { description: "Prices and balance" }, 404: { description: "Unknown key" } } } },
+    "/v1/credits": { get: { operationId: "credits", security: [], summary: "Free: pack prices, credit cost per call, and your balance with the x-credit-key header", responses: { 200: { description: "Prices and balance" }, 404: { description: "Unknown key" } } } },
     "/v1/credits/100": pack(100, "0.80"),
     "/v1/credits/1000": pack(1000, "7.00"),
   };
 }
+
+export const CONTACT = { name: "Fizzl", url: "https://fizzl.eu", email: "Fizzl13@protonmail.com" };
 
 export function openApi(origin, network, tokenNetworks = [network], { credits = false } = {}) {
   const paths = {};
@@ -544,6 +546,8 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       operationId: "sanctionsList",
       summary: "Get every OFAC-listed crypto address, free (open data)",
       tags: ["Wallet screening"],
+      // Free on purpose: directories that probe every path (x402scan) list it as public instead of skipping it.
+      security: [],
       responses: {
         200: { description: "list, source, published, checkedAt, count, addresses: [{ address, entries: [{ uid, name, type, programs, currency }] }]" },
         503: { description: "The list is not loaded yet; try again in a minute" },
@@ -555,6 +559,8 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
     info: {
       title: "presign-guard",
       version: "2.5.0",
+      // The e-mail lets directories such as x402scan link the origin to its owner.
+      contact: CONTACT,
       description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature, a Solana transaction (every instruction decoded, then simulated), an XRP Ledger transaction or an Algorand transaction or group (simulated). Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke, and GET /v1/screen: any chain's wallet address against the OFAC SDN sanctions list. Every paid answer carries a signed receipt (EIP-191) binding the verdict to your request, verifiable later.",
       "x-guidance": "Call POST /v1/check with what you are about to sign, before you sign it. Only proceed on green; on orange ask your user; never sign on red. For a signature, pass the exact eth_signTypedData_v4 payload as typedData. Pass origin (the site asking) to catch newly registered phishing domains, and intent (one sentence: what you are trying to do) to catch signing something else than you meant (INTENT_MISMATCH). For a transaction, pass from (your wallet) so it is simulated: you see what really leaves your wallet. For a Solana transaction, send type solana with the base64 wire transaction as transaction: it is decoded and simulated, and a token account handed to someone else is red. For an XRP Ledger transaction, send type xrpl with the unsigned transaction JSON as tx: a new regular key or signer list, a disabled master key, AccountDelete or fake RLUSD is red. For Algorand, send type algorand with the base64 msgpack transaction as transaction (or a whole group as transactions): a rekey, closing the account or an asset holding to someone else, or fake USDC is red. Paying an x402 challenge? Pass the accepts entry you chose as x402 to catch a signature that pays more, someone else or another token than the seller asked. Use /v1/check/explain when a person needs the reason in plain language (lang en or nl). Before buying or accepting a token, call GET /v1/token?chain=solana&address=<mint> (or chain=base with a 0x address, chain=algorand with an asset id): the same green/orange/red logic plus a grade, a one-line summary and market data. To clean up a wallet, call GET /v1/approvals?chain=base&address=<wallet>: every open token approval with who the spender is, and which ones to revoke. Before paying an address or accepting money from one, call GET /v1/screen?address=<address> (any chain: EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand): red when it is on the OFAC SDN list or reported for theft or phishing. Keep the receipt field of each answer: it is signed by the address at /.well-known/presign-guard-signer.json and proves which verdict you got for which request; POST /v1/verify checks one for free." + (credits ? CREDITS_GUIDANCE : ""),
     },
