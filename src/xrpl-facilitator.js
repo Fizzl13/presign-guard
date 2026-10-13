@@ -7,6 +7,7 @@
 import { x402Facilitator } from "@x402/core/facilitator";
 import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 import { HTTPFacilitatorClient } from "@x402/core/server";
+import { createHash } from "node:crypto";
 
 export const XRPL_NETWORK = "xrpl:0";
 // The XRPL SourceTag for x402 payments: t54-built payers sign with it, @x402/xrpl payers may.
@@ -18,13 +19,46 @@ export const X402_SOURCE_TAG = 804681468;
 export const isT54Payload = (payload) => Boolean(payload && payload.payload && typeof payload.payload.invoiceId === 'string');
 
 
-export function createXrplFacilitator({ network = XRPL_NETWORK, wsUrl = "wss://xrplcluster.com", scheme, t54Url = process.env.XRPL_T54_URL || "https://xrpl-facilitator-mainnet.t54.ai", t54 } = {}) {
+// t54's hosted /settle is idempotent: the same settle request again returns its cached result. A replayed t54
+// payment (the same signed blob sent again) would then come back "settled" and buy a second answer. So each blob is
+// claimed once here, for a week (long past its LastLedgerSequence); a failed settle frees it for a retry. The local
+// @x402/xrpl path has the same guard in the library (duplicate_settlement).
+const T54_CLAIM_MS = 7 * 24 * 3600 * 1000;
+function createClaims({ ttlMs = T54_CLAIM_MS, now = () => Date.now() } = {}) {
+  const until = new Map();
+  return {
+    claim(key) {
+      const t = now();
+      for (const [k, u] of until) if (u <= t) until.delete(k);
+      if (until.has(key)) return false;
+      until.set(key, t + ttlMs);
+      return true;
+    },
+    release: (key) => until.delete(key),
+  };
+}
+const blobKey = (payload) => createHash("sha256").update(String(payload.payload.signedTxBlob || "")).digest("hex");
+
+export function createXrplFacilitator({ network = XRPL_NETWORK, wsUrl = "wss://xrplcluster.com", scheme, t54Url = process.env.XRPL_T54_URL || "https://xrpl-facilitator-mainnet.t54.ai", t54, now } = {}) {
   const facilitator = new x402Facilitator().register(network, scheme || new ExactXrplScheme({ wsUrlByNetwork: { [network]: wsUrl } }));
   const remote = t54 || (t54Url && t54Url !== "off" ? new HTTPFacilitatorClient({ url: t54Url }) : null);
+  const claims = createClaims({ now });
   return {
     getSupported: async () => facilitator.getSupported(),
     verify: (payload, requirements) => (remote && isT54Payload(payload) ? remote.verify(payload, requirements) : facilitator.verify(payload, requirements)),
-    settle: (payload, requirements) => (remote && isT54Payload(payload) ? remote.settle(payload, requirements) : facilitator.settle(payload, requirements)),
+    async settle(payload, requirements) {
+      if (!(remote && isT54Payload(payload))) return facilitator.settle(payload, requirements);
+      const key = blobKey(payload);
+      if (!claims.claim(key)) return { success: false, transaction: "", network: payload.accepted?.network || network, payer: "", errorReason: "duplicate_settlement" };
+      try {
+        const result = await remote.settle(payload, requirements);
+        if (!result || !result.success) claims.release(key);
+        return result;
+      } catch (err) {
+        claims.release(key);
+        throw err;
+      }
+    },
   };
 }
 

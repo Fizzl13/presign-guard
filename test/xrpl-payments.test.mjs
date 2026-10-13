@@ -50,3 +50,25 @@ test("t54-format payments (invoiceId in the payload) go to t54; accepts carry th
   assert.equal(isT54Payload({ payload: { signedTxBlob: "AB" } }), false);
   assert.equal(x402Routes(EVM, "eip155:8453", null, XRPL)["GET /v1/token"].accepts.at(-1).extra.sourceTag, X402_SOURCE_TAG);
 });
+
+test("a t54 payment settles once: the same signed blob again is a duplicate (t54's /settle is idempotent), a failed settle can be retried", async () => {
+  let t = 0;
+  let fail = false;
+  const settled = [];
+  const t54 = { verify: async () => ({ isValid: true }), settle: async (p) => { settled.push(p.payload.signedTxBlob); return fail ? { success: false, errorReason: "tefPAST_SEQ" } : { success: true, transaction: "ABC" }; } };
+  const fac = createXrplFacilitator({ wsUrl: "wss://127.0.0.1:9", t54, now: () => t });
+  const pay = (blob) => ({ x402Version: 2, accepted: { network: "xrpl:0" }, payload: { signedTxBlob: blob, invoiceId: "presign-guard.fizzl.eu GET /v1/screen" } });
+  assert.equal((await fac.settle(pay("AA"), {})).success, true);
+  const again = await fac.settle(pay("AA"), {});
+  assert.deepEqual([again.success, again.errorReason], [false, "duplicate_settlement"], "a replayed blob buys nothing");
+  assert.deepEqual(settled, ["AA"], "the replay never reaches t54");
+  assert.equal((await fac.settle(pay("BB"), {})).success, true, "another payment settles");
+  fail = true;
+  assert.equal((await fac.settle(pay("CC"), {})).success, false);
+  fail = false;
+  assert.equal((await fac.settle(pay("CC"), {})).success, true, "a failed settle frees the blob for a retry");
+  t += 8 * 24 * 3600 * 1000;
+  assert.equal((await fac.settle(pay("AA"), {})).success, true, "after a week the claim is gone");
+  const parallel = await Promise.all([fac.settle(pay("DD"), {}), fac.settle(pay("DD"), {})]);
+  assert.deepEqual(parallel.map((r) => r.success).sort(), [false, true], "two at once: one settles");
+});
