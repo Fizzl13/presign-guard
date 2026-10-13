@@ -42,8 +42,16 @@ test("openapi and well-known list all paid routes", () => {
   assert.deepEqual(spec.paths["/v1/approvals"].get.parameters.map((p) => p.name), ["chain", "address"]);
   assert.deepEqual(spec.paths["/v1/screen"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/screen"].get.parameters.map((p) => p.name), ["address"]);
-  assert.deepEqual(wellKnown("https://example.test").resources,
+  const resources = wellKnown("https://example.test").resources;
+  assert.deepEqual(resources.map((r) => r.url),
     ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token", "https://example.test/v1/approvals", "https://example.test/v1/screen"]);
+  assert.deepEqual(resources.map((r) => r.method), ["POST", "POST", "GET", "GET", "GET"]);
+  // The XRPL AI Hub lists each resource by its name and description, and the service by the top-level name.
+  assert.equal(new Set(resources.map((r) => r.name)).size, resources.length, "names are unique");
+  for (const r of resources) {
+    assert.ok(r.name.length > 0 && r.name.length <= 40, r.url);
+    assert.ok(r.description.length >= 40 && r.description.length <= 200, r.url);
+  }
 });
 
 test("every operation summary fits pay.sh: 63 characters or fewer, starting with a verb", () => {

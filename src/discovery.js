@@ -573,11 +573,21 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
   };
 }
 
+// A short name and a one-line description per paid resource in /.well-known/x402:
+// the XRPL AI Hub lists each resource by those (without them it shows the long 402 text).
+const DISCOVERY_RESOURCES = [
+  ["/v1/check", "POST", "Pre-sign check", "Is this transaction, approval or signature safe to sign? green/orange/red with reason codes, for EVM, Solana, XRP Ledger and Algorand."],
+  ["/v1/check/explain", "POST", "Pre-sign check, explained", "The pre-sign verdict plus a plain-language explanation for the person who has to decide (English or Dutch)."],
+  [TOKEN_ROUTE.path, "GET", "Token check", "Is this token safe to buy, hold or accept? Honeypot, impersonation, mint and freeze powers and tax, for Solana, EVM and Algorand tokens."],
+  [APPROVALS_ROUTE.path, "GET", "Wallet approval audit", "Every open token approval of a wallet: who the spender is, a grade, and which approvals to revoke."],
+  [SCREEN_ROUTE.path, "GET", "Sanctions screen", "Is this wallet sanctioned? Any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM addresses."],
+];
+
 export function wellKnown(origin, { credits = false } = {}) {
   return {
     ...(credits ? { credits: { info: `${origin}/v1/credits`, packs: { 100: "$0.80", 1000: "$7.00" }, header: "x-credit-key" } } : {}),
     version: 1,
-    resources: [...Object.keys(ROUTES), TOKEN_ROUTE.path, APPROVALS_ROUTE.path, SCREEN_ROUTE.path].map((p) => origin + p),
+    resources: DISCOVERY_RESOURCES.map(([p, method, name, description]) => ({ url: origin + p, method, name, description })),
     x402Version: 2,
     kind: "resource-server",
     name: "presign-guard",
@@ -585,7 +595,7 @@ export function wellKnown(origin, { credits = false } = {}) {
     category: CATEGORY,
     iconUrl: `${origin}/media/icon.png`,
     tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "aml", "agents"],
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL and Algorand transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits and OFAC sanctions screening for any chain's address. Every paid answer is signed (verifiable receipt).",
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL and Algorand transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits and OFAC sanctions screening for any chain's address. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana or Algorand, or RLUSD on the XRP Ledger.",
     signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
