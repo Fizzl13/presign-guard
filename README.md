@@ -65,6 +65,21 @@ A call that fails (400 or 5xx) gives its credits back. With no key, a malformed 
 
 Packs are only offered when balances persist: set `CREDITS_REDIS_URL` (a persistent Redis, for example a free Upstash database; Render only). Without it the credit routes don't exist.
 
+## Agent skill
+
+[`skills/presign-check`](skills/presign-check/SKILL.md) is an [Agent Skill](https://agentskills.io) that teaches a coding agent (Claude Code, Codex, Cursor and others that read `SKILL.md`) to check before it signs, buys or sends:
+
+- a token verdict before buying or accepting a token (free quick verdict, or `/v1/token`);
+- `/v1/check` before every approval, transaction, signature or Solana, XRPL or Algorand transaction, with `intent` and `from`;
+- `/v1/screen` before sending to an address;
+- `/v1/approvals` to clean up a wallet.
+
+It follows green / orange / red every time.
+
+```sh
+npx skills add Fizzl13/presign-guard
+```
+
 ## MCP
 
 `https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
