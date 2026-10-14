@@ -17,6 +17,7 @@ import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
+import facilitatorStartModule from "./src/facilitator-start.cjs";
 import mppPayModule from "./src/mpp-pay.cjs";
 import { createMppSession, sessionStore } from "./src/mpp-session.js";
 import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
@@ -92,10 +93,13 @@ const facilitators = MAINNET
   ]
   : [new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL ?? "https://x402.org/facilitator" })];
 
-const resourceServer = new x402ResourceServer(facilitators).register(NETWORK, new ExactEvmScheme());
+// Supported kinds fetched without x402's start-up exit (src/facilitator-start.cjs).
+const facilitatorStart = facilitatorStartModule.createFacilitatorStart(facilitators, { retryMs: Number(process.env.FACILITATOR_RETRY_MS) || undefined });
+const resourceServer = new x402ResourceServer(facilitatorStart.clients).register(NETWORK, new ExactEvmScheme());
 if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
 if (XRPL) resourceServer.register(XRPL_NETWORK, new ExactXrplScheme());
 if (ALGORAND) resourceServer.register(ALGORAND_NETWORK, new ExactAvmScheme());
+facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : [])]);
 const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
@@ -271,7 +275,7 @@ app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; ne
 // A valid credit key with enough credits pays the call instead (src/credits.js).
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
 // Challenges (and so the Bazaar listing) name presign-guard.fizzl.eu, also when called on the Render address.
-const paywall = unlessInternal((req) => req.fizzlInternal === true, onPublicHost(PUBLIC_URL, paymentMiddleware(PAYWALL_ROUTES, resourceServer)));
+const paywall = unlessInternal((req) => req.fizzlInternal === true, onPublicHost(PUBLIC_URL, paymentMiddleware(PAYWALL_ROUTES, resourceServer, undefined, undefined, false /* no start-up exit: src/facilitator-start.cjs fetches the kinds */)));
 if (MPP_SESSION) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal ? next() : MPP_SESSION.middleware(req, res, next)));
 if (MPP) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal || req.mppPaid ? next() : MPP.middleware(req, res, next)));
 app.use((req, res, next) => (req.fizzlCredits || req.mppPaid ? next() : paywall(req, res, next)));
