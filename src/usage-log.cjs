@@ -171,29 +171,43 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
     'user-agent': `usage-log/${service}`,
   };
 
+  // The day file as this service last wrote it. Only this service writes its own files, so the next append to
+  // the same file skips the read (half the bandwidth of a write); if the file did change (a deploy's old and new
+  // instance both writing), GitHub refuses the stale sha with a 409 and the file is read again.
+  let last = null; // { path, sha, text }
+
   // Appends lines to one file: read (for the sha), write, retry on a race.
   async function append(path, lines) {
     for (let attempt = 0; attempt < 4; attempt++) {
       const url = `${API}/repos/${repo}/contents/${path}`;
-      // The raw file: the JSON form leaves out the content of files over 1 MB, which would then be overwritten
-      // with only the new lines. The sha GitHub wants back is the git blob sha of exactly these bytes.
-      const current = await fetchFn(url, { headers: { ...headers, accept: 'application/vnd.github.raw+json' } });
       let sha;
       let text = '';
-      if (current.status === 200) {
-        const raw = Buffer.from(await current.arrayBuffer());
-        sha = blobSha(raw);
-        text = raw.toString('utf8');
-      } else if (current.status !== 404) {
-        throw new Error(`read ${path}: HTTP ${current.status}`);
+      if (attempt === 0 && last && last.path === path) {
+        ({ sha, text } = last);
+      } else {
+        // The raw file: the JSON form leaves out the content of files over 1 MB, which would then be overwritten
+        // with only the new lines. The sha GitHub wants back is the git blob sha of exactly these bytes.
+        const current = await fetchFn(url, { headers: { ...headers, accept: 'application/vnd.github.raw+json' } });
+        if (current.status === 200) {
+          const raw = Buffer.from(await current.arrayBuffer());
+          sha = blobSha(raw);
+          text = raw.toString('utf8');
+        } else if (current.status !== 404) {
+          throw new Error(`read ${path}: HTTP ${current.status}`);
+        }
       }
+      const content = Buffer.from(text + lines.join('\n') + '\n');
       const body = {
         message: `${service}: ${lines.length} call${lines.length === 1 ? '' : 's'}`,
-        content: Buffer.from(text + lines.join('\n') + '\n').toString('base64'),
+        content: content.toString('base64'),
         ...(sha ? { sha } : {}),
       };
       const put = await fetchFn(url, { method: 'PUT', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      if (put.status === 200 || put.status === 201) return;
+      if (put.status === 200 || put.status === 201) {
+        last = { path, sha: blobSha(content), text: content.toString('utf8') };
+        return;
+      }
+      last = null;
       if (put.status !== 409 && put.status !== 422) throw new Error(`write ${path}: HTTP ${put.status}`);
       await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
     }
