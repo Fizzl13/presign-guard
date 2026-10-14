@@ -80,6 +80,15 @@ It follows green / orange / red every time.
 npx skills add Fizzl13/presign-guard
 ```
 
+In Claude Code, the skill also comes as a plugin together with the MCP server below, from the Fizzl marketplace in the x402 Doctor repository:
+
+```
+/plugin marketplace add Fizzl13/x402-doctor
+/plugin install presign-guard@fizzl
+```
+
+The plugin is this repository's `skills/` folder. Without an MCP client that pays x402, only the free MCP tools work; the skill pays over HTTP with your own x402 client.
+
 ## MCP
 
 `https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
