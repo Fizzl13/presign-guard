@@ -195,6 +195,18 @@ test("the open list (GET /v1/sanctions): every address with its entries, sorted;
   assert.equal(sanctionsList(), list, "built once per loaded list");
 });
 
+test("the open list: a Solana address carries its USDC and USDT token accounts (a token transfer names those, not the owner)", async () => {
+  await loadSdn();
+  const list = sanctionsList();
+  // Checked against findAssociatedTokenPda from @solana-program/token.
+  assert.deepEqual(list.addresses.find((a) => a.address === SOL).tokenAccounts, {
+    USDC: "B1jUqZENAXMJxBu3pX9v1yq2QDtMeXz1CUiFMr9hsi4f",
+    USDT: "DBbBgTWUw4ZBHSoJqxqMxbBVwjzjFeG5ABWKJW2Ah5ZL",
+  });
+  assert.equal(list.addresses.find((a) => a.address === TRON).tokenAccounts, undefined, "only Solana addresses");
+  assert.match(list.tokenAccounts, /screen both/);
+});
+
 test("a list without a successful check for days is marked stale", async () => {
   let t = Date.UTC(2026, 9, 10);
   await loadSdn({ now: () => t });

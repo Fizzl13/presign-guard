@@ -8,13 +8,22 @@
 // Why our own copy and not only PG1/GoPlus: GoPlus answers sanctioned=0 for OFAC-listed Tron, Solana and XRPL
 // addresses, and PG1 screens EVM addresses. The Treasury file covers every currency OFAC lists.
 
+import { address, getAddressEncoder, getProgramDerivedAddress } from "@solana/kit";
+
 const SDN_URL = () => process.env.OFAC_SDN_URL || "https://sanctionslistservice.ofac.treas.gov/api/PublicationPreview/exports/SDN.XML";
 const REFRESH_MS = 6 * 60 * 60 * 1000;      // OFAC publishes irregularly, often several times a week
 const FETCH_TIMEOUT_MS = 90 * 1000;          // a ~30 MB file
 export const STALE_MS = 3 * 24 * 60 * 60 * 1000; // no successful check for this long: the answer says so
 const MIN_ADDRESSES = 100;                   // fewer means a broken file, not a shorter list (over 1,000 in 2026)
 
-let state = null;    // { index: Map<key, entry[]>, addresses, published, checkedAt, lastModified }
+// A Solana token transfer names the recipient's token account, not the recipient, so a denylist of owners alone
+// misses it (Privy's x402 sanctions recipe screens TransferChecked.destination, for one). The open list carries, per
+// listed Solana address, its associated token accounts for the stablecoins agents pay with (SPL Token program).
+const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const ASSOCIATED_TOKEN_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const STABLECOIN_MINTS = { USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB" };
+
+let state = null;    // { index: Map<key, entry[]>, tokenAccounts: Map<key, { USDC, USDT }>, addresses, published, checkedAt, lastModified }
 let loading = null;  // the running load, shared by everyone who waits for it
 let lastError = null;
 let lastAttempt = 0; // a screen without a list starts a load, at most once a minute
@@ -69,6 +78,30 @@ export function parseSdnXml(xml) {
   return { index, addresses, published };
 }
 
+// The associated token account of `owner` for each stablecoin mint: { USDC, USDT }.
+export async function associatedTokenAccounts(owner) {
+  const encoder = getAddressEncoder();
+  const accounts = {};
+  for (const [symbol, mint] of Object.entries(STABLECOIN_MINTS)) {
+    const [account] = await getProgramDerivedAddress({
+      programAddress: address(ASSOCIATED_TOKEN_PROGRAM),
+      seeds: [encoder.encode(address(owner)), encoder.encode(address(TOKEN_PROGRAM)), encoder.encode(address(mint))],
+    });
+    accounts[symbol] = account;
+  }
+  return accounts;
+}
+
+// Token accounts for every address listed as SOL; one that is not a valid Solana address gets none.
+async function solanaTokenAccounts(index) {
+  const accounts = new Map();
+  for (const [key, entries] of index) {
+    if (!entries.some((e) => e.currency === "SOL")) continue;
+    try { accounts.set(key, await associatedTokenAccounts(key)); } catch { /* listed as published, without token accounts */ }
+  }
+  return accounts;
+}
+
 // Download (or re-check) the list. Resolves to the state, or null when there is none yet.
 export function loadSdn({ fetchImpl = fetch, now = () => Date.now() } = {}) {
   if (loading) return loading;
@@ -85,7 +118,7 @@ export function loadSdn({ fetchImpl = fetch, now = () => Date.now() } = {}) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = parseSdnXml(await res.text());
       if (parsed.addresses < MIN_ADDRESSES) throw new Error(`only ${parsed.addresses} addresses in the file`);
-      state = { ...parsed, checkedAt: now(), lastModified: res.headers.get("last-modified") };
+      state = { ...parsed, tokenAccounts: await solanaTokenAccounts(parsed.index), checkedAt: now(), lastModified: res.headers.get("last-modified") };
       lastError = null;
       console.log(`[ofac] SDN list loaded: ${parsed.addresses} addresses, published ${parsed.published}`);
     } catch (err) {
@@ -149,8 +182,8 @@ function lookup(s, address, now = () => Date.now()) {
   };
 }
 
-// The whole list for GET /v1/sanctions (free, open data): every address with its SDN entry, sorted, or null before
-// the first load. Built once per loaded list.
+// The whole list for GET /v1/sanctions (free, open data): every address with its SDN entry, sorted, Solana addresses
+// with their stablecoin token accounts, or null before the first load. Built once per loaded list.
 let exported = null;
 export function sanctionsList() {
   if (!state) return null;
@@ -158,6 +191,7 @@ export function sanctionsList() {
   const addresses = [...state.index.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([address, entries]) => ({
     address,
     entries: entries.map(({ uid, name, type, programs, currency }) => ({ uid, name, type, programs, currency })),
+    ...(state.tokenAccounts?.has(address) && { tokenAccounts: state.tokenAccounts.get(address) }),
   }));
   const body = {
     list: "OFAC SDN",
@@ -166,6 +200,7 @@ export function sanctionsList() {
     checkedAt: new Date(state.checkedAt).toISOString(),
     count: addresses.length,
     match: "exact; EVM and bech32 addresses lowercased, all others as published",
+    tokenAccounts: "Solana addresses carry their associated token accounts for USDC and USDT (SPL Token program): a token transfer names that account, not the owner, so screen both",
     addresses,
   };
   exported = { state, body };

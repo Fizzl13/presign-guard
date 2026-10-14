@@ -552,7 +552,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
       // Free on purpose: directories that probe every path (x402scan) list it as public instead of skipping it.
       security: [],
       responses: {
-        200: { description: "list, source, published, checkedAt, count, addresses: [{ address, entries: [{ uid, name, type, programs, currency }] }]" },
+        200: { description: "list, source, published, checkedAt, count, addresses: [{ address, entries: [{ uid, name, type, programs, currency }], tokenAccounts (Solana addresses only): { USDC, USDT } }]" },
         503: { description: "The list is not loaded yet; try again in a minute" },
       },
     },
