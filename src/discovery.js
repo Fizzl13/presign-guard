@@ -562,6 +562,7 @@ export function openApi(origin, network, tokenNetworks = [network], { credits = 
     info: {
       title: "presign-guard",
       version: "2.5.0",
+      termsOfService: "https://fizzl.eu/terms/",
       // The e-mail lets directories such as x402scan link the origin to its owner.
       contact: CONTACT,
       description: "Pre-sign risk check for AI agents: a green/orange/red verdict with reason codes before signing an EVM transaction, approval or EIP-712 signature, a Solana transaction (every instruction decoded, then simulated), an XRP Ledger transaction or an Algorand transaction or group (simulated). Checks the spender or recipient (including OFAC SDN sanctions), the token itself (honeypot, impersonation, high tax) and, with origin, how old the requesting site's domain is. Plus GET /v1/token: a verdict on any Solana or EVM token before buying, holding or accepting it, GET /v1/approvals: an audit of a wallet's open token approvals with the ones to revoke, and GET /v1/screen: any chain's wallet address against the OFAC SDN sanctions list. Every paid answer carries a signed receipt (EIP-191) binding the verdict to your request, verifiable later.",
