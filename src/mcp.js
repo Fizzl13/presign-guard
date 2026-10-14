@@ -263,19 +263,36 @@ const PAID_TOOLS = [
 const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [APPROVALS_ROUTE.path]: APPROVALS_ROUTE, [SCREEN_ROUTE.path]: SCREEN_ROUTE };
 const priceOf = (tool) => `$${(OTHER_ROUTES[tool.route] ?? ROUTES[tool.route]).price}`;
 
+// accepts[] from the supported kinds the HTTP paywall fetched at start. Only when those aren't
+// there yet are the facilitators asked: initialize() empties the kinds the paywall shares and asks
+// every facilitator again, so running it while one was slow or down left every paid route without
+// that network, answering 500 until a restart (x402 Doctor, 14 Oct, 04:11 UTC).
+async function requirementsFor(resourceServer, options) {
+  const build = async () => {
+    const accepts = [];
+    for (const option of options) accepts.push(...await resourceServer.buildPaymentRequirements(option));
+    return accepts;
+  };
+  try {
+    return await build();
+  } catch {
+    await resourceServer.initialize();
+    return build();
+  }
+}
+
 // accepts[] per paid tool, built once the facilitator is reachable.
 function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, tool }) {
   let wrapper = null;
   return async () => {
     if (wrapper) return wrapper;
-    await resourceServer.initialize();
     const price = priceOf(tool);
-    const accepts = await resourceServer.buildPaymentRequirements({ scheme: "exact", price, network, payTo });
-    if (tool.solana && solana?.payTo) {
-      accepts.push(...await resourceServer.buildPaymentRequirements({ scheme: "exact", price, network: solana.network, payTo: solana.payTo }));
-    }
-    for (const x of xrplAccept(xrpl, price, `mcp ${tool.name}`)) accepts.push(...await resourceServer.buildPaymentRequirements(x));
-    for (const x of algorandAccept(algorand, price)) accepts.push(...await resourceServer.buildPaymentRequirements(x));
+    const accepts = await requirementsFor(resourceServer, [
+      { scheme: "exact", price, network, payTo },
+      ...(tool.solana && solana?.payTo ? [{ scheme: "exact", price, network: solana.network, payTo: solana.payTo }] : []),
+      ...xrplAccept(xrpl, price, `mcp ${tool.name}`),
+      ...algorandAccept(algorand, price),
+    ]);
     wrapper = createPaymentWrapper(resourceServer, {
       accepts,
       resource: { url: `mcp://tool/${tool.name}`, description: tool.summary, mimeType: "application/json", ...(tool.metadata ?? serviceMetadata) },
