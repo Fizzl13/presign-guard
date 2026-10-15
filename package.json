@@ -2,6 +2,7 @@
   "name": "presign-guard",
   "version": "2.0.0",
   "description": "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM transactions, approvals and Permit/Permit2/Seaport signatures, paid per call via x402",
+  "license": "MIT",
   "type": "module",
   "main": "server.js",
   "private": true,
