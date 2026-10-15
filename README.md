@@ -1,6 +1,6 @@
 # presign-guard
 
-[![x402 payable](https://x402-doctor.fizzl.eu/badge.svg?url=https%3A%2F%2Fpresign-guard.fizzl.eu%2Fv1%2Ftoken)](https://x402-doctor.fizzl.eu/trust?url=https%3A%2F%2Fpresign-guard.fizzl.eu%2Fv1%2Ftoken) · [Live status](https://x402-doctor.fizzl.eu/status)
+[![x402 payable](https://x402-doctor.fizzl.eu/badge.svg?url=https%3A%2F%2Fpresign-guard.fizzl.eu%2Fv1%2Ftoken)](https://x402-doctor.fizzl.eu/trust?url=https%3A%2F%2Fpresign-guard.fizzl.eu%2Fv1%2Ftoken) · [Live status](https://x402-doctor.fizzl.eu/status) · [![presign-guard MCP connector on Glama](https://glama.ai/mcp/connectors/io.github.Fizzl13/presign-guard/badges/score.svg)](https://glama.ai/mcp/connectors/io.github.Fizzl13/presign-guard)
 
 A pre-sign risk check for AI agents. Before an agent signs a transaction, approval, or EIP-712 signature, it pays a few cents per call over [x402](https://x402.org) and gets back a **green / orange / red** verdict with machine-readable reason codes. Optionally, it also gets a plain-language explanation in Dutch or English.
 
