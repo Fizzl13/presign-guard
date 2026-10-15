@@ -17,11 +17,15 @@
 //   older than a year, the approved token itself flagged).
 // Every approval that is not info-only is listed to revoke. No approvals is green.
 // NFT approvals are not covered: GoPlus has no NFT approval data for Base.
+//
+// chain=solana: SPL token delegations instead, read from the Solana RPC (solana-approvals.js).
 
 import express from "express";
 import { isAddress } from "viem";
 import { ValidationError, cached, goplus, flag } from "./presign-guard.js";
+import { ofacStatus } from "./ofac.js";
 import { TOKEN_CHAINS, gradeOf } from "./token-verdict.js";
+import { isSolanaWallet, readSolanaDelegations, assessDelegation } from "./solana-approvals.js";
 
 // The EVM chains of the token verdict: name → GoPlus chain id.
 export const APPROVAL_CHAINS = Object.fromEntries(
@@ -36,10 +40,14 @@ const UNLIMITED_AMOUNT = 1e30; // 2^255 and up; GoPlus may also write "Unlimited
 
 export function parseApprovalsRequest(query) {
   const chain = String(query?.chain ?? "").trim().toLowerCase();
-  if (!APPROVAL_CHAINS[chain]) {
-    throw new ValidationError(`chain must be one of: ${Object.keys(APPROVAL_CHAINS).join(", ")}`);
+  if (!APPROVAL_CHAINS[chain] && chain !== "solana") {
+    throw new ValidationError(`chain must be one of: ${[...Object.keys(APPROVAL_CHAINS), "solana"].join(", ")}`);
   }
   const raw = String(query?.address ?? "").trim();
+  if (chain === "solana") {
+    if (!isSolanaWallet(raw)) throw new ValidationError("address must be a Solana wallet address (base58)");
+    return { chain, address: raw }; // base58 is case-sensitive
+  }
   if (!isAddress(raw, { strict: false })) throw new ValidationError("address must be a 0x-prefixed wallet address");
   return { chain, address: raw.toLowerCase() };
 }
@@ -122,6 +130,7 @@ function walletReasons(approvals) {
 }
 
 const PHRASES = {
+  SANCTIONED_ADDRESS: (n) => `${n} to a sanctioned address`,
   SPENDER_MALICIOUS: (n) => `${n} to a flagged address`,
   APPROVAL_TO_WALLET: (n) => `${n} to a plain wallet`,
   SPENDER_SUSPICIOUS: (n) => `${n} to a suspicious spender`,
@@ -141,7 +150,51 @@ export function approvalsOneLiner({ grade, chain, reasons, total, toRevoke }) {
   return line.length > 140 ? `${line.slice(0, 139)}…` : line;
 }
 
+// Solana: the wallet's SPL token delegations (solana-approvals.js), graded and summed up like the EVM approvals.
+async function solanaApprovals(address, now) {
+  let read;
+  try {
+    read = await cached(`approvals:solana:${address}`, () => readSolanaDelegations(address), 2 * 60 * 1000);
+  } catch (err) {
+    throw Object.assign(new Error(`Solana RPC unavailable: ${err.message}`), { status: 503 });
+  }
+  const approvals = read.delegations.map((d) => assessDelegation(d, read.delegates.get(d.delegate), () => now));
+  approvals.sort((a, b) => ORDER[a.severity] - ORDER[b.severity] || Number(b.unlimited) - Number(a.unlimited));
+  const reasons = walletReasons(approvals);
+  if (read.permanentDelegates.length) {
+    reasons.push({ code: "PERMANENT_DELEGATE", severity: "info", details: { count: read.permanentDelegates.length, tokens: read.permanentDelegates.slice(0, 5).map((p) => p.mint) } });
+  }
+  if (approvals.length && !ofacStatus().addresses) reasons.push({ code: "SANCTIONS_SCREEN_UNAVAILABLE", severity: "info", details: { list: "OFAC SDN" } });
+  reasons.sort((a, b) => ORDER[a.severity] - ORDER[b.severity]);
+  const { verdict, grade } = gradeOf(reasons);
+  const toRevoke = approvals.filter((a) => a.revoke).length;
+  return {
+    version: "1",
+    verdict,
+    grade,
+    one_liner: approvalsOneLiner({ grade, chain: "solana", reasons, total: approvals.length, toRevoke }),
+    reasons,
+    wallet: { chain: "solana", address },
+    summary: {
+      approvals: approvals.length,
+      tokens: new Set(approvals.map((a) => a.token.address)).size,
+      unlimited: approvals.filter((a) => a.unlimited).length,
+      toRevoke,
+      tokenAccounts: read.accounts.length,
+      ...(approvals.length > MAX_LISTED && { listed: MAX_LISTED }),
+    },
+    approvals: approvals.slice(0, MAX_LISTED),
+    permanentDelegates: read.permanentDelegates,
+    revokeUrl: null,
+    revokeHint: "Revoke a delegation with an SPL Token Revoke instruction on its tokenAccount, signed by the wallet (most Solana wallets: the token's settings, revoke).",
+    sources: ["solana-rpc", "ofac-sdn"],
+    checkedAt: new Date(now).toISOString(),
+    disclaimer: "Automated check of the wallet's SPL token delegations, not a guarantee. Green means no risky delegations; a permanent delegate of a Token-2022 token can't be revoked and is listed as info.",
+  };
+}
+
 export async function walletApprovals({ chain, address }, now = Date.now()) {
+  if (chain === "solana") return solanaApprovals(address, now);
   const chainId = APPROVAL_CHAINS[chain];
   const { items, partial } = await getApprovals(chainId, address);
   const approvals = items.flatMap((item) => (Array.isArray(item?.approved_list) ? item.approved_list : []).map((a) => assessApproval(item, a, now)));

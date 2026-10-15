@@ -123,8 +123,8 @@ export const APPROVALS_INPUT_EXAMPLE = { chain: "ethereum", address: "0x28c6c062
 export const APPROVALS_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    chain: { type: "string", enum: ["base", "ethereum", "arbitrum", "optimism", "polygon", "bsc"], description: "EVM chain to audit" },
-    address: { type: "string", description: "Wallet address (0x...)" },
+    chain: { type: "string", enum: ["base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "solana"], description: "Chain to audit: an EVM chain (ERC-20 allowances) or solana (SPL token delegations)" },
+    address: { type: "string", description: "Wallet address (0x... on EVM, base58 on Solana)" },
   },
   required: ["chain", "address"],
 };
@@ -143,13 +143,14 @@ const APPROVALS_OUTPUT_SCHEMA = {
         required: ["code", "severity"],
       },
     },
-    summary: { type: "object", description: "approvals, tokens, unlimited, toRevoke" },
+    summary: { type: "object", description: "approvals, tokens, unlimited, toRevoke (on Solana also tokenAccounts)" },
     approvals: {
       type: "array",
-      description: "Per allowance: token, spender (address, name, trusted, contract), amount, approvedAt, severity, codes, revoke",
+      description: "Per allowance: token, spender (address, name, trusted, contract), amount, approvedAt, severity, codes, revoke; on Solana also tokenAccount (where to revoke), program and balance",
       items: { type: "object" },
     },
-    revokeUrl: { type: "string" },
+    revokeUrl: { type: ["string", "null"], description: "revoke.cash link (EVM); null on Solana, see revokeHint" },
+    permanentDelegates: { type: "array", description: "Solana: Token-2022 tokens held whose mint has a permanent delegate (mint, delegate, tokenAccount); can't be revoked", items: { type: "object" } },
     checkedAt: { type: "string" },
     receipt: RECEIPT_SCHEMA,
   },

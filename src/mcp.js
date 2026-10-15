@@ -8,7 +8,7 @@
 //   as POST /v1/check and /v1/check/explain, paid inside the MCP call
 //   (_meta["x402/payment"]) at the same price and to the same payout wallet.
 // - token_verdict ($0.01, Base or Solana): the same as GET /v1/token.
-// - wallet_approvals ($0.02, Base or Solana): the same as GET /v1/approvals.
+// - wallet_approvals ($0.02, Base or Solana): the same as GET /v1/approvals (EVM allowances or Solana delegations).
 // - screen_wallet ($0.01, Base or Solana): the same as GET /v1/screen.
 //
 // Invalid input is refused before payment; a failed check is not charged.
@@ -69,8 +69,8 @@ const TOKEN_INPUT = {
 };
 
 const APPROVALS_INPUT = {
-  chain: z.enum(APPROVALS_INPUT_SCHEMA.properties.chain.enum).describe("EVM chain to audit"),
-  address: z.string().describe("Wallet address (0x...)"),
+  chain: z.enum(APPROVALS_INPUT_SCHEMA.properties.chain.enum).describe(APPROVALS_INPUT_SCHEMA.properties.chain.description),
+  address: z.string().describe(APPROVALS_INPUT_SCHEMA.properties.address.description),
 };
 
 const SCREEN_INPUT = {
@@ -115,8 +115,8 @@ const OUTPUT = {
     ...PAID,
     grade: GRADE.nullable().optional(),
     one_liner: z.string().nullable().optional().describe("One-line summary"),
-    approvals: z.array(z.record(z.string(), z.unknown())).nullable().optional().describe("Every open ERC-20 allowance with its spender"),
-    revokeUrl: z.string().nullable().optional().describe("revoke.cash link for this wallet"),
+    approvals: z.array(z.record(z.string(), z.unknown())).nullable().optional().describe("Every open ERC-20 allowance (EVM) or SPL token delegation (Solana) with its spender"),
+    revokeUrl: z.string().nullable().optional().describe("revoke.cash link for this wallet (EVM; null on Solana)"),
   }),
   screen_wallet: obj({
     ...PAID,
@@ -239,9 +239,9 @@ const PAID_TOOLS = [
     discovery: { inputSchema: APPROVALS_INPUT_SCHEMA, example: APPROVALS_INPUT_EXAMPLE },
     metadata: approvalsServiceMetadata,
     solana: true,
-    summary: "Which open token approvals could drain this wallet? Every ERC-20 allowance with who the spender is, a verdict, and the ones to revoke.",
+    summary: "Which open token approvals could drain this wallet? Every ERC-20 allowance or Solana token delegation with who the spender is, a verdict, and the ones to revoke.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): audit the open token approvals of an EVM wallet (base, ethereum, arbitrum, optimism, polygon, bsc), for example your agent's own wallet as a periodic check. Get back green/orange/red, a grade, a one-line summary and every ERC-20 allowance with its spender: flagged malicious (red), a plain wallet, on a doubt list, an unverified contract or an unlimited allowance to a spender not on the GoPlus trust list (orange), plus which ones to revoke and a revoke.cash link. NFT approvals are not covered. Same as GET /v1/approvals.`,
+      `Paid (${price} USDC via x402 on Base or Solana): audit the open token approvals of a wallet on an EVM chain (base, ethereum, arbitrum, optimism, polygon, bsc) or on Solana, for example your agent's own wallet as a periodic check. Get back green/orange/red, a grade, a one-line summary and every approval with its spender. EVM, every ERC-20 allowance: flagged malicious (red), a plain wallet, on a doubt list, an unverified contract or an unlimited allowance to a spender not on the GoPlus trust list (orange), with a revoke.cash link. Solana, every SPL token delegation (Approve): a delegate on the OFAC SDN list (red), a delegate that is a plain wallet or an unlimited delegation (orange), with the token account to revoke on; Token-2022 tokens with a permanent delegate are listed too. NFT approvals are not covered. Same as GET /v1/approvals.`,
     run: (request) => walletApprovals(request),
   },
   {

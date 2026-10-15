@@ -32,7 +32,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
-| `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval, its spender, and which to revoke (see below) |
+| `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC, Base or Solana | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `GET /v1/sanctions` | free | Open data: every digital currency address on the OFAC SDN list with its entry (name, programs, currency), the list's publish date; refreshed every 6 hours. Solana addresses also carry their USDC and USDT token accounts, because a token transfer names that account and not the owner (ready for a denylist such as a Privy condition set). For screening locally, e.g. with [`presign-guard-payer-screen`](https://www.npmjs.com/package/presign-guard-payer-screen) |
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
@@ -151,7 +151,7 @@ On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, fre
 
 ## Wallet approval audit
 
-`GET /v1/approvals?chain=base&address=<wallet>` (or `chain=ethereum|arbitrum|optimism|polygon|bsc`) is the follow-up to `/v1/check`: that one asks "should I sign this approval?", this one asks "which approvals did I already give, and which should I revoke?". Agents with their own wallet can run it as a periodic check.
+`GET /v1/approvals?chain=base&address=<wallet>` (or `chain=ethereum|arbitrum|optimism|polygon|bsc`, or `solana`, below) is the follow-up to `/v1/check`: that one asks "should I sign this approval?", this one asks "which approvals did I already give, and which should I revoke?". Agents with their own wallet can run it as a periodic check.
 
 ```json
 {
@@ -178,6 +178,18 @@ On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, fre
 | info | `UNLIMITED_APPROVAL_TRUSTED` (e.g. Permit2), `STALE_APPROVAL` (older than a year), `TOKEN_FLAGGED` (the approved token itself), `NO_APPROVALS` |
 
 Every approval with an orange or red code has `revoke: true`. The grades are the same as the token verdict. Source: GoPlus `token_approval_security` (ERC-20 allowances); NFT approvals are not covered. If GoPlus is down there is no verdict (503, not charged).
+
+### On Solana
+
+`GET /v1/approvals?chain=solana&address=<wallet>` audits the Solana form of an allowance: an SPL token **delegation**. A signed `Approve` lets a delegate move up to an amount of one token account's tokens without the owner, which is what Solana drainers ask for. The wallet's token accounts (SPL Token and Token-2022) are read from the Solana RPC; every account with a delegate and an amount left is one approval, in the same shape as above plus `tokenAccount` (where to revoke it), `program` and `balance`.
+
+| Severity | Codes |
+|---|---|
+| red | `SANCTIONED_ADDRESS` (the delegate is on the OFAC SDN list) |
+| orange | `APPROVAL_TO_WALLET` (the delegate is a plain wallet: owned by the System Program, or no account at all), `UNLIMITED_APPROVAL` (2^63 and up; wallets write u64 max) |
+| info | a limited delegation to a program's account (no code), `PERMANENT_DELEGATE` (a Token-2022 token you hold whose mint has a permanent delegate: it can move every holder's balance and can't be revoked; listed in `permanentDelegates`), `SANCTIONS_SCREEN_UNAVAILABLE`, `NO_APPROVALS` |
+
+There is no revoke.cash for Solana: `revokeUrl` is null and `revokeHint` says how (an SPL Token `Revoke` on the listed `tokenAccount`, signed by the wallet; most wallets have it in the token's settings). If the RPC is down there is no verdict (503, not charged).
 
 ## Wallet screen
 
