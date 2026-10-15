@@ -20,7 +20,7 @@ Add the remote MCP server `https://presign-guard.fizzl.eu/mcp` (Streamable HTTP)
 | `presign_check_explain` | $0.03 | The same plus a plain-language explanation |
 | `token_quick_verdict` | free, shares the 10/hour | The token verdict and grade only |
 | `token_verdict` | $0.01 | The full token verdict |
-| `wallet_approvals` | $0.02 | Every open approval of a wallet and which to revoke |
+| `wallet_approvals` | $0.02 | Every open approval of a wallet (EVM chains or Solana) and which to revoke |
 | `screen_wallet` | $0.01 | Is this wallet sanctioned? Any chain's address against the OFAC SDN list |
 
 The free tools work right away. The paid tools ask for an x402 payment inside the call (see Paying).
@@ -32,7 +32,7 @@ The free tools work right away. The paid tools ask for an x402 payment inside th
 | `POST /v1/check` | $0.01 | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 | The same, plus a plain-language explanation (`lang`: `en` or `nl`) |
 | `GET /v1/token?chain=base&address=<token>` | $0.01 | Token verdict: grade, reasons, summary, market data (Base or Solana) |
-| `GET /v1/approvals?chain=base&address=<wallet>` | $0.02 | Wallet approval audit, which approvals to revoke |
+| `GET /v1/approvals?chain=base&address=<wallet>` | $0.02 | Wallet approval audit, which approvals to revoke (also `chain=solana`: token delegations) |
 | `GET /v1/screen?address=<address>` | $0.01 | Wallet screen: OFAC SDN sanctions (any chain) plus theft and phishing reports (EVM) |
 
 Examples:

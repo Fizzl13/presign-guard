@@ -73,9 +73,10 @@ before(() => {
 after(() => { globalThis.fetch = realFetch; });
 beforeEach(() => { urls.length = 0; goplusDown = false; });
 
-test("input: EVM chains only, wallet address checked and lowercased", () => {
+test("input: EVM wallet address checked and lowercased (Solana: solana-approvals.test.mjs)", () => {
   assert.deepEqual(parseApprovalsRequest({ chain: "Base", address: ` ${MIXED.toUpperCase().replace("0X", "0x")} ` }), { chain: "base", address: MIXED });
-  assert.throws(() => parseApprovalsRequest({ chain: "solana", address: MIXED }), /chain must be one of: base, ethereum/);
+  assert.throws(() => parseApprovalsRequest({ chain: "solana", address: MIXED }), /Solana wallet address/);
+  assert.throws(() => parseApprovalsRequest({ chain: "tron", address: MIXED }), /chain must be one of: base, ethereum/);
   assert.throws(() => parseApprovalsRequest({ chain: "base", address: "0x123" }), /wallet address/);
   assert.throws(() => parseApprovalsRequest({}), /chain/);
 });
