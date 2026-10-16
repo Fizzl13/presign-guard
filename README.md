@@ -31,9 +31,9 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 |---|---|---|
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
-| `GET /v1/token?chain=…&address=…` | $0.01 USDC, Base or Solana | Token verdict: grade, reason codes, one-line summary, market data (see below) |
-| `GET /v1/approvals?chain=…&address=…` | $0.02 USDC, Base or Solana | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
-| `GET /v1/screen?address=…` | $0.01 USDC, Base or Solana | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
+| `GET /v1/token?chain=…&address=…` | $0.01 USDC | Token verdict: grade, reason codes, one-line summary, market data (see below) |
+| `GET /v1/approvals?chain=…&address=…` | $0.02 USDC | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
+| `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `GET /v1/sanctions` | free | Open data: every digital currency address on the OFAC SDN list with its entry (name, programs, currency), the list's publish date; refreshed every 6 hours. Solana addresses also carry their USDC and USDT token accounts, because a token transfer names that account and not the owner (ready for a denylist such as a Privy condition set). For screening locally, e.g. with [`presign-guard-payer-screen`](https://www.npmjs.com/package/presign-guard-payer-screen) |
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
 | `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |
@@ -43,7 +43,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
 | `GET /.well-known/x402` | free | x402 discovery manifest |
 
-Payment is x402 v2 with the `exact` scheme, in USDC on Base (the token verdict and the approval audit also on Solana), or for every paid route in **RLUSD on the XRP Ledger** (`xrpl:0`, the same dollar amount, issuer `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`; the payer signs an XRPL Payment with the challenge's `extra.invoiceId` as `InvoiceID`, see [`@x402/xrpl`](https://www.npmjs.com/package/@x402/xrpl), and the server verifies and submits it itself). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
+Payment is x402 v2 with the `exact` scheme, on every paid route in USDC on **Base, Solana or Algorand**, or in **RLUSD on the XRP Ledger** (`xrpl:0`, the same dollar amount, issuer `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De`; the payer signs an XRPL Payment with the challenge's `extra.invoiceId` as `InvoiceID`, see [`@x402/xrpl`](https://www.npmjs.com/package/@x402/xrpl), and the server verifies and submits it itself). The 402 carries Bazaar discovery metadata (input example, input and output schema), and the challenge is mirrored into the JSON body for clients that don't read the `PAYMENT-REQUIRED` header. **You are never charged for an error.** Invalid requests (400) and upstream outages (503) cancel settlement, and they always return `verdict: null`, never a guessed verdict.
 
 ## Credit packs
 
@@ -108,7 +108,7 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 
 The three check tools also take an XRP Ledger transaction: `{"type": "xrpl", "tx": {…unsigned tx JSON…}, "network": "xrpl:0"}`, and an Algorand transaction or group: `{"type": "algorand", "transaction": "<base64 msgpack>"}` or `"transactions": [...]` (no `chainId`), with the same rules as `POST /v1/check`.
 
-The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), on Base or Solana (all paid tools also in RLUSD on the XRP Ledger), to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
+The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), in USDC on Base, Solana or Algorand or in RLUSD on the XRP Ledger, to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
 ## Token verdict
 
@@ -258,7 +258,7 @@ Solana has no allowances like EVM: drainers go after the account itself. The ins
 ```js
 // P0 builds, presign-guard checks, the agent's wallet signs: one transaction at a time.
 for (const { base64 } of p0.transactions) {
-  const res = await pay("https://presign-guard.fizzl.eu/v1/check", { // pay = an x402 fetch, $0.01 per check
+  const res = await pay("https://presign-guard.fizzl.eu/v1/check", { // pay = an x402 fetch; $0.01 per check, USDC on Solana works
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ type: "solana", transaction: base64, intent: "deposit 1 USDC into Project 0" }),
   });
@@ -268,7 +268,7 @@ for (const { base64 } of p0.transactions) {
 }
 ```
 
-The deposit checked before the account exists fails in the simulation: still orange `SIMULATION_FAILS`, now with `details.missingAccounts` (accounts it writes to that don't exist yet and that it doesn't create itself) and a note to check it again after the earlier transaction has landed. Checked after, it comes back green with exactly what leaves the wallet (1 USDC plus the fee).
+The deposit checked before the account exists fails in the simulation: still orange `SIMULATION_FAILS`, now with `details.missingAccounts` (accounts it writes to that don't exist yet and that it doesn't create itself) and a note to check it again after the earlier transaction has landed. Checked after, it comes back green with exactly what leaves the wallet (1 USDC plus the fee). With `submit: "bundle"` (all signed with one blockhash and sent together as a Jito bundle) there is no landing in between: each transaction is still decoded, but a later one's simulation can fail only because the earlier ones haven't run yet (look for `missingAccounts`).
 
 ### XRP Ledger transactions
 
