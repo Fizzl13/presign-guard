@@ -165,6 +165,15 @@ export async function askJev({ state, questions }, { env = process.env, fetch: f
 }
 
 // Claude decides the in-between cases: one yes/no per question, as JSON. Returns { id: true|false } or {}.
+// Claude Haiku 5.5 with thinking off and effort low. Measured against Haiku 4.5 on these calls on 16 Oct 2026
+// (x402-doctor scripts/claude-model-compare.mjs): every answer usable, more of them right, as fast or faster,
+// at about a tenth of the cost. With thinking on, it used up max_tokens before writing the answer.
+// Another model set in CLAUDE_MODEL gets the plain request.
+export const CLAUDE_MODEL = "claude-haiku-5-5";
+export function claudeModelParams(model) {
+  return /^claude-haiku-5/.test(model) ? { thinking: { type: "disabled" }, output_config: { effort: "low" } } : {};
+}
+
 export async function askClaude({ state, questions }, ids, { env = process.env, fetch: fetchImpl = globalThis.fetch } = {}) {
   if (!env.ANTHROPIC_API_KEY || !ids.length) return {};
   const asked = Object.fromEntries(ids.map((id) => [id, questions[id].instructions]));
@@ -173,7 +182,8 @@ export async function askClaude({ state, questions }, ids, { env = process.env, 
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: env.CLAUDE_MODEL ?? "claude-haiku-4-5-20251001",
+        model: env.CLAUDE_MODEL ?? CLAUDE_MODEL,
+        ...claudeModelParams(env.CLAUDE_MODEL ?? CLAUDE_MODEL),
         max_tokens: 200,
         system: "You review crypto signing requests for phishing signs. Answer each question about the given state with true or false. Be strict: say true only when the sign is clearly there. Reply with only a JSON object mapping each question id to true or false.",
         messages: [{ role: "user", content: JSON.stringify({ state, questions: asked }) }],

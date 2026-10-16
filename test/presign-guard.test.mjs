@@ -218,12 +218,13 @@ const tokenMetaAnswer = (body) => Response.json(body.map(({ id, params: [{ to, d
   ? { jsonrpc: "2.0", id, result: data === "0x95d89b41" ? "0x" + (32).toString(16).padStart(64, "0") + (4).toString(16).padStart(64, "0") + Buffer.from("USDC").toString("hex").padEnd(64, "0") : "0x" + (6).toString(16).padStart(64, "0") }
   : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } })));
 const jevCalls = [];
+const claudeBodies = [];
 let server, base;
 before(async () => {
   globalThis.fetch = async (url, opts) => {
     const u = String(url);
     if (u.includes("gopluslabs")) return mockGoplus(u);
-    if (u.includes("api.anthropic.com")) return mockClaude();
+    if (u.includes("api.anthropic.com")) { claudeBodies.push(JSON.parse(opts.body)); return mockClaude(); }
     if (u.includes("api.typesafe.ai")) {
       const q = JSON.parse(opts.body).questions;
       jevCalls.push(JSON.parse(opts.body));
@@ -605,6 +606,9 @@ test("/explain returns the explanation in the requested language", async () => {
   assert.equal(r.status, 200);
   assert.equal(r.body.explanation.lang, "nl");
   assert.ok(r.body.explanation.text.length > 0);
+  const sent = claudeBodies.at(-1);
+  assert.equal(sent.model, "claude-haiku-5-5");
+  assert.deepEqual([sent.thinking, sent.output_config, sent.max_tokens], [{ type: "disabled" }, { effort: "low" }, 400]);
 });
 
 // ---------- token security ----------
