@@ -33,7 +33,7 @@ import { screenOfacLoaded, partySanctionsReasons } from "./ofac.js";
 export const NEW_WALLET_DAYS = 7;
 export const BRAND_NEW_WALLET_DAYS = 1;
 import { metamaskSiteScan } from "./site-scan.js";
-import { secondOpinion, intentCheck } from "./jev.js";
+import { secondOpinion, intentCheck, CLAUDE_MODEL, claudeModelParams } from "./jev.js";
 import { checkMandatePayment } from "./mandate.js";
 import { parseRequirements, checkX402Payment } from "./x402-requirements.js";
 import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS } from "./simulate.js";
@@ -1254,7 +1254,8 @@ export async function explain(result, lang) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: process.env.CLAUDE_MODEL ?? "claude-haiku-4-5-20251001",
+        model: process.env.CLAUDE_MODEL ?? CLAUDE_MODEL,
+        ...claudeModelParams(process.env.CLAUDE_MODEL ?? CLAUDE_MODEL),
         max_tokens: 400,
         system,
         messages: [{ role: "user", content: JSON.stringify(result) }],

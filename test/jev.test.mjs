@@ -128,3 +128,23 @@ test("intentCheck: sure mismatch is orange, in between Claude decides, a clear m
   const failing = await intentCheck({ intent: "pay", effects }, { env, fetch: stub({ jevStatus: 529 }).fetch });
   assert.deepEqual(failing.reasons, []);
 });
+
+test("Claude: Haiku 5.5 with thinking off and effort low; another CLAUDE_MODEL gets the plain request; a thinking block is skipped", async () => {
+  const { askClaude, CLAUDE_MODEL } = await import("../src/jev.js");
+  const q = buildQuestions({ chainId: 8453, origin: "https://uniswap-claim.xyz" });
+  const ids = Object.keys(q.questions);
+  const bodies = [];
+  const fetch = async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return Response.json({ content: [{ type: "thinking", thinking: "", signature: "s" }, { type: "text", text: JSON.stringify(Object.fromEntries(ids.map((id) => [id, true]))) }] });
+  };
+  assert.deepEqual(await askClaude(q, ids, { env, fetch }), Object.fromEntries(ids.map((id) => [id, true])));
+  assert.equal(CLAUDE_MODEL, "claude-haiku-5-5");
+  assert.equal(bodies[0].model, "claude-haiku-5-5");
+  assert.deepEqual(bodies[0].thinking, { type: "disabled" });
+  assert.deepEqual(bodies[0].output_config, { effort: "low" });
+  await askClaude(q, ids, { env: { ...env, CLAUDE_MODEL: "claude-haiku-4-5-20251001" }, fetch });
+  assert.equal(bodies[1].model, "claude-haiku-4-5-20251001");
+  assert.equal(bodies[1].thinking, undefined, "Haiku 4.5 keeps the request it had");
+  assert.equal(bodies[1].output_config, undefined, "effort would be a 400 on Haiku 4.5");
+});
