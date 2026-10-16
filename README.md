@@ -253,6 +253,23 @@ A message moves no tokens by itself, but two kinds are traps. Red: `ETH_SIGN` (`
 
 Solana has no allowances like EVM: drainers go after the account itself. The instructions are decoded and the transaction is simulated on the RPC (`simulateTransaction`, signatures not checked, `SOLANA_RPC_URL` overrides the public endpoint) to see what really happens to the wallet, also inside other programs. Red: `SOLANA_TOKEN_ACCOUNT_TAKEOVER` (SetAuthority gives the owner or close authority of the wallet's token account to someone else: the account and everything in it is theirs), `SOLANA_ACCOUNT_ASSIGN` (System Assign hands the wallet to a program). Orange: `SOLANA_UNLIMITED_DELEGATE` (Approve with an unlimited amount), `SOLANA_DURABLE_NONCE` (once signed it never expires), `SOLANA_CLOSE_TO_OTHER` (a token account closed with its SOL sent elsewhere), `SOLANA_SET_AUTHORITY` (another authority change), `HIDDEN_APPROVAL` (a delegate set that no instruction shows), `SIMULATION_FAILS`. Info: `SOLANA_TOKEN_DELEGATE` (a limited delegate), `SIMULATED` (the wallet's SOL and token changes), `SOLANA_LOOKUP_TABLES`, `SIMULATION_UNAVAILABLE`. A takeover or assign seen only in the simulation is red too (`details.hidden: true`). The answer carries `simulation: { ok, changes, fee }`; `origin` and `intent` work as for EVM.
 
+**Transactions built for the agent, sent in order.** Services that build unsigned transactions for agents often split setup from action. [Project 0](https://ai.0.xyz)'s P0 MCP, for example, returns a first deposit as two v0 transactions with `submit: "sequential"`: one creates the account, the next deposits. Check each one just before signing it, after the one before has landed:
+
+```js
+// P0 builds, presign-guard checks, the agent's wallet signs: one transaction at a time.
+for (const { base64 } of p0.transactions) {
+  const res = await pay("https://presign-guard.fizzl.eu/v1/check", { // pay = an x402 fetch, $0.01 per check
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "solana", transaction: base64, intent: "deposit 1 USDC into Project 0" }),
+  });
+  const { verdict, reasons } = await res.json();
+  if (verdict !== "green") throw new Error(`not signing: ${reasons.map((r) => r.code).join(", ")}`);
+  await signSendAndConfirm(base64); // your wallet: sign, send, wait until it has landed
+}
+```
+
+The deposit checked before the account exists fails in the simulation: still orange `SIMULATION_FAILS`, now with `details.missingAccounts` (accounts it writes to that don't exist yet and that it doesn't create itself) and a note to check it again after the earlier transaction has landed. Checked after, it comes back green with exactly what leaves the wallet (1 USDC plus the fee).
+
 ### XRP Ledger transactions
 
 ```jsonc
