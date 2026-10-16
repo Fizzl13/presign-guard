@@ -11,6 +11,7 @@ const SYSTEM = "11111111111111111111111111111111";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const TOKEN_PROGRAMS = new Set([TOKEN, TOKEN_2022]);
+const ASSOCIATED_TOKEN = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const U64_MAX = (1n << 64n) - 1n;
 const UNLIMITED = 1n << 63n; // a delegation this large is "unlimited" in practice
 const MAX_TX_CHARS = 2400; // a wire transaction is at most 1,232 bytes
@@ -119,14 +120,21 @@ export async function simulateSolana(req, opts = {}) {
     const v = sim?.value;
     if (!v) return null;
     const pre = before?.value ?? [];
-    const post = v.accounts ?? [];
+    // A failed simulation returns no accounts after (null for each), which is not "closed": no changes then.
+    const post = v.err ? [] : v.accounts ?? [];
     const changes = [];
     const tokenOwners = new Set(); // who owns the token accounts the transaction writes to: the real recipients
+    // Accounts the transaction writes to that don't exist yet and that it doesn't create itself (no new keypair signing
+    // for them, not a System transfer or token-account create): when it fails, an earlier transaction of the same flow
+    // may be the one that creates them.
+    const createdHere = new Set([...(req.signers ?? []), ...req.instructions.filter((ix) => ix.program === SYSTEM || ix.program === ASSOCIATED_TOKEN).flatMap((ix) => ix.accounts)]);
+    const missing = addresses.filter((address, i) => address !== req.wallet && !createdHere.has(address) && pre[i] === null);
     addresses.forEach((address, i) => {
       const a = pre[i], b = post[i];
       for (const owner of [a?.data?.parsed?.info?.owner, b?.data?.parsed?.info?.owner]) {
         if (owner && owner !== req.wallet && [a, b].some((x) => x?.data?.parsed?.type === "account")) tokenOwners.add(owner);
       }
+      if (v.err) return;
       if (address === req.wallet) {
         if (a && b && b.lamports !== a.lamports) changes.push({ type: "sol", account: address, change: (b.lamports - a.lamports) / 1e9, lamports: String(BigInt(b.lamports) - BigInt(a.lamports)) });
         if (a && b && b.owner !== a.owner) changes.push({ type: "owner", account: address, from: a.owner, to: b.owner });
@@ -144,7 +152,7 @@ export async function simulateSolana(req, opts = {}) {
     });
     const error = v.err ? JSON.stringify(v.err).slice(0, 200) : null;
     // partial: more writable accounts than were read, so a change in one of the others isn't in changes.
-    return { ok: !v.err, changes, ...(tokenOwners.size && { tokenOwners: [...tokenOwners] }), ...(all.length > addresses.length && { partial: true }), ...(v.fee !== undefined && { fee: v.fee / 1e9 }), ...(error && { error }), ...(v.loadedAddresses && { lookupTableAccounts: (v.loadedAddresses.writable?.length ?? 0) + (v.loadedAddresses.readonly?.length ?? 0) }) };
+    return { ok: !v.err, changes, ...(tokenOwners.size && { tokenOwners: [...tokenOwners] }), ...(all.length > addresses.length && { partial: true }), ...(v.fee !== undefined && { fee: v.fee / 1e9 }), ...(error && { error }), ...(error && missing.length && { missingAccounts: missing }), ...(v.loadedAddresses && { lookupTableAccounts: (v.loadedAddresses.writable?.length ?? 0) + (v.loadedAddresses.readonly?.length ?? 0) }) };
   } catch (err) {
     console.warn(`[solana-tx] simulation: ${err.message}`);
     return null;
@@ -154,7 +162,15 @@ export async function simulateSolana(req, opts = {}) {
 // Reasons from the simulation: an owner or delegate change the instructions don't show, or a failing transaction.
 export function solanaSimulationReasons(sim, req, shown) {
   if (!sim) return [];
-  if (!sim.ok) return [{ code: "SIMULATION_FAILS", severity: "orange", subject: req.wallet, details: { error: sim.error } }];
+  if (!sim.ok) {
+    // Protocols often send setup (creating an account) and the action as separate transactions, signed and sent in
+    // order: checked on its own, the action fails until the setup has landed. Still orange, but with that reason.
+    const missing = sim.missingAccounts ?? [];
+    return [{ code: "SIMULATION_FAILS", severity: "orange", subject: req.wallet, details: { error: sim.error, ...(missing.length && {
+      missingAccounts: missing,
+      note: "this transaction writes to accounts that don't exist yet: if an earlier transaction of the same flow creates them, check this one again after that one has landed",
+    }) } }];
+  }
   const out = [];
   for (const c of sim.changes) {
     if (c.type === "owner" && c.account === req.wallet && !shown.has("SOLANA_ACCOUNT_ASSIGN")) out.push({ code: "SOLANA_ACCOUNT_ASSIGN", severity: "red", subject: c.to, details: { hidden: true } });

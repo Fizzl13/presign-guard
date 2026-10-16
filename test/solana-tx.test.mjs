@@ -1,15 +1,17 @@
 // Solana transaction checks (src/solana-tx.js) against a stand-in RPC: no network, no money.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as k from "@solana/kit";
 import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons } from "../src/solana-tx.js";
-import { parseRequest } from "../src/presign-guard.js";
+import { analyze, parseRequest } from "../src/presign-guard.js";
 
 const W = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
 const OTHER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
 const TA = "2ocS3orPq3jyszjsJ4NozKWyhdotr3csDjAizmkj65aH";
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const TOKEN = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const MARGINFI = "MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA"; // the lending program under Project 0
 const SYSTEM = "11111111111111111111111111111111";
 const R = k.AccountRole;
 const A = (a, role) => ({ address: k.address(a), role });
@@ -103,6 +105,12 @@ test("simulation: SOL and token changes of the wallet; an owner or delegate chan
   const fails = await simulateSolana(req, { fetchImpl: rpcStub({ before: at({}), after: at({}), err: { InstructionError: [0, { Custom: 1 }] } }) });
   assert.equal(fails.ok, false);
   assert.equal(solanaSimulationReasons(fails, req, new Set())[0].code, "SIMULATION_FAILS");
+  // A SOL transfer may go to an address that doesn't exist yet: that is not an account an earlier transaction creates.
+  assert.equal(fails.missingAccounts, undefined);
+  assert.equal(solanaSimulationReasons(fails, req, new Set())[0].details.note, undefined);
+  // A failing simulation returns no accounts after (null for each): the wallet's token account is not "closed".
+  const failsWithToken = await simulateSolana(req2, { fetchImpl: rpcStub({ before: at2({ [W]: wallet(1e9), [TA]: tokenAccount(50) }), after: addrs2.map(() => null), err: { InstructionError: [0, { Custom: 1 }] } }) });
+  assert.deepEqual(failsWithToken.changes, []);
 
   // More writable accounts than are read: marked partial, so a wallet doesn't take the changes as complete.
   const many = { ...req, writable: Array.from({ length: 25 }, (_, i) => k.getAddressDecoder().decode(new Uint8Array(32).fill(i + 1))) };
@@ -112,4 +120,49 @@ test("simulation: SOL and token changes of the wallet; an owner or delegate chan
   // The RPC down: no simulation (null), never a guessed green.
   assert.equal(await simulateSolana(req, { fetchImpl: async () => new Response("down", { status: 503 }) }), null);
   assert.deepEqual(solanaSimulationReasons(null, req, new Set()), []);
+});
+
+test("Project 0: a first deposit is two transactions sent in order; the deposit checked before the account exists is orange with that reason", async () => {
+  // The unsigned transactions P0's MCP returned (test/fixtures/p0-first-deposit.json): v0, accounts from lookup tables.
+  const p0 = JSON.parse(readFileSync(new URL("./fixtures/p0-first-deposit.json", import.meta.url), "utf8"));
+  const [create, deposit] = p0.transactions.map((t) => parseSolanaRequest({ transaction: t.base64 }));
+  for (const req of [create, deposit]) {
+    assert.equal(req.wallet, p0.authority);
+    assert.deepEqual(req.signers, [p0.authority]);
+    assert.equal(req.version, 0);
+    assert.equal(req.usesLookupTables, true);
+    assert.ok(req.instructions.some((ix) => ix.program === MARGINFI));
+    assert.deepEqual(instructionReasons(req), [], "nothing in the instructions hands over the wallet or a token account");
+  }
+  assert.equal(p0.authority, W);
+  assert.ok(deposit.writable.includes(p0.account));
+  const addresses = [...new Set([deposit.wallet, ...deposit.writable])];
+  const usdcAccount = addresses.find((a) => a !== W && a !== p0.account);
+  const at = (m) => addresses.map((a) => m[a] ?? null);
+  const marginfiAccount = { lamports: 16_000_000, owner: MARGINFI, data: ["", "base64"] };
+
+  // Before step 1 has landed the P0 account doesn't exist: the deposit fails, and the RPC returns no accounts after.
+  const early = { before: at({ [W]: wallet(1e9), [usdcAccount]: tokenAccount(100) }), after: addresses.map(() => null), err: { InstructionError: [2, { Custom: 3007 }] } };
+  const sim = await simulateSolana(deposit, { fetchImpl: rpcStub(early) });
+  assert.deepEqual(sim.changes, [], "the USDC account is not reported closed");
+  assert.deepEqual(sim.missingAccounts, [p0.account]);
+  const [fails] = solanaSimulationReasons(sim, deposit, new Set());
+  assert.equal(fails.code, "SIMULATION_FAILS");
+  assert.equal(fails.severity, "orange");
+  assert.deepEqual(fails.details.missingAccounts, [p0.account]);
+  assert.match(fails.details.note, /check this one again after that one has landed/);
+
+  // After step 1 has landed: 1 USDC and the fee leave the wallet, nothing else. Green.
+  const later = { before: at({ [W]: wallet(1e9), [p0.account]: marginfiAccount, [usdcAccount]: tokenAccount(100) }), after: at({ [W]: wallet(1e9 - 5099), [p0.account]: marginfiAccount, [usdcAccount]: tokenAccount(99) }) };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = rpcStub(later);
+  let answer;
+  try { answer = await analyze(parseRequest({ type: "solana", transaction: p0.transactions[1].base64 })); } finally { globalThis.fetch = realFetch; }
+  assert.equal(answer.verdict, "green");
+  assert.deepEqual(answer.subject.programs, ["ComputeBudget111111111111111111111111111111", MARGINFI]);
+  assert.deepEqual(answer.simulation.changes, [
+    { type: "sol", account: W, change: -0.000005099, lamports: "-5099" },
+    { type: "token", account: usdcAccount, mint: USDC, change: -1, raw: "-1000000", decimals: 6 },
+  ]);
+  assert.ok(answer.reasons.some((r) => r.code === "SOLANA_LOOKUP_TABLES"));
 });
