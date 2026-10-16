@@ -42,7 +42,8 @@ const NO_HISTORY = "0xbad0000000000000000000000000000000000013"; // never seen o
 const APPROX = "0xbad0000000000000000000000000000000000014";     // 2 days, but only a minimum (WALLET_AGE_PARTIAL)
 const AGE_TIMEOUT = "0xbad0000000000000000000000000000000000015"; // the lookup times out
 const OLD_ON_ETH = "0xbad0000000000000000000000000000000000016"; // new to Base, years on Ethereum
-const AGE_WALLETS = [FRESH, BRAND_NEW, NO_HISTORY, APPROX, AGE_TIMEOUT, OLD_ON_ETH];
+const AGE_UNKNOWN = "0xbad0000000000000000000000000000000000017"; // PG1 ran out of time: found false, status "unknown"
+const AGE_WALLETS = [FRESH, BRAND_NEW, NO_HISTORY, APPROX, AGE_TIMEOUT, OLD_ON_ETH, AGE_UNKNOWN];
 const FAR = "9999999999";
 const MAX256 = (2n ** 256n - 1n).toString();
 const MAX160 = (2n ** 160n - 1n).toString();
@@ -69,7 +70,8 @@ const WALLET_AGES = {
   [FRESH]: { age_days: 3, first_seen: "2026-09-27T10:00:00.000Z" },
   [BRAND_NEW]: { age_days: 0.2, first_seen: "2026-09-30T08:00:00.000Z" },
   [NO_HISTORY]: { found: false, first_seen: null, age_days: null, note: "No transactions found for this address.", reasons: [{ code: "WALLET_NO_HISTORY" }] },
-  [APPROX]: { age_days: 2, note: "The internal-transfer check did not finish.", reasons: [{ code: "WALLET_AGE_PARTIAL" }] },
+  [APPROX]: { age_days: 2, status: "unknown", note: "The internal-transfer check did not finish.", reasons: [{ code: "WALLET_AGE_PARTIAL" }] },
+  [AGE_UNKNOWN]: { found: false, first_seen: null, age_days: null, status: "unknown", note: "The transfer lookup did not finish within 2.5 s." },
   [OLD_ON_ETH]: { found: false, first_seen: null, age_days: null, note: "No transfer history on base." },
 };
 // Ethereum answers where they differ from the chain asked about.
@@ -300,6 +302,17 @@ test("wallet age: a wallet new to Base but old on Ethereum is not new; Base wall
   ageChains.length = 0;
   await check({ type: "approval", chainId: 8453, token: TOKEN, spender: EOA, amount: "1" });
   assert.ok(!ageChains.some((c) => c.startsWith("ethereum:")), ageChains.join());
+});
+
+test("wallet age: PG1's unfinished lookup (status unknown) is never \"no history\", and a minimum age is asked again", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: AGE_UNKNOWN, amount: "1000000" });
+  assert.equal(r.status, 200);
+  assert.ok(codes(r).includes("WALLET_AGE_UNAVAILABLE"), codes(r).join());
+  assert.ok(!codes(r).includes("NEW_WALLET_SPENDER"));
+  ageChains.length = 0;
+  await check({ type: "approval", chainId: 8453, token: TOKEN, spender: APPROX, amount: "2" });
+  await check({ type: "approval", chainId: 8453, token: TOKEN, spender: APPROX, amount: "3" });
+  assert.equal(ageChains.filter((c) => c === `base:${APPROX}`).length, 2, ageChains.join());
 });
 
 test("wallet age: a lookup that times out is info and the check still answers", async () => {
