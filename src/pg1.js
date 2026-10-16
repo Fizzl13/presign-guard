@@ -18,11 +18,12 @@ const WALLET_AGE_TTL_MS = 10 * 60 * 1000;    // a brand-new wallet can get histo
 const CHAIN_NAMES = { 1: "ethereum", 10: "optimism", 56: "bsc", 137: "polygon", 8453: "base", 42161: "arbitrum" };
 
 const cache = new Map();
-async function cached(key, ttl, fn) {
+// keep: which answers may be cached (by default all but null, so a failed lookup is asked again next time).
+async function cached(key, ttl, fn, keep = (value) => value !== null) {
   const hit = cache.get(key);
   if (hit && hit.expires > Date.now()) return hit.value;
   const value = await fn();
-  if (value !== null) {
+  if (keep(value)) {
     cache.set(key, { value, expires: Date.now() + ttl });
     if (cache.size > 5000) cache.delete(cache.keys().next().value);
   }
@@ -162,7 +163,10 @@ export function hostnameReputation(host) {
 // wallet with history (minimum: PG1 could not finish its internal-transfer
 // check, so the wallet can only be older than shown, never younger),
 // { found: false } for a wallet with no history at all, or null when the
-// lookup did not finish (never read as "no history").
+// lookup did not finish (never read as "no history"). PG1 marks an unfinished
+// lookup with status "unknown": with an age it is a minimum, without one it is
+// null, whatever its found says. Minimum ages are not cached, so the next check
+// can get the full age.
 //
 // Age is per chain: a wallet used on Ethereum for years looks brand new on an
 // L2 it never touched. So when the wallet looks new (no history or under
@@ -186,12 +190,14 @@ function chainAge(address, chain) {
     // PG1's reason codes are stable (its note wording may change); the note
     // is only the fallback for answers without them.
     const codes = Array.isArray(r.reasons) ? r.reasons.map((x) => x?.code) : null;
-    if (!r.found || codes?.includes("WALLET_NO_HISTORY")) return { found: false };
+    const unfinished = r.status === "unknown";
+    if (codes?.includes("WALLET_NO_HISTORY")) return { found: false };
+    if (!r.found) return unfinished ? null : { found: false };
     const ageDays = Number(r.age_days);
     if (!Number.isFinite(ageDays)) return null;
-    const minimum = codes ? codes.includes("WALLET_AGE_PARTIAL") : r.note != null && r.note !== "";
+    const minimum = (codes ? codes.includes("WALLET_AGE_PARTIAL") : r.note != null && r.note !== "") || unfinished;
     return { found: true, ageDays, firstSeen: r.first_seen ?? null, chain, minimum };
-  });
+  }, (age) => age !== null && !age.minimum);
 }
 
 // The host a signature request comes from: a URL or a bare hostname.
