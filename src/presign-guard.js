@@ -44,6 +44,7 @@ import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulatio
 import { parseAlgorandRequest, algorandReasons, simulateAlgorand, algorandSimulationReasons, describeAlgorandTxn, ALGORAND_NETWORKS } from "./algorand-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
+import { stellarAccept } from "./stellar.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -1279,7 +1280,8 @@ export async function explain(result, lang) {
 // xrpl: optional { network, payTo }; every route can then also be paid in RLUSD on the XRP Ledger.
 // algorand: optional { network, payTo }; every route can then also be paid in USDC on Algorand.
 // builderCode: optional Base Builder Code (env BUILDER_CODE), so Base can attribute the payments to Fizzl.
-export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null) {
+// stellar: optional { network, payTo }; every route can then also be paid in USDC on Stellar.
+export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null, stellar = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
   const sellerExtensions = { ...merchantExtension, ...builderCodeExtension(builderCode) };
   const route = (path, description) => ({
@@ -1289,6 +1291,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       ...(solana?.payTo ? [{ scheme: "exact", price: `$${ROUTES[path].price}`, network: solana.network, payTo: solana.payTo }] : []),
       ...xrplAccept(xrpl, `$${ROUTES[path].price}`, `POST ${path}`),
       ...algorandAccept(algorand, `$${ROUTES[path].price}`),
+      ...stellarAccept(stellar, `$${ROUTES[path].price}`),
     ],
     description,
     mimeType: "application/json",
@@ -1309,6 +1312,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...(solana?.payTo ? [{ scheme: "exact", price: tokenPrice, network: solana.network, payTo: solana.payTo }] : []),
         ...xrplAccept(xrpl, tokenPrice, `GET ${TOKEN_ROUTE.path}`),
         ...algorandAccept(algorand, tokenPrice),
+        ...stellarAccept(stellar, tokenPrice),
       ],
       description: "Is this token safe to buy, or a honeypot or rug pull? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
@@ -1321,6 +1325,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...(solana?.payTo ? [{ scheme: "exact", price: approvalsPrice, network: solana.network, payTo: solana.payTo }] : []),
         ...xrplAccept(xrpl, approvalsPrice, `GET ${APPROVALS_ROUTE.path}`),
         ...algorandAccept(algorand, approvalsPrice),
+        ...stellarAccept(stellar, approvalsPrice),
       ],
       description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
       mimeType: "application/json",
@@ -1333,6 +1338,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...(solana?.payTo ? [{ scheme: "exact", price: screenPrice, network: solana.network, payTo: solana.payTo }] : []),
         ...xrplAccept(xrpl, screenPrice, `GET ${SCREEN_ROUTE.path}`),
         ...algorandAccept(algorand, screenPrice),
+        ...stellarAccept(stellar, screenPrice),
       ],
       description: "Is this wallet sanctioned? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
       mimeType: "application/json",
