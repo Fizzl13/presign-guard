@@ -89,6 +89,8 @@ In Claude Code, the skill also comes as a plugin together with the MCP server be
 
 The plugin is this repository's `skills/` folder. Without an MCP client that pays x402, only the free MCP tools work; the skill pays over HTTP with your own x402 client.
 
+Every Fizzl skill (x402 Doctor, presign-guard, the Agent Wallet and Ichimoku Signal) is listed in [Fizzl13/fizzl-skills](https://github.com/Fizzl13/fizzl-skills).
+
 ## MCP
 
 `https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
