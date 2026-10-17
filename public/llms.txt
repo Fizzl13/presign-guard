@@ -6,6 +6,7 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 
 ## For agents
 - [Agent instructions (skill.md)](https://presign-guard.fizzl.eu/skill.md): every check, its input, and how to pay
+- Agent skill: `npx skills add Fizzl13/presign-guard`, or in Claude Code `/plugin marketplace add Fizzl13/x402-doctor` then `/plugin install presign-guard@fizzl`. Every Fizzl skill: https://github.com/Fizzl13/fizzl-skills
 - [OpenAPI](https://presign-guard.fizzl.eu/openapi.json): every paid route with its price, input and output schema
 - [x402 discovery document](https://presign-guard.fizzl.eu/.well-known/x402)
 - MCP server (streamable HTTP): https://presign-guard.fizzl.eu/mcp, with the free tools `presign_quick_check` and `token_quick_verdict`

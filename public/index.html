@@ -105,6 +105,9 @@
   .price b { color: var(--mint); font-weight: 600; }
   .price.save { border-color: rgba(97,245,195,.45); }
   a.price:hover { border-color: var(--mint); }
+  .faq details { margin: 0; border-top: 1px solid var(--line); padding: 12px 0; }
+  .faq summary { cursor: pointer; color: var(--text); font-size: 15px; }
+  .faq p { color: var(--soft); font-size: 14.5px; line-height: 1.6; margin: 10px 0 0; }
 </style>
 <script type="application/ld+json">
 {
@@ -144,6 +147,62 @@
  },
  "sameAs": [
   "https://github.com/Fizzl13/presign-guard"
+ ]
+}
+</script>
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "FAQPage",
+ "mainEntity": [
+  {
+   "@type": "Question",
+   "name": "How do I check a transaction before an AI agent signs it?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Send it to presign-guard: POST https://presign-guard.fizzl.eu/v1/check with the transaction, approval, typed-data signature or message. For $0.01 it answers green, orange or red with reason codes: known drainers, sanctioned addresses, unlimited approvals, look-alike tokens and a simulation of what the transaction does. On red, don't sign. Errors are never charged."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Which chains does presign-guard support?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "EVM chains (Ethereum, Optimism, BNB Chain, Polygon, Base and Arbitrum), Solana, the XRP Ledger and Algorand. Paid calls accept USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, or MPP."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Is there an API to screen a wallet against the OFAC sanctions list?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes: GET https://presign-guard.fizzl.eu/v1/screen?address=<address> screens any chain's address against the US Treasury's OFAC SDN list for $0.01, plus theft and phishing reports for EVM addresses. The whole list is free open data at GET https://presign-guard.fizzl.eu/v1/sanctions, refreshed from the Treasury every 6 hours."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "How do I check a token before an agent buys it?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "GET https://presign-guard.fizzl.eu/v1/token?chain=base&address=<token> gives a grade with reasons (honeypot and rug-pull signs, look-alike tokens, mint and freeze authority, liquidity) and market data for $0.01. It works for tokens on Base, Solana and Algorand."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "Can an AI agent use presign-guard without an account or API key?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Yes. Each paid call is paid per use over x402 or MPP, with no account. The MCP server at https://presign-guard.fizzl.eu/mcp has free tools (presign_quick_check and token_quick_verdict) to try first, and the Fizzl Agent Wallet runs a presign-guard check on every signature it makes."
+   }
+  },
+  {
+   "@type": "Question",
+   "name": "How do I add presign-guard to Claude or Cursor?",
+   "acceptedAnswer": {
+    "@type": "Answer",
+    "text": "Add the remote MCP server https://presign-guard.fizzl.eu/mcp. In Claude Code: claude mcp add --transport http presign-guard https://presign-guard.fizzl.eu/mcp. Agent skills: npx skills add Fizzl13/presign-guard, or in Claude Code /plugin marketplace add Fizzl13/x402-doctor and then /plugin install presign-guard@fizzl."
+   }
+  }
  ]
 }
 </script>
@@ -217,6 +276,16 @@
     <div class="card" id="credits-card"><h3>Prepaid credits</h3><p>Checking often? One payment of $0.80 buys 100 checks, $7.00 buys 1000 (20% / 30% off), valid a year. <code>GET /v1/credits/100</code> returns a key; send it as <code>x-credit-key</code> instead of paying per call. <a href="/v1/credits">Prices and costs</a> · the <a href="https://www.npmjs.com/package/presign-guard-wallet">presign-guard-wallet</a> package uses it with <code>creditKey</code>.</p></div>
     <div class="card" id="signed-card"><h3>Signed verdicts</h3><p>Every paid answer carries a <code>receipt</code> signed by <a href="/.well-known/presign-guard-signer.json">our published signer</a> (EIP-191 over canonical JSON, bound to your request), so an agent can prove later which verdict it got, not only that it paid. <code>POST /v1/verify</code> checks one for free.</p></div>
     <div class="card"><h3>Discovery</h3><p><a href="/openapi.json">OpenAPI</a>, <a href="/.well-known/x402">/.well-known/x402</a> and the CDP Bazaar.</p></div>
+  </div>
+
+  <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Questions</h2>
+  <div class="faq">
+    <details><summary>How do I check a transaction before an AI agent signs it?</summary><p>Send it to presign-guard: POST https://presign-guard.fizzl.eu/v1/check with the transaction, approval, typed-data signature or message. For $0.01 it answers green, orange or red with reason codes: known drainers, sanctioned addresses, unlimited approvals, look-alike tokens and a simulation of what the transaction does. On red, don't sign. Errors are never charged.</p></details>
+    <details><summary>Which chains does presign-guard support?</summary><p>EVM chains (Ethereum, Optimism, BNB Chain, Polygon, Base and Arbitrum), Solana, the XRP Ledger and Algorand. Paid calls accept USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, or MPP.</p></details>
+    <details><summary>Is there an API to screen a wallet against the OFAC sanctions list?</summary><p>Yes: GET https://presign-guard.fizzl.eu/v1/screen?address=&lt;address&gt; screens any chain's address against the US Treasury's OFAC SDN list for $0.01, plus theft and phishing reports for EVM addresses. The whole list is free open data at GET https://presign-guard.fizzl.eu/v1/sanctions, refreshed from the Treasury every 6 hours.</p></details>
+    <details><summary>How do I check a token before an agent buys it?</summary><p>GET https://presign-guard.fizzl.eu/v1/token?chain=base&amp;address=&lt;token&gt; gives a grade with reasons (honeypot and rug-pull signs, look-alike tokens, mint and freeze authority, liquidity) and market data for $0.01. It works for tokens on Base, Solana and Algorand.</p></details>
+    <details><summary>Can an AI agent use presign-guard without an account or API key?</summary><p>Yes. Each paid call is paid per use over x402 or MPP, with no account. The MCP server at https://presign-guard.fizzl.eu/mcp has free tools (presign_quick_check and token_quick_verdict) to try first, and the Fizzl Agent Wallet runs a presign-guard check on every signature it makes.</p></details>
+    <details><summary>How do I add presign-guard to Claude or Cursor?</summary><p>Add the remote MCP server https://presign-guard.fizzl.eu/mcp. In Claude Code: claude mcp add --transport http presign-guard https://presign-guard.fizzl.eu/mcp. Agent skills: npx skills add Fizzl13/presign-guard, or in Claude Code /plugin marketplace add Fizzl13/x402-doctor and then /plugin install presign-guard@fizzl.</p></details>
   </div>
 
   <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>More from fizzl</h2>
