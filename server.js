@@ -100,7 +100,7 @@ if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
 if (XRPL) resourceServer.register(XRPL_NETWORK, new ExactXrplScheme());
 if (ALGORAND) resourceServer.register(ALGORAND_NETWORK, new ExactAvmScheme());
 facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : [])]);
-const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND);
+const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
