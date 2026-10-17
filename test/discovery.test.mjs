@@ -21,6 +21,17 @@ test("paid routes carry Bazaar metadata and the right prices", () => {
   }
 });
 
+test("builder code: on every paid route once BUILDER_CODE is set; left out when unset or not a valid code", (t) => {
+  for (const r of Object.values(x402Routes(PAY_TO, "eip155:8453", SOLANA, null, null, "fizzl_test"))) {
+    assert.deepEqual(r.extensions["builder-code"].info, { a: "fizzl_test" });
+    assert.equal(r.extensions["x402-merchant"].info.name, "Fizzl");
+  }
+  for (const r of Object.values(x402Routes(PAY_TO, "eip155:8453"))) assert.equal(r.extensions["builder-code"], undefined);
+  const warn = t.mock.method(console, "warn", () => {});
+  for (const r of Object.values(x402Routes(PAY_TO, "eip155:8453", null, null, null, "Fizzl-EU"))) assert.equal(r.extensions["builder-code"], undefined);
+  assert.match(warn.mock.calls[0].arguments[0], /not a valid builder code/);
+});
+
 test("token verdict: $0.01 on Base, plus Solana only when a Solana wallet is set", () => {
   const baseOnly = x402Routes(PAY_TO, "eip155:8453")["GET /v1/token"];
   assert.deepEqual(baseOnly.accepts.map((a) => [a.network, a.price]), [["eip155:8453", "$0.01"]]);

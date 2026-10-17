@@ -21,7 +21,7 @@ import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
   approvalsBazaarExtension, approvalsServiceMetadata, SCREEN_ROUTE, screenBazaarExtension, screenServiceMetadata,
 } from "./discovery.js";
-import { merchantExtension } from "./merchant.js";
+import { builderCodeExtension, merchantExtension } from "./merchant.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
 import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, NEW_DOMAIN_DAYS } from "./pg1.js";
 import { screenOfacLoaded, partySanctionsReasons } from "./ofac.js";
@@ -1278,8 +1278,10 @@ export async function explain(result, lang) {
 // solana: optional { network, payTo }; the token verdict can then also be paid in USDC on Solana.
 // xrpl: optional { network, payTo }; every route can then also be paid in RLUSD on the XRP Ledger.
 // algorand: optional { network, payTo }; every route can then also be paid in USDC on Algorand.
-export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null) {
+// builderCode: optional Base Builder Code (env BUILDER_CODE), so Base can attribute the payments to Fizzl.
+export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
+  const sellerExtensions = { ...merchantExtension, ...builderCodeExtension(builderCode) };
   const route = (path, description) => ({
     accepts: [
       { scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo },
@@ -1291,7 +1293,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
     description,
     mimeType: "application/json",
     ...serviceMetadata,
-    extensions: { ...bazaarExtension(), ...merchantExtension },
+    extensions: { ...bazaarExtension(), ...sellerExtensions },
   });
   const tokenPrice = `$${TOKEN_ROUTE.price}`;
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
@@ -1311,7 +1313,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       description: "Is this token safe to buy, or a honeypot or rug pull? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
       ...tokenServiceMetadata,
-      extensions: { ...tokenBazaarExtension(), ...merchantExtension },
+      extensions: { ...tokenBazaarExtension(), ...sellerExtensions },
     },
     [`GET ${APPROVALS_ROUTE.path}`]: {
       accepts: [
@@ -1323,7 +1325,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
       mimeType: "application/json",
       ...approvalsServiceMetadata,
-      extensions: { ...approvalsBazaarExtension(), ...merchantExtension },
+      extensions: { ...approvalsBazaarExtension(), ...sellerExtensions },
     },
     [`GET ${SCREEN_ROUTE.path}`]: {
       accepts: [
@@ -1335,7 +1337,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       description: "Is this wallet sanctioned? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
       mimeType: "application/json",
       ...screenServiceMetadata,
-      extensions: { ...screenBazaarExtension(), ...merchantExtension },
+      extensions: { ...screenBazaarExtension(), ...sellerExtensions },
     },
   };
 }

@@ -1,3 +1,5 @@
+import { BUILDER_CODE, BUILDER_CODE_PATTERN, declareBuilderCodeExtension } from "@x402/extensions/builder-code";
+
 // Who sells this, for x402 discovery lists. GoPlausible's catalog reads the
 // "x402-merchant" extension of a 402 challenge (name, website, logo, categories)
 // when it settles a payment, and shows it on the merchant: one per pay-to
@@ -26,3 +28,16 @@ export const merchantExtension = {
     },
   },
 };
+
+// Base Builder Code (ERC-8021): a buyer's x402 client echoes this app code back with its payment, and the
+// facilitator writes it into the settlement calldata, so Base counts the payment as Fizzl's. Minted at base.dev
+// and set as env BUILDER_CODE; unset, or not a valid code (a-z, 0-9 and _, at most 32), the 402 has none.
+export function builderCodeExtension(value) {
+  const code = (value || "").trim();
+  if (!code) return {};
+  if (!BUILDER_CODE_PATTERN.test(code)) {
+    console.warn(`[x402] BUILDER_CODE "${code}" is not a valid builder code (a-z, 0-9 and _, at most 32): left out`);
+    return {};
+  }
+  return { [BUILDER_CODE]: declareBuilderCodeExtension(code) };
+}
