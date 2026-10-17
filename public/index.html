@@ -106,6 +106,47 @@
   .price.save { border-color: rgba(97,245,195,.45); }
   a.price:hover { border-color: var(--mint); }
 </style>
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "WebApplication",
+ "@id": "https://presign-guard.fizzl.eu/#app",
+ "name": "presign-guard",
+ "url": "https://presign-guard.fizzl.eu/",
+ "description": "A green, orange or red verdict before an AI agent signs a transaction, approval or signature on EVM chains, Solana, the XRP Ledger or Algorand, including the token itself, with OFAC screening of every party and a signed receipt.",
+ "applicationCategory": "SecurityApplication",
+ "operatingSystem": "Any",
+ "offers": [
+  {
+   "@type": "Offer",
+   "name": "Pre-sign check, paid per call over x402 in USDC (Base, Solana, the XRP Ledger, Algorand or Stellar)",
+   "price": "0.01",
+   "priceCurrency": "USD"
+  }
+ ],
+ "featureList": [
+  "Transaction, approval and signature checks before signing",
+  "Token checks",
+  "OFAC SDN screening of every party",
+  "MCP server for agents"
+ ],
+ "provider": {
+  "@type": "Organization",
+  "@id": "https://fizzl.eu/#fizzl",
+  "name": "Fizzl",
+  "url": "https://fizzl.eu/"
+ },
+ "author": {
+  "@type": "Person",
+  "@id": "https://fizzl.eu/#frits",
+  "name": "Frits Zwager",
+  "url": "https://cv.fizzl.eu/"
+ },
+ "sameAs": [
+  "https://github.com/Fizzl13/presign-guard"
+ ]
+}
+</script>
 </head>
 <body>
 <div class="wrap">

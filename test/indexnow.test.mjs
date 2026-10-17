@@ -1,4 +1,5 @@
-// IndexNow (src/indexnow.cjs): the pages are submitted once, only on Render, for this host only; llms.txt is in place.
+// IndexNow (src/indexnow.cjs): the pages are submitted once, only on Render, for this host only; llms.txt is in place,
+// and the homepage describes itself in JSON-LD.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -32,4 +33,12 @@ test("llms.txt follows llmstxt.org: a title, a summary, and the agent links", ()
   assert.match(text, /^# presign-guard\n\n> /);
   assert.match(text, /https:\/\/presign-guard\.fizzl\.eu\/skill\.md/);
   assert.match(text, /https:\/\/presign-guard\.fizzl\.eu\/openapi\.json/);
+});
+
+test("the homepage carries valid JSON-LD with the per-check price", () => {
+  const html = fs.readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const ld = JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
+  assert.equal(ld["@type"], "WebApplication");
+  assert.equal(ld.url, "https://presign-guard.fizzl.eu/");
+  assert.equal(ld.offers[0].price, "0.01");
 });
