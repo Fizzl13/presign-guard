@@ -597,7 +597,7 @@ export function wellKnown(origin, { credits = false } = {}) {
     category: CATEGORY,
     iconUrl: `${origin}/media/icon.png`,
     tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "aml", "agents"],
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL and Algorand transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits and OFAC sanctions screening for any chain's address. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana or Algorand, or RLUSD on the XRP Ledger.",
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL and Algorand transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits and OFAC sanctions screening for any chain's address. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana, Algorand or Stellar, or RLUSD on the XRP Ledger.",
     signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
