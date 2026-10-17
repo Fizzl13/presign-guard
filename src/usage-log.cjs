@@ -54,16 +54,18 @@ const NETWORK_NAMES = {
   'xrpl:1': 'xrpl-testnet',
   'algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73ktiC1qzkkit8=': 'algorand',
   'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=': 'algorand-testnet',
+  'stellar:pubnet': 'stellar',
+  'stellar:testnet': 'stellar-testnet',
 };
 const RLUSD_HEX = '524C555344000000000000000000000000000000';
 
-// USD value of a payment requirement: USDC in atomic units (6 decimals), or RLUSD on the XRP Ledger,
+// USD value of a payment requirement: USDC in atomic units (6 decimals, 7 on Stellar), or RLUSD on the XRP Ledger,
 // where amounts are decimal values ("0.02"). Null for anything else.
 function usdOf(accepted) {
   const amount = accepted && (accepted.amount || accepted.maxAmountRequired);
   if (amount === undefined || amount === null) return null;
   if (/^xrpl:/.test(String(accepted.network || ''))) return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
-  return /^\d+$/.test(String(amount)) ? Number(amount) / 1e6 : null;
+  return /^\d+$/.test(String(amount)) ? Number(amount) / (/^stellar:/.test(String(accepted.network || '')) ? 1e7 : 1e6) : null;
 }
 
 function decodeBase64Json(value) {

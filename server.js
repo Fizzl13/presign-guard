@@ -12,6 +12,8 @@ import { ExactXrplScheme } from "@x402/xrpl/exact/server";
 import { createXrplFacilitator, XRPL_NETWORK } from "./src/xrpl-facilitator.js";
 import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { algorandConfig, ALGORAND_NETWORK, ALGORAND_FACILITATOR } from "./src/algorand.js";
+import { ExactStellarScheme } from "@x402/stellar/exact/server";
+import { stellarConfig, stellarFacilitator, STELLAR_NETWORK } from "./src/stellar.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
@@ -63,6 +65,8 @@ const XRPL_PAY_TO = process.env.XRPL_PAY_TO === "off" ? null : process.env.XRPL_
 const XRPL = MAINNET && XRPL_PAY_TO ? { network: XRPL_NETWORK, payTo: XRPL_PAY_TO } : null;
 // Optional: USDC on Algorand (src/algorand.js), mainnet only, when ALGORAND_PAY_TO is set.
 const ALGORAND = MAINNET ? algorandConfig() : null;
+// Optional: USDC on Stellar (src/stellar.js), mainnet only, when a Stellar facilitator is configured (STELLAR_FACILITATOR_KEY).
+const STELLAR = MAINNET ? stellarConfig() : null;
 
 if (MAINNET && !(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET)) {
   throw new Error("Mainnet needs CDP_API_KEY_ID and CDP_API_KEY_SECRET for the CDP facilitator");
@@ -82,12 +86,13 @@ function onlyNetworks(client, keep) {
 }
 
 // Testnet: public x402.org facilitator. Mainnet: Coinbase CDP facilitator for
-// Base, PayAI for Solana (when PAY_TO_SOLANA is set), GoPlausible for Algorand.
+// Base, PayAI for Solana (when PAY_TO_SOLANA is set), GoPlausible for Algorand, OpenZeppelin for Stellar.
 const cdp = new HTTPFacilitatorClient(cdpFacilitator);
 const facilitators = MAINNET
   ? [
     ...(SOLANA ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.SOLANA_FACILITATOR_URL ?? "https://facilitator.payai.network" }), (n) => n.startsWith("solana:"))] : []),
     ...(ALGORAND ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.ALGORAND_FACILITATOR_URL || ALGORAND_FACILITATOR }), (n) => n.startsWith("algorand:"))] : []),
+    ...(STELLAR ? [onlyNetworks(stellarFacilitator(), (n) => n.startsWith("stellar:"))] : []),
     cdp,
     ...(XRPL ? [createXrplFacilitator({ wsUrl: process.env.XRPL_WS_URL || "wss://xrplcluster.com" })] : []),
   ]
@@ -99,8 +104,9 @@ const resourceServer = new x402ResourceServer(facilitatorStart.clients).register
 if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
 if (XRPL) resourceServer.register(XRPL_NETWORK, new ExactXrplScheme());
 if (ALGORAND) resourceServer.register(ALGORAND_NETWORK, new ExactAvmScheme());
-facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : [])]);
-const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE);
+if (STELLAR) resourceServer.register(STELLAR_NETWORK, new ExactStellarScheme());
+facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : [])]);
+const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
@@ -108,7 +114,7 @@ if (process.env.CREDITS_REDIS_URL) {
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
-const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND) } : ROUTES;
+const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR) } : ROUTES;
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
@@ -192,7 +198,7 @@ app.use("/media", express.static(MEDIA_DIR, { maxAge: "1d" }));
 app.get("/favicon.ico", (_req, res) => res.set("cache-control", "public, max-age=86400").sendFile(fileURLToPath(new URL("./public/favicon.ico", import.meta.url))));
 app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
 app.get("/openapi.json", (_req, res) => {
-  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : [])], { credits: Boolean(creditStore) });
+  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : [])], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
   if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: CONTACT, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION ? { currency: MPP_SESSION.currency } : null });
   res.json(spec);
@@ -260,7 +266,7 @@ app.use(feedback.router(express));
 // MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
 // One free limit per IP for the free MCP tools and GET /v1/token/quick together.
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, signer: SIGNER, limiter: freeLimiter, feedback }));
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, signer: SIGNER, limiter: freeLimiter, feedback }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
