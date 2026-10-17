@@ -1,0 +1,28 @@
+# presign-guard
+
+> Pre-sign safety checks for AI agents and wallets: before an agent signs a transaction, a token approval, a Permit/Permit2/EIP-3009 signature or a message, presign-guard answers green, orange or red with reason codes (known drainers, sanctioned addresses, unlimited approvals, look-alike tokens, simulated balance changes). Also token safety verdicts (honeypot, rug pull, mint or freeze authority, unlocked liquidity), wallet approval audits and OFAC SDN sanctions screening of any address. EVM chains, Solana, the XRP Ledger and Algorand. Free quick checks; paid verdicts from $0.01 per call over x402 (USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger) or MPP; errors are never charged. MCP server at https://presign-guard.fizzl.eu/mcp.
+
+On red: don't sign. On orange: tell the owner why before going on. No account or API key needed; every paid answer carries a signed receipt.
+
+## For agents
+- [Agent instructions (skill.md)](https://presign-guard.fizzl.eu/skill.md): every check, its input, and how to pay
+- [OpenAPI](https://presign-guard.fizzl.eu/openapi.json): every paid route with its price, input and output schema
+- [x402 discovery document](https://presign-guard.fizzl.eu/.well-known/x402)
+- MCP server (streamable HTTP): https://presign-guard.fizzl.eu/mcp, with the free tools `presign_quick_check` and `token_quick_verdict`
+
+## Paid API
+- `POST /v1/check` ($0.01): verdict and reason codes for a transaction, approval, signature or message about to be signed (EVM, `type: "solana"`, `"xrpl"` or `"algorand"`)
+- `POST /v1/check/explain` ($0.03): the same plus a plain-language explanation for the owner (English or Dutch)
+- `GET /v1/token?chain=<chain>&address=<token>` ($0.01): is this token safe to buy, or a honeypot or rug pull? Grade, reasons and market data
+- `GET /v1/approvals?chain=<chain>&address=<wallet>` ($0.02): every open approval of a wallet and which to revoke
+- `GET /v1/screen?address=<address>` ($0.01): is this wallet sanctioned? Any chain's address against the OFAC SDN list
+- `GET /v1/credits`: prepaid credit packs (100 checks for $0.80, 1,000 for $7.00)
+
+## Free
+- `GET /v1/sanctions`: the OFAC SDN digital-currency addresses as open data, synced from the US Treasury
+- [Website](https://presign-guard.fizzl.eu/): what each check catches, with examples
+
+## Optional
+- [Fizzl](https://fizzl.eu/llms.txt): the other Fizzl services (x402 Doctor, agent wallet, trading signals)
+- [Agent wallet with these checks built in](https://wallet.fizzl.eu/skill.md)
+- [Source code](https://github.com/Fizzl13/presign-guard)

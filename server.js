@@ -20,6 +20,7 @@ import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
 import facilitatorStartModule from "./src/facilitator-start.cjs";
+import indexNow from "./src/indexnow.cjs";
 import mppPayModule from "./src/mpp-pay.cjs";
 import { createMppSession, sessionStore } from "./src/mpp-session.js";
 import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/mcp.js";
@@ -168,7 +169,11 @@ const HOME = fileURLToPath(new URL("./public/index.html", import.meta.url));
 app.get("/", (req, res, next) => (res.vary("Accept"), req.accepts(["json", "html"]) === "html" ? res.sendFile(HOME) : next()));
 // For search engines: the homepage is the one page to index.
 app.get("/robots.txt", (_req, res) => res.type("text/plain").send(`User-agent: *\nAllow: /\n\nSitemap: ${PUBLIC_URL}/sitemap.xml\n`));
-app.get("/sitemap.xml", (_req, res) => res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${PUBLIC_URL}/</loc></url></urlset>\n`));
+const SITEMAP_PATHS = ["/", "/llms.txt", "/skill.md", "/openapi.json"];
+app.get("/sitemap.xml", (_req, res) => res.type("application/xml").send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${SITEMAP_PATHS.map((p) => `<url><loc>${PUBLIC_URL}${p}</loc></url>`).join("")}</urlset>\n`));
+// For AI tools (llmstxt.org) and IndexNow's key check (src/indexnow.cjs).
+app.get("/llms.txt", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/plain; charset=utf-8").sendFile(fileURLToPath(new URL("./public/llms.txt", import.meta.url))));
+app.get(`/${indexNow.INDEXNOW_KEY}.txt`, (_req, res) => res.type("text/plain").send(indexNow.INDEXNOW_KEY));
 app.get("/", (_req, res) => res.json({
   service: "presign-guard",
   docs: "https://github.com/Fizzl13/presign-guard",
@@ -295,4 +300,8 @@ if (creditStore) app.use(creditsRouter(express, { store: creditStore, costs: CRE
 // The OFAC SDN list for GET /v1/screen: loaded now, re-checked every few hours (OFAC_SDN=off skips it, e.g. locally).
 if (process.env.OFAC_SDN !== "off") startOfacSync();
 
-app.listen(PORT, () => console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`));
+app.listen(PORT, () => {
+  console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`);
+  // Tell Bing (and so ChatGPT search and Copilot) about the pages; on Render only.
+  indexNow.scheduleIndexNow({ host: new URL(PUBLIC_URL).host, urls: SITEMAP_PATHS.map((p) => PUBLIC_URL + p) });
+});
