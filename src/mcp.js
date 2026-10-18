@@ -7,9 +7,9 @@
 // - presign_check ($0.01) and presign_check_explain ($0.03), via x402: the same
 //   as POST /v1/check and /v1/check/explain, paid inside the MCP call
 //   (_meta["x402/payment"]) at the same price and to the same payout wallet.
-// - token_verdict ($0.01, Base or Solana): the same as GET /v1/token.
-// - wallet_approvals ($0.02, Base or Solana): the same as GET /v1/approvals (EVM allowances or Solana delegations).
-// - screen_wallet ($0.01, Base or Solana): the same as GET /v1/screen.
+// - token_verdict ($0.01): the same as GET /v1/token.
+// - wallet_approvals ($0.02): the same as GET /v1/approvals (EVM allowances or Solana delegations).
+// - screen_wallet ($0.01): the same as GET /v1/screen.
 //
 // Invalid input is refused before payment; a failed check is not charged.
 
@@ -197,7 +197,7 @@ const PAID_TOOLS = [
     summary: "Green/orange/red verdict with reason codes before an agent signs an EVM, Solana, XRP Ledger or Algorand transaction, token approval, EIP-712 signature or plain message.",
     solana: true,
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. On Algorand (type algorand, base64 msgpack transaction or group in transactions): rekeys, closing the account or an asset to someone else, clawbacks, fake USDC, app update/delete/clear, simulated. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): call this before you sign. Send the transaction, token approval or EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, and the token itself (honeypot, fake look-alike, high tax). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. On Algorand (type algorand, base64 msgpack transaction or group in transactions): rekeys, closing the account or an asset to someone else, clawbacks, fake USDC, app update/delete/clear, simulated. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
     run: (request) => check(request),
   },
   {
@@ -210,7 +210,7 @@ const PAID_TOOLS = [
     summary: "The same verdict plus a short plain-language explanation for a person, in English or Dutch.",
     solana: true,
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): the same verdict and reason codes as presign_check, plus a 3 to 5 sentence plain-language explanation a person can read before approving (lang en or nl). Same as POST /v1/check/explain.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): the same verdict and reason codes as presign_check, plus a 3 to 5 sentence plain-language explanation a person can read before approving (lang en or nl). Same as POST /v1/check/explain.`,
     run: async (request, args) => {
       const result = await check(request);
       const lang = args.lang === "nl" ? "nl" : "en";
@@ -228,7 +228,7 @@ const PAID_TOOLS = [
     solana: true,
     summary: "Is this token safe to buy, hold or accept? Verdict, grade, reason codes, one-line summary and market data for a Solana or EVM token.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc, xrpl, algorand) and the token address, mint, CURRENCY.rIssuer or Algorand asset id; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc, xrpl, algorand) and the token address, mint, CURRENCY.rIssuer or Algorand asset id; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
     run: (request) => tokenVerdict(request),
   },
   {
@@ -242,7 +242,7 @@ const PAID_TOOLS = [
     solana: true,
     summary: "Which open token approvals could drain this wallet? Every ERC-20 allowance or Solana token delegation with who the spender is, a verdict, and the ones to revoke.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): audit the open token approvals of a wallet on an EVM chain (base, ethereum, arbitrum, optimism, polygon, bsc) or on Solana, for example your agent's own wallet as a periodic check. Get back green/orange/red, a grade, a one-line summary and every approval with its spender. EVM, every ERC-20 allowance: flagged malicious (red), a plain wallet, on a doubt list, an unverified contract or an unlimited allowance to a spender not on the GoPlus trust list (orange), with a revoke.cash link. Solana, every SPL token delegation (Approve): a delegate on the OFAC SDN list (red), a delegate that is a plain wallet or an unlimited delegation (orange), with the token account to revoke on; Token-2022 tokens with a permanent delegate are listed too. NFT approvals are not covered. Same as GET /v1/approvals.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): audit the open token approvals of a wallet on an EVM chain (base, ethereum, arbitrum, optimism, polygon, bsc) or on Solana, for example your agent's own wallet as a periodic check. Get back green/orange/red, a grade, a one-line summary and every approval with its spender. EVM, every ERC-20 allowance: flagged malicious (red), a plain wallet, on a doubt list, an unverified contract or an unlimited allowance to a spender not on the GoPlus trust list (orange), with a revoke.cash link. Solana, every SPL token delegation (Approve): a delegate on the OFAC SDN list (red), a delegate that is a plain wallet or an unlimited delegation (orange), with the token account to revoke on; Token-2022 tokens with a permanent delegate are listed too. NFT approvals are not covered. Same as GET /v1/approvals.`,
     run: (request) => walletApprovals(request),
   },
   {
@@ -256,7 +256,7 @@ const PAID_TOOLS = [
     solana: true,
     summary: "Is this wallet sanctioned? Any chain's address against the OFAC SDN list (synced from the US Treasury), plus theft and phishing reports for EVM addresses.",
     description: (price) =>
-      `Paid (${price} USDC via x402 on Base or Solana): call this before your agent pays an address, or before accepting money from one. Send any chain's wallet address (EVM 0x..., Solana, Tron, Bitcoin, XRP Ledger, Algorand, or another currency OFAC lists). Get back green/orange/red: red SANCTIONED_ADDRESS with the SDN entry (name, programs, currency) when the address is on the OFAC SDN list, red or orange when GoPlus reports theft, phishing, laundering or mixer use (EVM). Never pay or accept funds on red.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): call this before your agent pays an address, or before accepting money from one. Send any chain's wallet address (EVM 0x..., Solana, Tron, Bitcoin, XRP Ledger, Algorand, or another currency OFAC lists). Get back green/orange/red: red SANCTIONED_ADDRESS with the SDN entry (name, programs, currency) when the address is on the OFAC SDN list, red or orange when GoPlus reports theft, phishing, laundering or mixer use (EVM). Never pay or accept funds on red.`,
     run: (request) => screenAddress(request),
   },
 ];
