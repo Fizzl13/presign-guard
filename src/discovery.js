@@ -246,12 +246,15 @@ export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_T
 export const INPUT_SCHEMA = {
   type: "object",
   properties: {
-    type: { type: "string", enum: ["approval", "transaction", "signature", "message", "solana", "xrpl", "algorand"], description: "What the agent is about to sign (message: a plain personal_sign / eth_sign message; solana: a Solana transaction; xrpl: an XRP Ledger transaction; algorand: an Algorand transaction or group)" },
+    type: { type: "string", enum: ["approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand"], description: "What the agent is about to sign (authorization: an EIP-7702 authorization delegating the wallet to a contract; message: a plain personal_sign / eth_sign message; solana: a Solana transaction; xrpl: an XRP Ledger transaction; algorand: an Algorand transaction or group)" },
+    address: { type: "string", description: "authorization: the contract the EIP-7702 authorization delegates the wallet to (0x0…0 clears a delegation). Any delegation hands that contract everything the wallet holds: orange EIP7702_AUTHORIZATION unless it is on GoPlus's trust list; red AUTHORIZATION_TO_NO_CONTRACT (nothing deployed there yet), AUTHORIZATION_TO_UNVERIFIED_CONTRACT, AUTHORIZATION_TO_FLAGGED_CONTRACT, AUTHORIZATION_TO_DELEGATED_WALLET, SANCTIONED_ADDRESS" },
+    authorizationChainId: { type: "integer", description: "authorization, optional: the chain id inside the authorization, chainId (default) or 0 = valid on every chain (orange AUTHORIZATION_ALL_CHAINS)" },
+    nonce: { type: "string", description: "authorization, optional: the authorization nonce" },
     transaction: { type: "string", maxLength: 12000, description: "algorand: one base64 msgpack transaction (unsigned or signed); red ALGORAND_REKEY, ALGORAND_CLOSE_ACCOUNT, ALGORAND_ASSET_CLOSE, ALGORAND_FAKE_STABLECOIN; simulated. solana: the base64 wire transaction about to be signed (legacy or v0). Decoded and simulated: red SOLANA_TOKEN_ACCOUNT_TAKEOVER (SetAuthority hands a token account to someone else) and SOLANA_ACCOUNT_ASSIGN (the wallet handed to a program); orange SOLANA_UNLIMITED_DELEGATE, SOLANA_DURABLE_NONCE, SOLANA_CLOSE_TO_OTHER, HIDDEN_APPROVAL, SIMULATION_FAILS. from (optional) names the wallet if it is not the fee payer" },
     transactions: { type: "array", maxItems: 16, items: { type: "string" }, description: "algorand: an atomic group, each base64 msgpack; send the whole group" },
     method: { type: "string", enum: ["personal_sign", "eth_sign"], description: "message: how it is signed (default personal_sign); eth_sign is always red" },
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
-    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction and signature" },
+    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction, signature and authorization" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1"], description: "xrpl: the ledger (default xrpl:0, mainnet)" },
     tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows and NFT giveaways" },
     token: { type: "string", description: "approval: token contract" },
@@ -344,6 +347,7 @@ const CHECK_INPUT_SCHEMA = {
   ...INPUT_SCHEMA,
   allOf: [
     { if: { properties: { type: { enum: ["approval", "transaction", "signature"] } }, required: ["type"] }, then: { required: ["chainId"] } },
+    { if: { properties: { type: { const: "authorization" } }, required: ["type"] }, then: { required: ["chainId", "address"] } },
     { if: { properties: { type: { const: "solana" } }, required: ["type"] }, then: { required: ["transaction"] } },
     { if: { properties: { type: { const: "algorand" } }, required: ["type"] }, then: { anyOf: [{ required: ["transaction"] }, { required: ["transactions"] }] } },
     { if: { properties: { type: { const: "xrpl" } }, required: ["type"] }, then: { required: ["tx"] } },
