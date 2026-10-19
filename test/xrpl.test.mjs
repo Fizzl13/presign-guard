@@ -11,12 +11,15 @@ const FAKE = "rrrrrrrrrrrrrrrrrrrrBZbvji";
 const RLUSD = "524C555344000000000000000000000000000000";
 
 // accounts: address -> { flags, transferRate } or null (= not found); lines: address -> [currency…]
-function ledger({ accounts = {}, lines = {}, down = false } = {}) {
+function ledger({ accounts = {}, lines = {}, credentials = {}, down = false } = {}) {
   return async (_url, init) => {
     if (down) throw new Error("node down");
     const { method, params: [p] } = JSON.parse(init.body);
     let result;
-    if (method === "account_info") {
+    if (method === "ledger_entry" && p.credential) {
+      const c = credentials[`${p.credential.subject}|${p.credential.issuer}|${p.credential.credential_type}`];
+      result = c ? { node: { LedgerEntryType: "Credential", Subject: p.credential.subject, Issuer: p.credential.issuer, CredentialType: p.credential.credential_type, ...c } } : { error: "entryNotFound" };
+    } else if (method === "account_info") {
       const a = accounts[p.account];
       result = a === undefined || a === null ? { error: "actNotFound" } : { account_data: { Account: p.account, Flags: a.flags ?? 0, ...(a.transferRate && { TransferRate: a.transferRate }) } };
     } else result = { lines: (lines[p.account] || []).map((currency) => ({ account: p.peer, currency })) };
@@ -156,4 +159,27 @@ test("token names: with TypeSafe set up, Jev judges other names (a USDC from som
     globalThis.fetch = saved.fetch;
     if (saved.key === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = saved.key;
   }
+});
+
+test("credentials (XLS-70): issuing one for another account is orange; accepting is info, or orange when it would fail", async () => {
+  const KYC = Buffer.from("KYC").toString("hex").toUpperCase();
+  const issue = await run({ TransactionType: "CredentialCreate", Subject: OTHER, CredentialType: KYC });
+  assert.deepEqual(codes(issue), ["orange:XRPL_CREDENTIAL_ISSUE"]);
+  assert.equal(issue.reasons[0].details.credentialType, "KYC");
+  assert.equal((await run({ TransactionType: "CredentialCreate", Subject: ME, CredentialType: KYC })).verdict, "green");
+
+  const accept = { TransactionType: "CredentialAccept", Issuer: OTHER, CredentialType: KYC };
+  const key = `${ME}|${OTHER}|${KYC}`;
+  const ok = await run(accept, { accounts: { [OTHER]: {} }, credentials: { [key]: { Flags: 0 } } });
+  assert.equal(ok.verdict, "green"); assert.deepEqual(codes(ok), ["info:XRPL_CREDENTIAL_ACCEPT"]);
+  assert.deepEqual(codes(await run(accept, { accounts: { [OTHER]: {} } })), ["orange:XRPL_CREDENTIAL_NOT_FOUND"]);
+  assert.deepEqual(codes(await run(accept, { accounts: { [OTHER]: {} }, credentials: { [key]: { Flags: 0x00010000 } } })), ["orange:XRPL_CREDENTIAL_ALREADY_ACCEPTED"]);
+  assert.deepEqual(codes(await run(accept, { accounts: { [OTHER]: {} }, credentials: { [key]: { Flags: 0, Expiration: 100 } } })), ["orange:XRPL_CREDENTIAL_EXPIRED"]);
+  assert.deepEqual(codes(await run(accept)), ["orange:XRPL_ISSUER_NOT_FOUND"]);
+  assert.deepEqual(codes(await run(accept, { down: true })), ["info:XRPL_LEDGER_UNAVAILABLE"]);
+
+  assert.equal((await run({ TransactionType: "CredentialDelete", Issuer: OTHER, CredentialType: KYC })).verdict, "green");
+  assert.equal((await run({ TransactionType: "PermissionedDomainSet", AcceptedCredentials: [] })).verdict, "green");
+  await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "CredentialAccept", Account: ME, Issuer: OTHER, CredentialType: "KYC" } }), /CredentialType must be hex/);
+  await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "CredentialCreate", Account: ME, Subject: "rNotAnAddress", CredentialType: KYC } }), /Subject/);
 });
