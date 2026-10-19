@@ -17,6 +17,8 @@ import express from "express";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createPaymentWrapper } from "@x402/mcp";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { merchantExtension } from "./merchant.js";
@@ -35,7 +37,7 @@ import {
   SCREEN_ROUTE, SCREEN_INPUT_SCHEMA, SCREEN_INPUT_EXAMPLE, screenServiceMetadata,
 } from "./discovery.js";
 
-export const VERSION = "1.5.0";
+export const VERSION = "1.6.0";
 export const FREE_CALLS_PER_HOUR = 10;
 
 const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
@@ -420,6 +422,30 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
   return server;
 }
 
+// The server card: serverInfo, transport and capabilities as initialize returns them, and
+// the tools as tools/list returns them, over an in-memory client.
+export async function serverCard(server) {
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "server-card", version: VERSION });
+  await server.connect(serverSide);
+  try {
+    await client.connect(clientSide);
+    const { tools } = await client.listTools();
+    return {
+      serverInfo: client.getServerVersion(),
+      transport: { type: "streamable-http", endpoint: "/mcp" },
+      capabilities: client.getServerCapabilities(),
+      authentication: { required: false },
+      tools,
+      resources: [],
+      prompts: [],
+    };
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
+
 // Express router for POST /mcp (stateless: a server and transport per request).
 export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
   const router = express.Router();
@@ -438,6 +464,18 @@ export function createMcpRouter({ resourceServer, network, payTo, solana = null,
     } catch (err) {
       console.error("[mcp] error:", err);
       if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "internal error" }, id: null });
+    }
+  });
+  // Static server card (SEP-1649) for MCP directories: the same tools as tools/list on /mcp,
+  // read once from a server built like the one per request, so it never goes stale.
+  let card = null;
+  router.get("/.well-known/mcp/server-card.json", async (_req, res) => {
+    try {
+      card ??= serverCard(buildServer({ paidWrappers, allowFree: () => false, signer, feedback })).catch((err) => { card = null; throw err; });
+      res.set("Access-Control-Allow-Origin", "*").set("Cache-Control", "public, max-age=3600").json(await card);
+    } catch (err) {
+      console.error("[mcp] server card:", err);
+      res.status(500).json({ error: "server card unavailable" });
     }
   });
   router.all("/mcp", (_req, res) => {
