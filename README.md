@@ -93,7 +93,7 @@ Every Fizzl skill (x402 Doctor, presign-guard, the Agent Wallet and Ichimoku Sig
 
 ## MCP
 
-`https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`.
+`https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`. Directories can read its tools without connecting from the server card at `/.well-known/mcp/server-card.json` (the same list as `tools/list`).
 
 Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agents](docs/claude-code-pre-trade.md): a token check and an Ichimoku trend check before every order, with a ready-made `CLAUDE.md` rule.
 

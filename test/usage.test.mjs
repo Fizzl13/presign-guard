@@ -66,6 +66,10 @@ test("usage log: other routes are not logged", () => {
   assert.equal(describePresignCall({ method: "GET", path: "/health" }, {}, {}), null);
 });
 
+test("usage log: reading the MCP server card is logged as discovery", () => {
+  assert.deepEqual(describePresignCall({ method: "GET", path: "/.well-known/mcp/server-card.json" }, { statusCode: 200 }, {}), { route: "mcp server card", via: "discovery", input: {}, result: { status: 200 } });
+});
+
 test("usage log: an XRP Ledger check is logged with the ledger and the kind of transaction", () => {
   const req = { method: "POST", path: "/v1/check", body: { type: "xrpl", network: "xrpl:1", tx: { TransactionType: "SetRegularKey", Account: "rAccount", RegularKey: "rOther" } }, get: () => undefined };
   const event = describePresignCall(req, {}, { verdict: "red", reasons: [{ code: "XRPL_REGULAR_KEY_CHANGE", severity: "red" }] });

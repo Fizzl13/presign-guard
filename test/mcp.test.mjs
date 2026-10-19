@@ -155,6 +155,21 @@ test("lists the free quick checks and the paid tools with their prices", async (
   await client.close();
 });
 
+test("server card lists the same tools as tools/list on /mcp", async () => {
+  const client = await mcpClient();
+  const { tools } = await client.listTools();
+  await client.close();
+  const res = await realFetch(`${baseUrl}/.well-known/mcp/server-card.json`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+  const card = await res.json();
+  assert.equal(card.serverInfo.name, "presign-guard");
+  assert.deepEqual(card.transport, { type: "streamable-http", endpoint: "/mcp" });
+  assert.deepEqual(card.authentication, { required: false });
+  assert.deepEqual(card.tools, tools);
+  assert.deepEqual(await (await realFetch(`${baseUrl}/.well-known/mcp/server-card.json`)).json(), card, "the second request is served from the cached card");
+});
+
 test("a reason about the whole request (subject null, e.g. a message without from) passes the paid tools' output schema", async () => {
   const client = await mcpClient();
   const { tools } = await client.listTools();
