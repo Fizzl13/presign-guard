@@ -256,7 +256,7 @@ export const INPUT_SCHEMA = {
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
     chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction, signature and authorization" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1"], description: "xrpl: the ledger (default xrpl:0, mainnet)" },
-    tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows and NFT giveaways" },
+    tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows, NFT giveaways, and credentials issued to another account or that can't be accepted" },
     token: { type: "string", description: "approval: token contract" },
     spender: { type: "string", description: "approval: who gets the allowance" },
     amount: { type: "string", description: "approval: amount in base units (0 = revoke)" },
