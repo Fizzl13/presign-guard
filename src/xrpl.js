@@ -7,7 +7,9 @@
 // account away for good; AccountDelete sends all its XRP to the Destination. Those are red. Orange: a payment
 // that will fail or may deliver less than it says (partial payment), a destination that refuses it, a trust line
 // to an issuer that can claw tokens back or has frozen them, an escrow or NFT offer that hands value to someone
-// else, a transaction type this check does not judge. A token called RLUSD that isn't Ripple's is red.
+// else, a transaction type this check does not judge. A token called RLUSD that isn't Ripple's is red. Credentials
+// (XLS-70): issuing one for another account is orange (you vouch for it); accepting one is info, or orange when there
+// is nothing valid to accept and the transaction would fail.
 // The ledger is read through public JSON-RPC (no key); when it can't be reached the check says so (info) and the
 // rules that need no ledger still apply. Fail-closed as in presign-guard.js: errors are non-2xx, never "green".
 
@@ -30,10 +32,18 @@ const ASF = { requireDest: 1, disableMaster: 4, defaultRipple: 8, depositAuth: 9
 export const LSF = { requireDestTag: 0x00020000, requireAuth: 0x00040000, disallowXrp: 0x00080000, disableMaster: 0x00100000, noFreeze: 0x00200000, globalFreeze: 0x00400000, depositAuth: 0x01000000, allowClawback: 0x80000000 };
 const TF_PARTIAL_PAYMENT = 0x00020000;
 const TF_SELL_NFTOKEN = 0x00000001;
+const LSF_CREDENTIAL_ACCEPTED = 0x00010000;
+const RIPPLE_EPOCH = 946684800; // XRPL times are seconds since 2000-01-01
+const rippleTime = (t) => new Date((Number(t) + RIPPLE_EPOCH) * 1000).toISOString();
+// A credential type is hex; show it as text when it is readable.
+export const credentialName = (hex) => {
+  const text = Buffer.from(String(hex), "hex").toString("utf8");
+  return /^[\x20-\x7e]+$/.test(text) ? text : String(hex);
+};
 
 // Types judged by a rule below, and everyday types with nothing to flag on their own.
-const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit"]);
-const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid"]);
+const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept"]);
+const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete"]);
 
 export class XrplValidationError extends Error {
   constructor(message) { super(message); this.status = 400; }
@@ -65,8 +75,11 @@ export async function parseXrplRequest(body) {
   if (!tx || typeof tx !== "object" || Array.isArray(tx)) throw new XrplValidationError("tx is required: the unsigned transaction JSON (TransactionType, Account, …)");
   if (typeof tx.TransactionType !== "string" || !/^[A-Za-z]{2,40}$/.test(tx.TransactionType)) throw new XrplValidationError("tx.TransactionType is required");
   if (!isXrplAddress(tx.Account)) throw new XrplValidationError("tx.Account must be a valid XRPL address (r…)");
-  for (const field of ["Destination", "RegularKey"]) {
+  for (const field of ["Destination", "RegularKey", ...(tx.TransactionType.startsWith("Credential") ? ["Subject", "Issuer"] : [])]) {
     if (tx[field] !== undefined && !isXrplAddress(tx[field])) throw new XrplValidationError(`tx.${field} must be a valid XRPL address (r…)`);
+  }
+  if (tx.TransactionType.startsWith("Credential") && (typeof tx.CredentialType !== "string" || !/^([0-9A-Fa-f]{2}){1,64}$/.test(tx.CredentialType))) {
+    throw new XrplValidationError("tx.CredentialType must be hex, 1 to 64 bytes");
   }
   let origin;
   if (body.origin !== undefined && body.origin !== null && body.origin !== "") {
@@ -151,6 +164,20 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       if (!ledgerDown) add("XRPL_LEDGER_UNAVAILABLE", "info", net.name, { error: String(err.message).slice(0, 120) });
       ledgerDown = true;
       return null;
+    }
+  };
+  // A credential on the ledger: the entry, null when there is none, undefined when the ledger can't be read.
+  const credential = async (subject, issuer, type) => {
+    try {
+      const r = await ask("ledger_entry", { credential: { subject, issuer, credential_type: type } });
+      ledgerUsed = true;
+      if (r.error === "entryNotFound") return null;
+      if (r.error || !r.node) throw new Error(r.error_message || r.error || "no ledger entry");
+      return r.node;
+    } catch (err) {
+      if (!ledgerDown) add("XRPL_LEDGER_UNAVAILABLE", "info", net.name, { error: String(err.message).slice(0, 120) });
+      ledgerDown = true;
+      return undefined;
     }
   };
   const fakeRlusd = (amount, where) => {
@@ -238,6 +265,23 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     add("XRPL_NFT_GIVEAWAY", "orange", tx.Destination ?? null, { effect: "offers the NFT for nothing; whoever accepts it gets it for free" });
   }
 
+  // Credentials (XLS-70): an issuer vouches for a subject, and permissioned domains and deposit authorization can let
+  // holders in. Issuing one for another account lends it your name. Accepting one only takes owner reserve, but the
+  // transaction fails when there is no credential, it has expired, or it was accepted already.
+  if (type === "CredentialCreate" && tx.Subject && tx.Subject !== tx.Account) {
+    add("XRPL_CREDENTIAL_ISSUE", "orange", tx.Subject, { credentialType: credentialName(tx.CredentialType), ...(tx.Expiration !== undefined && { expires: rippleTime(tx.Expiration) }), effect: "your account vouches for this account: services and permissioned domains that accept your credentials will treat it as having this one, until you delete it" });
+  }
+  if (type === "CredentialAccept" && tx.Issuer) {
+    const credentialType = credentialName(tx.CredentialType);
+    const issuer = await account(tx.Issuer);
+    if (issuer && !issuer.exists) add("XRPL_ISSUER_NOT_FOUND", "orange", tx.Issuer, { where: "Issuer" });
+    const entry = issuer?.exists ? await credential(tx.Account, tx.Issuer, tx.CredentialType) : undefined;
+    if (entry === null) add("XRPL_CREDENTIAL_NOT_FOUND", "orange", tx.Issuer, { credentialType, effect: "this issuer hasn't issued that credential to you, so there is nothing to accept and the transaction fails" });
+    else if (entry && Number(entry.Flags) & LSF_CREDENTIAL_ACCEPTED) add("XRPL_CREDENTIAL_ALREADY_ACCEPTED", "orange", tx.Issuer, { credentialType, effect: "you accepted it already, so the transaction fails" });
+    else if (entry && entry.Expiration !== undefined && Date.parse(rippleTime(entry.Expiration)) <= Date.now()) add("XRPL_CREDENTIAL_EXPIRED", "orange", tx.Issuer, { credentialType, expired: rippleTime(entry.Expiration), effect: "the credential has expired, so the transaction fails" });
+    else if (entry) add("XRPL_CREDENTIAL_ACCEPT", "info", tx.Issuer, { credentialType, ...(entry.Expiration !== undefined && { expires: rippleTime(entry.Expiration) }), effect: "the credential counts from now on, and holds one owner reserve until it is deleted" });
+  }
+
   if (!JUDGED.has(type) && !BENIGN.has(type)) add("XRPL_TX_NOT_ANALYZED", "orange", tx.Account, { transactionType: type });
 
   // The destination of a payment (or account delete) on the ledger: missing, refusing, or asking for a tag.
@@ -287,7 +331,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
   // Everyone the transaction pays, hands the account to, trusts or trades with (destinations, new keys and signers,
   // token issuers), against the OFAC SDN list.
   const parties = [
-    ...["Destination", "RegularKey", "Owner", "Authorize", "Unauthorize", "Issuer", "Holder"].map((k) => tx[k]),
+    ...["Destination", "RegularKey", "Owner", "Authorize", "Unauthorize", "Issuer", "Holder", "Subject"].map((k) => tx[k]),
     ...["Amount", "SendMax", "DeliverMin", "LimitAmount", "TakerGets", "TakerPays"].map((k) => (isIssued(tx[k]) ? tx[k].issuer : null)),
     ...(Array.isArray(tx.SignerEntries) ? tx.SignerEntries.map((e) => e?.SignerEntry?.Account) : []),
   ];
@@ -314,7 +358,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, every destination, new key or signer and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, every destination, new key or signer and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
     sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
     checkedAt: new Date().toISOString(),
   };
