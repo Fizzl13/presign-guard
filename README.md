@@ -246,6 +246,15 @@ Supported chains: 1, 10, 56, 137, 8453, 42161.
 
 A message moves no tokens by itself, but two kinds are traps. Red: `ETH_SIGN` (`eth_sign` signs a raw 32-byte hash, so nobody can see what is agreed to; it can be a transaction or permit in disguise), `SIGN_IN_DOMAIN_MISMATCH` (a Sign-In with Ethereum message, EIP-4361, for another site than the `origin` asking: a phishing site relaying a real site's login). Orange: `UNREADABLE_MESSAGE` (the bytes aren't readable text; `details.looksLike: "a 32-byte hash"` when it is exactly 32 bytes), `SIGN_IN_URI_MISMATCH` (the message's URI is on another site than its domain), `SIGN_IN_ADDRESS_MISMATCH` (it signs in another account than `from`), `SIGN_IN_CHAIN_MISMATCH` (its Chain ID differs from `chainId`). Info: `SIGN_IN_REQUEST` (the site, account, URI and expiry of a sign-in message), `PLAIN_MESSAGE`. The `origin` gets the same phishing-list and domain-age checks as any request, and `intent` works too. The answer's `subject` carries `kind: "message"`, the method and the first 200 characters of the text (`preview`).
 
+### EIP-7702 authorizations
+
+```jsonc
+// The authorization about to be signed: the contract the wallet would delegate to; authorizationChainId (0 = every chain), nonce and from are optional
+{ "type": "authorization", "chainId": 8453, "address": "0x…", "authorizationChainId": 8453, "nonce": "0", "from": "0x…", "origin": "https://app.example" }
+```
+
+An EIP-7702 authorization makes the wallet run the code at `address`: from then on that contract can move everything the wallet holds. Drainers ask for exactly this ("sweeper" contracts that empty every wallet delegated to them), so any delegation is orange `EIP7702_AUTHORIZATION` (ask the user; sign only for a smart-account implementation they chose), and info only when the contract is on GoPlus's trust list. Red: `AUTHORIZATION_TO_NO_CONTRACT` (no code at that address yet: whoever deploys there later, for example through CREATE2, controls the wallet), `AUTHORIZATION_TO_UNVERIFIED_CONTRACT`, `AUTHORIZATION_TO_FLAGGED_CONTRACT` (GoPlus address flags, malicious behaviour or the doubt list; `details.flags`), `AUTHORIZATION_TO_DELEGATED_WALLET` (the address is itself a delegated wallet, not a contract), `SANCTIONED_ADDRESS`. Orange: `AUTHORIZATION_ALL_CHAINS` (`authorizationChainId: 0`, valid on every chain), `RECENTLY_DEPLOYED`, `DELEGATE_CODE_UNKNOWN` (the chain RPC couldn't be asked). Info: `REVOKES_DELEGATION` (`address` 0x0…0 clears a delegation: green), `ON_TRUST_LIST`, `CURRENT_DELEGATION` (with `from`: the contract the wallet delegates to now, `unchanged: true` when it is the same), `SANCTIONS_SCREENED`. `origin` and `intent` work as for any request. What a verified contract's code does is not audited. A counterparty that already is a delegated wallet is handled in the other request types (`EIP7702_DELEGATED_WALLET`, `MALICIOUS_DELEGATE`, `UNVERIFIED_DELEGATE`).
+
 ### Solana transactions
 
 ```jsonc

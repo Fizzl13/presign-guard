@@ -9,6 +9,7 @@
 //   { type: "approval",    chainId, token, spender, amount }
 //   { type: "transaction", chainId, to, data, value? }
 //   { type: "signature",   chainId, typedData }   // eth_signTypedData_v4 payload (object or JSON string)
+//   { type: "authorization", chainId, address, authorizationChainId?, nonce?, from? } // an EIP-7702 delegation
 //   { type: "xrpl",        network?, tx }          // an unsigned XRP Ledger transaction (src/xrpl.js)
 //   { type: "algorand",    transaction | transactions, from? } // base64 msgpack Algorand transaction(s) (src/algorand-tx.js)
 //   Add lang: "nl" | "en" on /v1/check/explain.
@@ -648,6 +649,26 @@ function parseMessage(body) {
   };
 }
 
+// An EIP-7702 authorization: { type: "authorization", chainId, address, authorizationChainId?, nonce?, from? }.
+// Signing it makes the wallet run the code at `address`, which can then move everything the wallet holds, on
+// authorizationChainId (the chain id inside the authorization; 0 = every chain). address 0x0…0 clears a delegation.
+function parseAuthorization(body, chainId) {
+  const delegate = toAddress(body.address, "address");
+  let authorizationChainId = chainId;
+  if (body.authorizationChainId !== undefined && body.authorizationChainId !== null) {
+    authorizationChainId = Number(body.authorizationChainId);
+    if (!Number.isInteger(authorizationChainId) || (authorizationChainId !== 0 && authorizationChainId !== chainId)) {
+      throw new ValidationError(`authorizationChainId must be ${chainId} (chainId) or 0 (every chain)`);
+    }
+  }
+  const nonce = body.nonce !== undefined && body.nonce !== null ? toUint(body.nonce, "nonce").toString() : undefined;
+  const from = body.from !== undefined && body.from !== null && body.from !== "" ? toAddress(body.from, "from") : undefined;
+  return {
+    chainId, kind: "authorization", offchain: true, value: 0n, grants: [], target: delegate, delegate, authorizationChainId,
+    ...(nonce !== undefined && { nonce }), ...(from && { from }),
+  };
+}
+
 function parseSubject(body) {
   if (!body || typeof body !== "object") throw new ValidationError("JSON body required");
   if (body.type === "message") return parseMessage(body);
@@ -684,7 +705,9 @@ function parseSubject(body) {
     return { chainId, offchain: true, value: 0n, ...parseSignature(body.typedData, chainId) };
   }
 
-  throw new ValidationError('type must be "approval", "transaction", "signature", "message", "solana", "xrpl" or "algorand"');
+  if (body.type === "authorization") return parseAuthorization(body, chainId);
+
+  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "solana", "xrpl" or "algorand"');
 }
 
 // ---------- analysis ----------
@@ -906,6 +929,99 @@ async function analyzeMessage(req) {
   };
 }
 
+// An EIP-7702 authorization hands the wallet to the code at the delegate address: from then on that contract can move
+// everything the wallet holds, and drainers ask agents and users to sign exactly this ("sweeper" contracts). So even a
+// clean, verified contract is orange (ask the user); only a contract on GoPlus's trust list, or clearing a delegation,
+// is green. Red: no contract there yet (whoever deploys code at that address later controls the wallet), a flagged or
+// sanctioned contract, unverified code, or an address that is itself a delegated wallet.
+async function analyzeAuthorization(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject)) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  const d = req.delegate;
+  const everyChain = req.authorizationChainId === 0;
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const current = req.from ? getCode(req.chainId, req.from).catch(() => null) : Promise.resolve(null);
+  const intent = req.intent
+    ? intentCheck({ intent: req.intent, effects: {
+        action: d === zeroAddress ? "sign an EIP-7702 authorization that clears the wallet's delegated code" : "sign an EIP-7702 authorization: the wallet will run this contract's code, which can then move everything the wallet holds",
+        delegate: d, chains: everyChain ? "every EVM chain" : String(req.chainId),
+        ...(req.origin && { requested_by_site: req.origin }),
+      } }).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+
+  let ofacUsed = false;
+  let pg1Used = false;
+  if (d === zeroAddress) {
+    add("REVOKES_DELEGATION", "info", req.from ?? null);
+  } else {
+    const [code, a, c, sc] = await Promise.all([
+      getCode(req.chainId, d).catch(() => undefined),
+      getAddressSecurity(req.chainId, d),
+      getContractSecurity(req.chainId, d),
+      screenParty(d),
+    ]);
+    if (a.partial || c.partial) add("PARTIAL_SOURCE_DATA", "info", d);
+    const trusted = flag(c.data?.trust_list);
+    add("EIP7702_AUTHORIZATION", trusted ? "info" : "orange", d, { chains: everyChain ? "all" : [req.chainId] });
+    if (trusted) add("ON_TRUST_LIST", "info", d);
+    if (everyChain) add("AUTHORIZATION_ALL_CHAINS", "orange", d);
+    if (code === undefined) add("DELEGATE_CODE_UNKNOWN", "orange", d);
+    else if (!/^0x[0-9a-f]+$/i.test(code) || /^0x0*$/i.test(code)) add("AUTHORIZATION_TO_NO_CONTRACT", "red", d);
+    else if (DELEGATION_CODE.test(code)) add("AUTHORIZATION_TO_DELEGATED_WALLET", "red", d, { delegate: "0x" + code.slice(8).toLowerCase() });
+    const flags = [
+      ...ADDRESS_RED_FLAGS.filter((f) => flag(a.data?.[f])),
+      ...(Array.isArray(c.data?.malicious_behavior) ? c.data.malicious_behavior : []),
+      ...(flag(c.data?.doubt_list) ? ["doubt_list"] : []),
+    ];
+    if (flags.length) add("AUTHORIZATION_TO_FLAGGED_CONTRACT", "red", d, { flags });
+    const deployedCode = code !== undefined && /^0x[0-9a-f]+$/i.test(code) && !/^0x0*$/i.test(code) && !DELEGATION_CODE.test(code);
+    if (deployedCode && c.data && !flag(c.data.is_open_source)) add("AUTHORIZATION_TO_UNVERIFIED_CONTRACT", "red", d);
+    const deployed = Number(c.data?.deployed_time);
+    if (deployed && Math.floor(Date.now() / 1000) - deployed < RECENT_DEPLOY_SECONDS) add("RECENTLY_DEPLOYED", "orange", d);
+    if (!sc) add("SANCTIONS_SCREEN_UNAVAILABLE", "info", d);
+    else {
+      if (sc.source === "pg1") pg1Used = true;
+      else ofacUsed = true;
+      if (sc.listed) add("SANCTIONED_ADDRESS", "red", d, { list: "OFAC SDN", matches: sc.matches.map((m) => ({ name: m.sdnName, programs: m.programs })), listSynced: sc.listSynced });
+      else add("SANCTIONS_SCREENED", "info", d, { list: "OFAC SDN", listed: false, listSynced: sc.listSynced });
+    }
+  }
+  const walletCode = await current;
+  if (walletCode && DELEGATION_CODE.test(walletCode)) {
+    const delegate = "0x" + walletCode.slice(8).toLowerCase();
+    add("CURRENT_DELEGATION", "info", req.from, { delegate, ...(delegate === d && { unchanged: true }) });
+  }
+
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: {
+      kind: "authorization",
+      chainId: req.chainId,
+      delegate: d,
+      authorizationChainId: req.authorizationChainId,
+      ...(req.nonce !== undefined && { nonce: req.nonce }),
+      ...(req.from && { from: req.from }),
+      ...(req.origin && { origin: req.origin }),
+    },
+    scope: "EIP-7702 authorizations (delegating the wallet's code to a contract): whether the contract exists, is verified, flagged or on GoPlus's trust list, recently deployed or on the OFAC SDN list, an authorization valid on every chain, the wallet's current delegation (with from), and the requesting site's phishing-list status and domain age. What a verified contract's code does is not audited: delegating to any contract hands it the wallet.",
+    sources: [...new Set([...(d !== zeroAddress ? ["goplus", "chain-rpc"] : []), ...(req.from ? ["chain-rpc"] : []), ...(ofacUsed ? ["ofac-sdn"] : []), ...(pg1Used || site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources])],
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 // One address against the OFAC SDN list: our own copy of the Treasury list (src/ofac.js), PG1 while it isn't loaded.
 async function screenParty(address) {
   const own = screenOfacLoaded(address);
@@ -916,6 +1032,7 @@ async function screenParty(address) {
 
 export async function analyze(req) {
   if (req.kind === "message") return analyzeMessage(req);
+  if (req.kind === "authorization") return analyzeAuthorization(req);
   if (req.kind === "solana") return analyzeSolana(req);
   if (req.kind === "algorand") return analyzeAlgorand(req);
   const reasons = [];

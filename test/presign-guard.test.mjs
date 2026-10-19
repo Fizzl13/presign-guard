@@ -23,6 +23,8 @@ const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wall
 const DELEGATED_BAD = "0xbad0000000000000000000000000000000000005"; // EIP-7702 wallet delegating to PHISH
 const DELEGATED_UNVERIFIED = "0xbad0000000000000000000000000000000000006"; // delegating to unverified code
 const UNVERIFIED_IMPL = "0xbad0000000000000000000000000000000000007";
+const UNDEPLOYED = "0xbad0000000000000000000000000000000000021"; // no code yet (a CREATE2 address nobody deployed)
+const TRUSTED_IMPL = "0x5555000000000000000000000000000000000001"; // on GoPlus's trust list
 const REAL_PROXY = "0x3333000000000000000000000000000000000001"; // GoPlus is_proxy, EIP-1967 slot set on-chain
 const FAKE_PROXY = "0x3333000000000000000000000000000000000002"; // GoPlus is_proxy, no proxy layout on-chain (like DEGEN)
 const MIN_PROXY = "0x3333000000000000000000000000000000000003";  // GoPlus is_proxy, an EIP-1167 clone
@@ -156,7 +158,7 @@ function mockRpc(opts) {
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3` }));
   }
   const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2) }[address];
-  const result = delegateTo ? "0xef0100" + delegateTo : "0x6080604052";
+  const result = delegateTo ? "0xef0100" + delegateTo : address === UNDEPLOYED ? "0x" : "0x6080604052";
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
 }
 
@@ -189,6 +191,7 @@ function mockGoplus(url) {
   const result = u.includes("/address_security/")
     ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
     : { is_contract: isEoa ? "0" : "1", is_open_source: u.includes(UNVERIFIED_IMPL) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
+        ...(u.includes(TRUSTED_IMPL) && { trust_list: "1" }),
         ...([REAL_PROXY, FAKE_PROXY, MIN_PROXY, UNCHECKED_PROXY].some((p) => u.includes(p)) && { is_proxy: "1" }) };
   return new Response(JSON.stringify({ code: 1, message: "OK", result }));
 }
@@ -514,6 +517,76 @@ test("EIP-7702 wallet delegating to unverified code is orange", async () => {
   assert.equal(r.body.verdict, "orange");
   const u = r.body.reasons.find((x) => x.code === "UNVERIFIED_DELEGATE");
   assert.equal(u.details.delegate, UNVERIFIED_IMPL);
+});
+
+test("EIP-7702 authorization to a clean, verified contract is orange: the contract gets the whole wallet", async () => {
+  const r = await check({ type: "authorization", chainId: 8453, address: GOOD, origin: "app.uniswap.org" });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.verdict, "orange", JSON.stringify(r.body.reasons));
+  const a = r.body.reasons.find((x) => x.code === "EIP7702_AUTHORIZATION");
+  assert.deepEqual([a.severity, a.subject, a.details], ["orange", GOOD, { chains: [8453] }]);
+  assert.deepEqual(r.body.subject, { kind: "authorization", chainId: 8453, delegate: GOOD, authorizationChainId: 8453, origin: "app.uniswap.org" });
+  assert.ok(!r.body.reasons.some((x) => x.severity === "red"));
+});
+
+test("EIP-7702 authorization: red for a flagged contract, unverified code, no contract yet or a delegated wallet", async () => {
+  const flagged = await check({ type: "authorization", chainId: 8453, address: PHISH });
+  assert.equal(flagged.body.verdict, "red");
+  assert.deepEqual(flagged.body.reasons.find((x) => x.code === "AUTHORIZATION_TO_FLAGGED_CONTRACT").details, { flags: ["phishing_activities", "drainer"] });
+  const unverified = await check({ type: "authorization", chainId: 8453, address: UNVERIFIED_IMPL });
+  assert.equal(unverified.body.verdict, "red");
+  assert.ok(codes(unverified).includes("AUTHORIZATION_TO_UNVERIFIED_CONTRACT"));
+  const empty = await check({ type: "authorization", chainId: 8453, address: UNDEPLOYED });
+  assert.equal(empty.body.verdict, "red");
+  assert.ok(codes(empty).includes("AUTHORIZATION_TO_NO_CONTRACT"));
+  assert.ok(!codes(empty).includes("AUTHORIZATION_TO_UNVERIFIED_CONTRACT"), "no code: nothing to verify");
+  const wallet = await check({ type: "authorization", chainId: 8453, address: DELEGATED });
+  assert.equal(wallet.body.reasons.find((x) => x.code === "AUTHORIZATION_TO_DELEGATED_WALLET").details.delegate, "0x" + "ab".repeat(20));
+});
+
+test("EIP-7702 authorization to a contract on GoPlus's trust list is green, unless it is valid on every chain", async () => {
+  const r = await check({ type: "authorization", chainId: 8453, address: TRUSTED_IMPL });
+  assert.equal(r.body.verdict, "green", JSON.stringify(r.body.reasons));
+  assert.equal(r.body.reasons.find((x) => x.code === "EIP7702_AUTHORIZATION").severity, "info");
+  assert.ok(codes(r).includes("ON_TRUST_LIST"));
+  const all = await check({ type: "authorization", chainId: 8453, address: TRUSTED_IMPL, authorizationChainId: 0 });
+  assert.equal(all.body.verdict, "orange");
+  assert.ok(codes(all).includes("AUTHORIZATION_ALL_CHAINS"));
+  assert.deepEqual(all.body.reasons.find((x) => x.code === "EIP7702_AUTHORIZATION").details, { chains: "all" });
+});
+
+test("EIP-7702 authorization: clearing a delegation is green; with from, the wallet's current delegation is shown", async () => {
+  const calls = goplusCalls;
+  const clear = await check({ type: "authorization", chainId: 8453, address: "0x0000000000000000000000000000000000000000", from: DELEGATED });
+  assert.equal(clear.body.verdict, "green", JSON.stringify(clear.body.reasons));
+  assert.ok(codes(clear).includes("REVOKES_DELEGATION"));
+  assert.equal(goplusCalls, calls, "nothing to look up");
+  const cur = clear.body.reasons.find((x) => x.code === "CURRENT_DELEGATION");
+  assert.deepEqual([cur.subject, cur.details], [DELEGATED, { delegate: "0x" + "ab".repeat(20) }]);
+  const same = await check({ type: "authorization", chainId: 8453, address: "0x" + "ab".repeat(20), from: DELEGATED, nonce: "7" });
+  assert.equal(same.body.reasons.find((x) => x.code === "CURRENT_DELEGATION").details.unchanged, true);
+  assert.equal(same.body.subject.nonce, "7");
+});
+
+test("EIP-7702 authorization: chain RPC down is orange (code unknown); bad input is a 400", async () => {
+  rpcDown = true;
+  try {
+    const r = await check({ type: "authorization", chainId: 8453, address: "0x2222222222222222222222222222222222222277" });
+    assert.equal(r.status, 200);
+    assert.ok(codes(r).includes("DELEGATE_CODE_UNKNOWN"));
+    assert.equal(r.body.verdict, "orange");
+  } finally {
+    rpcDown = false;
+  }
+  for (const body of [
+    { type: "authorization", chainId: 8453 },
+    { type: "authorization", chainId: 8453, address: GOOD, authorizationChainId: 1 },
+    { type: "authorization", address: GOOD },
+  ]) {
+    const bad = await check(body);
+    assert.equal(bad.status, 400, JSON.stringify(body));
+    assert.equal(bad.body.verdict, null);
+  }
 });
 
 test("UPGRADEABLE_PROXY only when the chain confirms it: EIP-1967 slot or EIP-1167 clone, naming what it points to", async () => {
