@@ -3,12 +3,12 @@ name: presign-guard MCP Space on Hugging Face
 # Publishes hf-mcp/ as a Gradio Space that is also an MCP server (<token owner>/presign-guard, or the variable
 # HF_MCP_SPACE): three free tools around presign-guard (an OFAC screen of its open list, the free token and pre-sign
 # verdicts). The Space never pays, signs or holds a key.
-# Pull requests only run the offline tests; master publishes when hf-mcp/ or this workflow changes, and by hand.
+# Pull requests only run the offline tests; main publishes when hf-mcp/ or this workflow changes, and by hand.
 # Needs the repository secret HF_TOKEN (a write token that may create repos), on an account with Hugging Face PRO:
 # Gradio Spaces are hosted only for PRO accounts. Without it the run warns and publishes nothing.
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths: [hf-mcp/**, .github/workflows/hf-mcp-space.yml]
   pull_request:
     paths: [hf-mcp/**, .github/workflows/hf-mcp-space.yml]
