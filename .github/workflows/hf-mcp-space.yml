@@ -1,0 +1,89 @@
+name: presign-guard MCP Space on Hugging Face
+
+# Publishes hf-mcp/ as a Gradio Space that is also an MCP server (<token owner>/presign-guard, or the variable
+# HF_MCP_SPACE): three free tools around presign-guard (an OFAC screen of its open list, the free token and pre-sign
+# verdicts). The Space never pays, signs or holds a key.
+# Pull requests only run the offline tests; master publishes when hf-mcp/ or this workflow changes, and by hand.
+# Needs the repository secret HF_TOKEN (a write token that may create repos), on an account with Hugging Face PRO:
+# Gradio Spaces are hosted only for PRO accounts. Without it the run warns and publishes nothing.
+on:
+  push:
+    branches: [master]
+    paths: [hf-mcp/**, .github/workflows/hf-mcp-space.yml]
+  pull_request:
+    paths: [hf-mcp/**, .github/workflows/hf-mcp-space.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-mcp-space
+  cancel-in-progress: false
+
+jobs:
+  space:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Offline tests
+        working-directory: hf-mcp
+        run: |
+          pip install -q -r requirements.txt
+          python -m unittest -v test_app
+      - name: Publish
+        id: publish
+        if: github.event_name != 'pull_request'
+        run: |
+          if [ -z "$HF_TOKEN" ]; then echo "No HF_TOKEN secret, nothing to publish." >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          pip install -q "huggingface_hub>=0.34,<2"
+          repo="${{ vars.HF_MCP_SPACE }}"
+          [ -n "$repo" ] || repo="$(python -c 'from huggingface_hub import whoami; print(whoami()["name"])')/presign-guard"
+          # Hugging Face hosts Gradio Spaces only on a PRO account (402 on create): then warn and wait, don't fail.
+          if REPO="$repo" python - <<'PY'
+          import os, sys
+          from huggingface_hub import HfApi
+          from huggingface_hub.errors import HfHubHTTPError
+          api = HfApi()
+          repo = os.environ["REPO"]
+          try:
+              api.create_repo(repo, repo_type="space", space_sdk="gradio", exist_ok=True)
+          except HfHubHTTPError as err:
+              if getattr(err.response, "status_code", None) == 402:
+                  sys.exit(3)
+              raise
+          api.upload_folder(repo_id=repo, repo_type="space", folder_path="hf-mcp", commit_message="presign-guard MCP Space", ignore_patterns=["test_*.py", "__pycache__/*"])
+          PY
+          then
+            echo "repo=$repo" >> "$GITHUB_OUTPUT"
+            echo "Published https://huggingface.co/spaces/$repo (MCP: https://$(echo "$repo" | tr '/' '-' | tr 'A-Z' 'a-z').hf.space/gradio_api/mcp/)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            code=$?
+            [ "$code" = 3 ] || exit "$code"
+            echo "::warning title=Space not published::Hugging Face hosts Gradio Spaces only on a PRO account. hf-mcp/ waits until the account of HF_TOKEN has PRO; then run this workflow again."
+            echo "Not published: Hugging Face hosts Gradio Spaces only on a PRO account (huggingface.co/pro). The Space is ready in hf-mcp/." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Collection
+        if: github.event_name != 'pull_request' && steps.publish.outputs.repo != ''
+        env:
+          REPO: ${{ steps.publish.outputs.repo }}
+        run: |
+          python - <<'PY' 2> collection-error.txt || { cat collection-error.txt; echo "::warning title=Collection skipped::$(tail -n 1 collection-error.txt | cut -c1-300)"; }
+          import os
+          from huggingface_hub import add_collection_item, create_collection
+          repo = os.environ["REPO"]
+          collection = create_collection(
+              title="x402 agent payments",
+              namespace=repo.split("/")[0],
+              description="Open data on AI agents paying APIs with x402: payable endpoints, real purchases, agent payment safety. By x402 Doctor (fizzl.eu).",
+              exists_ok=True,
+          )
+          add_collection_item(collection.slug, item_id=repo, item_type="space", exists_ok=True)
+          print(f"collection: https://huggingface.co/collections/{collection.slug}")
+          PY
