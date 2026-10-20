@@ -183,3 +183,93 @@ test("credentials (XLS-70): issuing one for another account is orange; accepting
   await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "CredentialAccept", Account: ME, Issuer: OTHER, CredentialType: "KYC" } }), /CredentialType must be hex/);
   await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "CredentialCreate", Account: ME, Subject: "rNotAnAddress", CredentialType: KYC } }), /Subject/);
 });
+
+const THIRD = "rPT1Sjq2YGrBMTttX4GZHjKu9dyfzbpAYe";
+const INNER = 0x40000000; // tfInnerBatchTxn
+const batch = (flags, ...inner) => ({ TransactionType: "Batch", Flags: flags, RawTransactions: inner.map((t) => ({ RawTransaction: { Account: ME, Flags: INNER, Fee: "0", SigningPubKey: "", ...t } })) });
+
+test("Batch (XLS-56): every inner transaction is judged, so a takeover can't hide in one", async () => {
+  const pay = { TransactionType: "Payment", Destination: OTHER, Amount: "15000" };
+  const plain = await run(batch(0x00010000, pay, { ...pay, Amount: "20000" }), { accounts: { [OTHER]: {} } });
+  assert.equal(plain.verdict, "green");
+  assert.deepEqual(codes(plain), ["info:XRPL_BATCH"]);
+  assert.deepEqual(plain.reasons[0].details, { mode: "tfAllOrNothing", transactions: ["Payment", "Payment"] });
+
+  const hidden = await run(batch(0x00080000, pay, { TransactionType: "SetRegularKey", RegularKey: OTHER }), { accounts: { [OTHER]: {} } });
+  assert.equal(hidden.verdict, "red");
+  const r = hidden.reasons.find((x) => x.code === "XRPL_REGULAR_KEY_CHANGE");
+  assert.equal(r.details.inner, 1);
+  assert.equal(r.details.account, undefined, "the signer's own inner transaction");
+
+  // The same refusing destination in two inner payments: a reason for each, by its place.
+  const tagged = await run(batch(0x00080000, pay, pay), { accounts: { [OTHER]: { flags: 0x00020000 } } });
+  assert.deepEqual(tagged.reasons.filter((x) => x.code === "XRPL_DESTINATION_TAG_MISSING").map((x) => x.details.inner), [0, 1]);
+  // xrpl.js flag objects are read too.
+  assert.equal((await run({ ...batch(0, pay, pay), Flags: { tfAllOrNothing: true } }, { accounts: { [OTHER]: {} } })).verdict, "green");
+});
+
+test("Batch: another account's part without all-or-nothing is orange; its takeover is red, with the account", async () => {
+  const mine = { TransactionType: "Payment", Destination: OTHER, Amount: "5000000" };
+  const theirs = { TransactionType: "Payment", Account: OTHER, Destination: ME, Amount: "5000000" };
+  const accounts = { [OTHER]: {}, [ME]: {} };
+  const swap = await run({ ...batch(0x00080000, mine, theirs), BatchSigners: [{ BatchSigner: { Account: OTHER, SigningPubKey: "" } }] }, { accounts });
+  assert.deepEqual(codes(swap), ["info:XRPL_BATCH", "orange:XRPL_BATCH_NOT_ATOMIC"]);
+  assert.deepEqual(swap.reasons[1].details.accounts, [ME, OTHER]);
+  assert.equal(swap.reasons[1].details.mode, "tfIndependent");
+  for (const flags of [0x00020000, 0x00040000]) assert.equal((await run(batch(flags, mine, theirs), { accounts })).verdict, "orange");
+  assert.equal((await run(batch(0x00010000, mine, theirs), { accounts })).verdict, "green", "all or nothing: both parts or neither");
+
+  const takeover = await run(batch(0x00010000, mine, { TransactionType: "AccountDelete", Account: OTHER, Destination: THIRD }), { accounts: { ...accounts, [THIRD]: {} } });
+  const del = takeover.reasons.find((x) => x.code === "XRPL_ACCOUNT_DELETE");
+  assert.deepEqual([del.severity, del.details.inner, del.details.account], ["red", 1, OTHER]);
+});
+
+test("Batch: the request must be one the ledger accepts", async () => {
+  const pay = { TransactionType: "Payment", Destination: OTHER, Amount: "15000" };
+  const parse = (tx) => parseXrplRequest({ type: "xrpl", tx: { Account: ME, ...tx } });
+  await assert.rejects(parse(batch(0x00010000, pay)), /2 to 8 transactions/);
+  await assert.rejects(parse(batch(0x00010000, ...Array(9).fill(pay))), /2 to 8 transactions/);
+  await assert.rejects(parse({ TransactionType: "Batch", Flags: 0x00010000 }), /RawTransactions/);
+  await assert.rejects(parse(batch(0x00010000, pay, batch(0x00010000, pay, pay))), /can't contain another Batch/);
+  await assert.rejects(parse(batch(0, pay, pay)), /exactly one batch mode/);
+  await assert.rejects(parse(batch(0x00010000 | 0x00080000, pay, pay)), /exactly one batch mode/);
+  await assert.rejects(parse(batch(0x00010000, pay, { ...pay, Destination: "rNope" })), /RawTransactions\[1\]\.RawTransaction\.Destination/);
+  await assert.rejects(parse({ ...batch(0x00010000, pay, pay), BatchSigners: [{ BatchSigner: { Account: "0xabc" } }] }), /BatchSigners\[0\]/);
+});
+
+test("DelegateSet (XLS-75): permissions that move funds are red, others orange, removing them is info", async () => {
+  const delegate = (...values) => ({ TransactionType: "DelegateSet", Authorize: OTHER, Permissions: values.map((PermissionValue) => ({ Permission: { PermissionValue } })) });
+  const accounts = { [OTHER]: {} };
+  const pay = await run(delegate("Payment", "TrustlineAuthorize"), { accounts });
+  assert.deepEqual(codes(pay), ["red:XRPL_DELEGATE_FUNDS"]);
+  assert.deepEqual([pay.reasons[0].subject, pay.reasons[0].details.movesFunds, pay.reasons[0].details.permissions], [OTHER, ["Payment"], ["Payment", "TrustlineAuthorize"]]);
+  for (const v of ["CheckCreate", "EscrowCreate", "PaymentChannelCreate", "OfferCreate", "NFTokenAcceptOffer", "PaymentMint", 1, 17]) {
+    assert.equal((await run(delegate(v), { accounts })).verdict, "red", String(v));
+  }
+  assert.deepEqual((await run(delegate(1), { accounts })).reasons[0].details.permissions, ["Payment"], "a number is a transaction type's code + 1");
+  const domain = await run(delegate("AccountDomainSet", 65537), { accounts });
+  assert.deepEqual(codes(domain), ["orange:XRPL_DELEGATE_SET"]);
+  assert.deepEqual(domain.reasons[0].details.permissions, ["AccountDomainSet", "TrustlineAuthorize"]);
+  const removed = await run(delegate(), { accounts });
+  assert.equal(removed.verdict, "green"); assert.deepEqual(codes(removed), ["info:XRPL_DELEGATE_REMOVED"]);
+  assert.ok(codes(await run(delegate("AccountDomainSet"))).includes("orange:XRPL_DELEGATE_NOT_FOUND"), "a delegate that doesn't exist: it fails");
+
+  // Inside a Batch, too.
+  const inBatch = await run(batch(0x00010000, { TransactionType: "Payment", Destination: OTHER, Amount: "15000" }, delegate("Payment")), { accounts });
+  assert.equal(inBatch.reasons.find((x) => x.code === "XRPL_DELEGATE_FUNDS").details.inner, 1);
+
+  const parse = (tx) => parseXrplRequest({ type: "xrpl", tx: { Account: ME, ...tx } });
+  await assert.rejects(parse(delegate("SetRegularKey")), /SetRegularKey can't be delegated/);
+  await assert.rejects(parse(delegate(6)), /SetRegularKey can't be delegated/);
+  await assert.rejects(parse(delegate("Payment", "Payment")), /twice/);
+  await assert.rejects(parse(delegate(...Array.from({ length: 11 }, (_, i) => `P${i}`))), /at most 10/);
+  await assert.rejects(parse({ ...delegate("Payment"), Authorize: ME }), /Authorize is required/);
+  await assert.rejects(parse({ TransactionType: "DelegateSet", Authorize: OTHER }), /Permissions/);
+  await assert.rejects(parse({ ...delegate("Payment"), Authorize: "rNope" }), /Authorize must be a valid XRPL address/);
+});
+
+test("an MPT amount is shown as it is", async () => {
+  const mpt = { mpt_issuance_id: "00000004A407AF5856CCF3C42619DAA925813FC955C72983", value: "100" };
+  const r = await run({ TransactionType: "Payment", Destination: OTHER, Amount: mpt }, { accounts: { [OTHER]: {} } });
+  assert.deepEqual(r.subject.amount, mpt);
+});
