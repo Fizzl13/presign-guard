@@ -185,6 +185,7 @@ app.get("/", (_req, res) => res.json({
   listings: {
     smithery: "https://smithery.ai/servers/frits-zwager/presign-guard",
     agentic_market: "https://agentic.market/services/presign-guard-fizzl-eu",
+    mcpservers: "https://mcpservers.org/servers/presign-guard-fizzl-eu",
   },
   openapi: `${PUBLIC_URL}/openapi.json`,
   signer: `${PUBLIC_URL}/.well-known/presign-guard-signer.json`,
