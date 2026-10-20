@@ -2,19 +2,19 @@
 //
 //   { type: "xrpl", network?: "xrpl:0" | "xrpl:1", tx: { TransactionType, Account, ... }, origin? }
 //
-// What hurts people on the XRPL is rarely a token approval (there are none): it is handing over the account.
-// A SetRegularKey or SignerListSet to someone else's key, or AccountSet disabling the master key, gives the
-// account away for good; AccountDelete sends all its XRP to the Destination. Those are red. Orange: a payment
-// that will fail or may deliver less than it says (partial payment), a destination that refuses it, a trust line
-// to an issuer that can claw tokens back or has frozen them, an escrow or NFT offer that hands value to someone
-// else, a transaction type this check does not judge. A token called RLUSD that isn't Ripple's is red. Credentials
-// (XLS-70): issuing one for another account is orange (you vouch for it); accepting one is info, or orange when there
-// is nothing valid to accept and the transaction would fail. A Batch (XLS-56) is judged by every transaction inside it,
-// so a takeover can't hide in one; inner transactions of other accounts without all-or-nothing are orange (your part
-// can go through while theirs fails). Permission delegation (XLS-75): a DelegateSet that lets another account send
-// payments, checks, escrows, channels, DEX orders or NFT trades for you is red, other permissions orange. MPTs (XLS-33):
-// opting in to hold one gets the trust-line issuer checks; a ticker of RLUSD not issued by Ripple is red; a payment
-// that would fail (locked, not transferable, a destination that hasn't opted in or isn't authorised) is orange.
+// What hurts people on the XRPL is rarely a token approval (there are none): it is handing over the account. A
+// SetRegularKey or SignerListSet to someone else's key, or AccountSet disabling the master key, gives the account away
+// for good; AccountDelete sends all its XRP to the Destination. Those are red. Orange: a payment that will fail or may
+// deliver less than it says (partial payment), a destination that refuses it, a trust line to an issuer that can claw
+// tokens back or has frozen them, an escrow, check, payment channel or NFT offer that hands value to someone else, a
+// transaction type this check does not judge. A token called RLUSD that isn't Ripple's is red. Credentials (XLS-70):
+// issuing one for another account is orange (you vouch for it); accepting one is info, or orange when there is nothing
+// valid to accept and the transaction would fail. A Batch (XLS-56) is judged by every transaction inside it, so a
+// takeover can't hide in one; inner transactions of other accounts without all-or-nothing are orange (your part can go
+// through while theirs fails). Permission delegation (XLS-75): a DelegateSet that lets another account send payments,
+// checks, escrows, channels, DEX orders or NFT trades for you is red, other permissions orange. MPTs (XLS-33): opting
+// in to hold one gets the trust-line issuer checks; a ticker of RLUSD not issued by Ripple is red; a payment that would
+// fail (locked, not transferable, a destination that hasn't opted in or isn't authorised) is orange.
 // The ledger is read through public JSON-RPC (no key); when it can't be reached the check says so (info) and the
 // rules that need no ledger still apply. Fail-closed as in presign-guard.js: errors are non-2xx, never "green".
 
@@ -51,8 +51,8 @@ export const credentialName = (hex) => {
 };
 
 // Types judged by a rule below, and everyday types with nothing to flag on their own.
-const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept", "Batch", "DelegateSet", "MPTokenAuthorize"]);
-const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete", "MPTokenIssuanceCreate", "MPTokenIssuanceDestroy", "MPTokenIssuanceSet"]);
+const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept", "Batch", "DelegateSet", "MPTokenAuthorize", "CheckCreate", "PaymentChannelCreate", "PaymentChannelFund"]);
+const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete", "MPTokenIssuanceCreate", "MPTokenIssuanceDestroy", "MPTokenIssuanceSet", "PaymentChannelClaim", "DepositPreauth", "Clawback", "AMMClawback", "AMMDelete", "DIDSet", "DIDDelete", "OracleSet", "OracleDelete", "NFTokenModify"]);
 
 // Batch (XLS-56): 2 to 8 inner transactions, exactly one mode flag, at most 24 batch signers.
 const BATCH_MODES = [["tfAllOrNothing", 0x00010000], ["tfOnlyOne", 0x00020000], ["tfUntilFailure", 0x00040000], ["tfIndependent", 0x00080000]];
@@ -130,6 +130,7 @@ function validateTx(tx, at) {
   for (const field of ["Destination", "RegularKey", "Holder", ...(credential ? ["Subject", "Issuer"] : []), ...(delegate ? ["Authorize"] : [])]) {
     if (tx[field] !== undefined && !isXrplAddress(tx[field])) throw new XrplValidationError(`${at}.${field} must be a valid XRPL address (r…)`);
   }
+  if (tx.TransactionType === "PaymentChannelFund" && !/^[0-9A-Fa-f]{64}$/.test(String(tx.Channel ?? ""))) throw new XrplValidationError(`${at}.Channel must be the channel's 64-character hex ID`);
   if (tx.TransactionType === "MPTokenAuthorize" && !MPT_ID.test(String(tx.MPTokenIssuanceID ?? ""))) throw new XrplValidationError(`${at}.MPTokenIssuanceID must be 48 hex characters`);
   for (const field of ["Amount", "SendMax", "DeliverMin"]) {
     if (isMpt(tx[field]) && !MPT_ID.test(tx[field].mpt_issuance_id)) throw new XrplValidationError(`${at}.${field}.mpt_issuance_id must be 48 hex characters`);
@@ -400,6 +401,23 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       add("XRPL_ESCROW_TO_OTHER", "orange", tx.Destination, { amount: tx.Amount, effect: "locks the XRP until it is released to the destination, not back to you", ...(tx.FinishAfter && { finishAfter: tx.FinishAfter }), ...(tx.CancelAfter && { cancelAfter: tx.CancelAfter }) });
     }
 
+    // A check or payment channel to someone else: like an escrow, the value can then go to the destination without
+    // another signature (a check up to SendMax; a channel up to Amount, with claims signed by the channel's key).
+    if (type === "CheckCreate" && tx.Destination && tx.Destination !== tx.Account) {
+      add("XRPL_CHECK_TO_OTHER", "orange", tx.Destination, { sendMax: tx.SendMax, ...(tx.Expiration !== undefined && { expires: rippleTime(tx.Expiration) }), effect: "the destination can cash up to SendMax from your account until the check expires or you cancel it" });
+    }
+    if (type === "PaymentChannelCreate" && tx.Destination && tx.Destination !== tx.Account) {
+      add("XRPL_CHANNEL_TO_OTHER", "orange", tx.Destination, { amount: tx.Amount, settleDelay: tx.SettleDelay, effect: "locks the XRP in a payment channel the destination claims from with claims signed by PublicKey; if that key isn't yours, whoever holds it can let the destination take all of it" });
+    }
+    if (type === "PaymentChannelFund" && tx.Channel) {
+      const channel = await ledgerEntry({ payment_channel: tx.Channel });
+      if (channel === null) add("XRPL_CHANNEL_NOT_FOUND", "orange", tx.Channel, { effect: "there is no such payment channel, so the transaction fails" });
+      else if (channel && channel.Destination && channel.Destination !== tx.Account) {
+        add("XRPL_CHANNEL_TO_OTHER", "orange", channel.Destination, { amount: tx.Amount, channel: tx.Channel, effect: "adds the XRP to a payment channel this destination claims from" });
+        parties.push(channel.Destination);
+      }
+    }
+
     if (type === "NFTokenCreateOffer" && Number(tx.Flags) & TF_SELL_NFTOKEN && (tx.Amount === "0" || tx.Amount === 0 || (isIssued(tx.Amount) && Number(tx.Amount.value) === 0))) {
       add("XRPL_NFT_GIVEAWAY", "orange", tx.Destination ?? null, { effect: "offers the NFT for nothing; whoever accepts it gets it for free" });
     }
@@ -537,7 +555,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : typeof tx.Amount === "object" ? tx.Amount : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, Batch transactions (every inner transaction judged; batches of several accounts that aren't all-or-nothing), permission delegation (DelegateSet that lets another account move funds), MPTs (opting in to one whose issuer can claw back, has locked it or charges a fee; fake RLUSD tickers; payments that would fail), every destination, new key, signer, delegate and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows, checks, payment channels and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, Batch transactions (every inner transaction judged; batches of several accounts that aren't all-or-nothing), permission delegation (DelegateSet that lets another account move funds), MPTs (opting in to one whose issuer can claw back, has locked it or charges a fee; fake RLUSD tickers; payments that would fail), every destination, new key, signer, delegate and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
     sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
     checkedAt: new Date().toISOString(),
   };

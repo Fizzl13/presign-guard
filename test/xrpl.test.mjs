@@ -11,13 +11,16 @@ const FAKE = "rrrrrrrrrrrrrrrrrrrrBZbvji";
 const RLUSD = "524C555344000000000000000000000000000000";
 
 // accounts: address -> { flags, transferRate } or null (= not found); lines: address -> [currency…]
-// mpts: issuance id -> { Flags, TransferFee, MPTokenMetadata }; holdings: "id|account" -> { Flags }
-function ledger({ accounts = {}, lines = {}, credentials = {}, mpts = {}, holdings = {}, down = false } = {}) {
+// mpts: issuance id -> { Flags, TransferFee, MPTokenMetadata }; holdings: "id|account" -> { Flags }; channels: id -> { Destination }
+function ledger({ accounts = {}, lines = {}, credentials = {}, mpts = {}, holdings = {}, channels = {}, down = false } = {}) {
   return async (_url, init) => {
     if (down) throw new Error("node down");
     const { method, params: [p] } = JSON.parse(init.body);
     let result;
-    if (method === "ledger_entry" && p.mpt_issuance) {
+    if (method === "ledger_entry" && p.payment_channel) {
+      const c = channels[p.payment_channel];
+      result = c ? { node: { LedgerEntryType: "PayChannel", ...c } } : { error: "entryNotFound" };
+    } else if (method === "ledger_entry" && p.mpt_issuance) {
       const m = mpts[p.mpt_issuance];
       result = m ? { node: { LedgerEntryType: "MPTokenIssuance", Flags: 0, ...m } } : { error: "entryNotFound" };
     } else if (method === "ledger_entry" && p.mptoken) {
@@ -84,7 +87,7 @@ test("trust lines: clawback, frozen issuer, transfer fee, fake RLUSD; Ripple's R
 test("escrow to someone else, NFT for nothing and unknown types are orange; a ledger outage is info", async () => {
   assert.equal((await run({ TransactionType: "EscrowCreate", Destination: OTHER, Amount: "1000000", FinishAfter: 900000000 })).reasons[0].code, "XRPL_ESCROW_TO_OTHER");
   assert.equal((await run({ TransactionType: "NFTokenCreateOffer", NFTokenID: "00", Amount: "0", Flags: 1 })).reasons[0].code, "XRPL_NFT_GIVEAWAY");
-  assert.equal((await run({ TransactionType: "Clawback" })).reasons[0].code, "XRPL_TX_NOT_ANALYZED");
+  assert.equal((await run({ TransactionType: "VaultCreate" })).reasons[0].code, "XRPL_TX_NOT_ANALYZED");
   assert.equal((await run({ TransactionType: "OfferCreate" })).verdict, "green");
   const down = await analyzeXrpl(await parseXrplRequest({ type: "xrpl", tx: { TransactionType: "Payment", Account: ME, Destination: OTHER, Amount: "15000" } }), { fetchImpl: ledger({ down: true }) });
   assert.deepEqual(codes(down), ["info:XRPL_LEDGER_UNAVAILABLE"]);
@@ -341,4 +344,20 @@ test("MPTs: a payment that would fail is orange (locked, not transferable, desti
   assert.deepEqual([codes(lockedHolder), lockedHolder.reasons[0].subject], [["orange:XRPL_MPT_LOCKED"], OTHER]);
   assert.deepEqual(codes(await run(pay, { mpts: ok.mpts })), ["orange:XRPL_DESTINATION_NOT_ACTIVATED"], "no account, no holding lookup");
   await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { ...pay, Account: ME, Amount: { mpt_issuance_id: "12", value: "1" } } }), /mpt_issuance_id must be 48 hex/);
+});
+
+test("checks and payment channels to someone else are orange; everyday types without risk are green", async () => {
+  const check = await run({ TransactionType: "CheckCreate", Destination: OTHER, SendMax: "5000000" });
+  assert.deepEqual(codes(check), ["orange:XRPL_CHECK_TO_OTHER"]);
+  assert.equal(check.reasons[0].details.sendMax, "5000000");
+  const channel = await run({ TransactionType: "PaymentChannelCreate", Destination: OTHER, Amount: "10000000", SettleDelay: 86400, PublicKey: "ED" + "00".repeat(32) });
+  assert.deepEqual(codes(channel), ["orange:XRPL_CHANNEL_TO_OTHER"]);
+  const id = "AB".repeat(32);
+  const fund = await run({ TransactionType: "PaymentChannelFund", Channel: id, Amount: "1000000" }, { channels: { [id]: { Account: ME, Destination: OTHER } } });
+  assert.deepEqual([codes(fund), fund.reasons[0].subject, fund.reasons[0].details.channel], [["orange:XRPL_CHANNEL_TO_OTHER"], OTHER, id]);
+  assert.deepEqual(codes(await run({ TransactionType: "PaymentChannelFund", Channel: id, Amount: "1000000" })), ["orange:XRPL_CHANNEL_NOT_FOUND"]);
+  await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "PaymentChannelFund", Account: ME, Channel: "12", Amount: "1" } }), /Channel must be/);
+  for (const t of ["PaymentChannelClaim", "DepositPreauth", "Clawback", "AMMClawback", "AMMDelete", "DIDSet", "DIDDelete", "OracleSet", "OracleDelete", "NFTokenModify"]) {
+    assert.equal((await run({ TransactionType: t })).verdict, "green", t);
+  }
 });
