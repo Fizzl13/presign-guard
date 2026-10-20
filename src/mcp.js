@@ -54,7 +54,7 @@ const CHECK_INPUT = {
   method: z.enum(["personal_sign", "eth_sign"]).optional().describe("message: how it is signed (default personal_sign); eth_sign is always red"),
   message: z.string().max(16384).optional().describe("message: the text or 0x-hex about to be signed; a Sign-In with Ethereum message for another site than origin is red, unreadable bytes are orange"),
   network: z.enum(Object.keys(XRPL_NETWORKS)).optional().describe("xrpl: xrpl:0 (mainnet, default) or xrpl:1 (testnet)"),
-  tx: z.record(z.any()).optional().describe("xrpl: the unsigned transaction JSON (TransactionType, Account, Destination, Amount, …), including CredentialCreate and CredentialAccept"),
+  tx: z.record(z.any()).optional().describe("xrpl: the unsigned transaction JSON (TransactionType, Account, Destination, Amount, …), including CredentialCreate, CredentialAccept, DelegateSet and Batch (every inner transaction is judged)"),
   token: z.string().optional().describe("approval: the token contract"),
   spender: z.string().optional().describe("approval: who gets the allowance"),
   amount: z.string().optional().describe("approval: amount in base units (0 = revoke)"),
