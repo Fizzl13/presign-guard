@@ -112,6 +112,8 @@ The three check tools also take an XRP Ledger transaction: `{"type": "xrpl", "tx
 
 The paid tools are paid inside the MCP call with the x402 MCP transport (`_meta["x402/payment"]`), in USDC on Base, Solana or Algorand or in RLUSD on the XRP Ledger, to the same payout wallets as the HTTP routes. Invalid input is refused before payment, and a failed check is not charged.
 
+On Hugging Face, the Space [x402Fizzl/presign-guard](https://huggingface.co/spaces/x402Fizzl/presign-guard) ([`hf-mcp/`](hf-mcp), published by [`hf-mcp-space.yml`](.github/workflows/hf-mcp-space.yml)) is a Gradio app that is also an MCP server (`https://x402fizzl-presign-guard.hf.space/gradio_api/mcp/`, or added under Hugging Face's MCP settings), with three free tools: `screen_address` (an OFAC screen against the open list of `GET /v1/sanctions`, matched in the Space and so unlimited), `token_quick_verdict` and `presign_quick_check`. The last two share the free limit above, with the whole Space as one caller. It never pays or holds a key. Publishing needs the repository secret `HF_TOKEN` (a write token of a Hugging Face PRO account; Gradio Spaces need PRO); the variable `HF_MCP_SPACE` overrides the name.
+
 ## Token verdict
 
 [![Token verdict video](public/media/token.jpg)](https://presign-guard.fizzl.eu/media/token.mp4)
