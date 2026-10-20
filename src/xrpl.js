@@ -14,7 +14,11 @@
 // through while theirs fails). Permission delegation (XLS-75): a DelegateSet that lets another account send payments,
 // checks, escrows, channels, DEX orders or NFT trades for you is red, other permissions orange. MPTs (XLS-33): opting
 // in to hold one gets the trust-line issuer checks; a ticker of RLUSD not issued by Ripple is red; a payment that would
-// fail (locked, not transferable, a destination that hasn't opted in or isn't authorised) is orange.
+// fail (locked, not transferable, a destination that hasn't opted in or isn't authorised) is orange. Vaults (XLS-65)
+// and lending (XLS-66): a deposit into a vault that lends it out without collateral, into a fixed-term fund that locks
+// it, or into a vault with a paper loss is orange, as is a withdrawal to another account; a loan's terms are shown,
+// and one that costs the borrower more than 36% a year with its fees is orange; vault, loan and payment transactions
+// that would fail are orange.
 // The ledger is read through public JSON-RPC (no key); when it can't be reached the check says so (info) and the
 // rules that need no ledger still apply. Fail-closed as in presign-guard.js: errors are non-2xx, never "green".
 
@@ -44,6 +48,19 @@ const LSF_MPTOKEN_AUTHORIZED = 0x02;
 const TF_MPT_UNAUTHORIZE = 0x01;
 const RIPPLE_EPOCH = 946684800; // XRPL times are seconds since 2000-01-01
 const rippleTime = (t) => new Date((Number(t) + RIPPLE_EPOCH) * 1000).toISOString();
+const rippleNow = () => Math.floor(Date.now() / 1000) - RIPPLE_EPOCH;
+// Single Asset Vaults (XLS-65) and the Lending Protocol (XLS-66): a private vault, a closed-ended vault (a fixed-term
+// fund, LendingProtocolV1_1), LoanPay's late-payment flag. Rates are in 1/10 basis points (100000 = 100%) per year.
+const LSF_VAULT_PRIVATE = 0x00010000;
+const VAULT_CLOSED_ENDED = 1;
+const TF_LOAN_LATE_PAYMENT = 0x00040000;
+const RATE_UNIT = 1000; // 1/10 basis points per percent
+const SECONDS_PER_YEAR = 31_536_000;
+// A loan that costs the borrower more than this a year, interest and fees together, is flagged.
+const LOAN_COSTLY_PCT = 36;
+const LEDGER_ID = /^[0-9A-Fa-f]{64}$/;
+const pct = (part, whole) => (whole > 0 ? Math.round((part / whole) * 1000) / 10 : 0);
+const span = (s) => (s >= 86400 ? `${Math.round((s / 86400) * 10) / 10} days` : s >= 3600 ? `${Math.round((s / 3600) * 10) / 10} hours` : s >= 60 ? `${Math.round(s / 6) / 10} minutes` : `${s} seconds`);
 // A credential type is hex; show it as text when it is readable.
 export const credentialName = (hex) => {
   const text = Buffer.from(String(hex), "hex").toString("utf8");
@@ -51,8 +68,12 @@ export const credentialName = (hex) => {
 };
 
 // Types judged by a rule below, and everyday types with nothing to flag on their own.
-const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept", "Batch", "DelegateSet", "MPTokenAuthorize", "CheckCreate", "PaymentChannelCreate", "PaymentChannelFund"]);
-const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete", "MPTokenIssuanceCreate", "MPTokenIssuanceDestroy", "MPTokenIssuanceSet", "PaymentChannelClaim", "DepositPreauth", "Clawback", "AMMClawback", "AMMDelete", "DIDSet", "DIDDelete", "OracleSet", "OracleDelete", "NFTokenModify"]);
+const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept", "Batch", "DelegateSet", "MPTokenAuthorize", "CheckCreate", "PaymentChannelCreate", "PaymentChannelFund", "VaultDeposit", "VaultWithdraw", "LoanSet", "LoanPay", "LoanBrokerCoverWithdraw"]);
+// The vault and lending types here only touch the sender's own vault, loan broker or loan, or are the asset issuer's
+// clawbacks.
+const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete", "MPTokenIssuanceCreate", "MPTokenIssuanceDestroy", "MPTokenIssuanceSet", "PaymentChannelClaim", "DepositPreauth", "Clawback", "AMMClawback", "AMMDelete", "DIDSet", "DIDDelete", "OracleSet", "OracleDelete", "NFTokenModify", "VaultCreate", "VaultSet", "VaultDelete", "VaultClawback", "LoanBrokerSet", "LoanBrokerDelete", "LoanBrokerCoverDeposit", "LoanBrokerCoverClawback", "LoanDelete", "LoanManage"]);
+// Withdrawals that can send the assets to another account than the one signing.
+const WITHDRAWS = new Set(["VaultWithdraw", "LoanBrokerCoverWithdraw"]);
 
 // Batch (XLS-56): 2 to 8 inner transactions, exactly one mode flag, at most 24 batch signers.
 const BATCH_MODES = [["tfAllOrNothing", 0x00010000], ["tfOnlyOne", 0x00020000], ["tfUntilFailure", 0x00040000], ["tfIndependent", 0x00080000]];
@@ -127,8 +148,29 @@ function validateTx(tx, at) {
   if (!isXrplAddress(tx.Account)) throw new XrplValidationError(`${at}.Account must be a valid XRPL address (r…)`);
   const credential = tx.TransactionType.startsWith("Credential");
   const delegate = tx.TransactionType === "DelegateSet";
-  for (const field of ["Destination", "RegularKey", "Holder", ...(credential ? ["Subject", "Issuer"] : []), ...(delegate ? ["Authorize"] : [])]) {
+  for (const field of ["Destination", "RegularKey", "Holder", "Counterparty", ...(credential ? ["Subject", "Issuer"] : []), ...(delegate ? ["Authorize"] : [])]) {
     if (tx[field] !== undefined && !isXrplAddress(tx[field])) throw new XrplValidationError(`${at}.${field} must be a valid XRPL address (r…)`);
+  }
+  for (const field of ["VaultID", "LoanBrokerID", "LoanID"]) {
+    if (tx[field] !== undefined && !LEDGER_ID.test(String(tx[field]))) throw new XrplValidationError(`${at}.${field} must be the 64-character hex ID of the ledger entry`);
+  }
+  const needs = { VaultDeposit: "VaultID", VaultWithdraw: "VaultID", LoanSet: "LoanBrokerID", LoanPay: "LoanID", LoanBrokerCoverWithdraw: "LoanBrokerID" }[tx.TransactionType];
+  if (needs && tx[needs] === undefined) throw new XrplValidationError(`${at}.${needs} is required`);
+  // The loan terms, as the ledger requires them (temINVALID otherwise), so the cost can be worked out.
+  if (tx.TransactionType === "LoanSet") {
+    const num = (v) => (typeof v === "string" || typeof v === "number") && String(v).trim() !== "" && Number.isFinite(Number(v));
+    if (!num(tx.PrincipalRequested) || Number(tx.PrincipalRequested) <= 0) throw new XrplValidationError(`${at}.PrincipalRequested must be a positive amount`);
+    for (const field of ["LoanOriginationFee", "LoanServiceFee", "LatePaymentFee", "ClosePaymentFee"]) {
+      if (tx[field] !== undefined && (!num(tx[field]) || Number(tx[field]) < 0)) throw new XrplValidationError(`${at}.${field} must be an amount of 0 or more`);
+    }
+    if (Number(tx.LoanOriginationFee ?? 0) > Number(tx.PrincipalRequested)) throw new XrplValidationError(`${at}.LoanOriginationFee can't be more than PrincipalRequested`);
+    for (const field of ["InterestRate", "LateInterestRate", "CloseInterestRate", "OverpaymentInterestRate", "OverpaymentFee"]) {
+      if (tx[field] !== undefined && !(Number.isInteger(tx[field]) && tx[field] >= 0 && tx[field] <= 100 * RATE_UNIT)) throw new XrplValidationError(`${at}.${field} must be 0 to 100000 (1/10 basis points: 100000 = 100%)`);
+    }
+    const total = tx.PaymentTotal ?? 1, interval = tx.PaymentInterval ?? 60, grace = tx.GracePeriod ?? 60;
+    if (!Number.isInteger(total) || total < 1) throw new XrplValidationError(`${at}.PaymentTotal must be a whole number of payments, at least 1`);
+    if (!Number.isInteger(interval) || interval < 60) throw new XrplValidationError(`${at}.PaymentInterval must be at least 60 seconds`);
+    if (!Number.isInteger(grace) || grace < 60 || grace > interval) throw new XrplValidationError(`${at}.GracePeriod must be 60 seconds to PaymentInterval`);
   }
   if (tx.TransactionType === "PaymentChannelFund" && !/^[0-9A-Fa-f]{64}$/.test(String(tx.Channel ?? ""))) throw new XrplValidationError(`${at}.Channel must be the channel's 64-character hex ID`);
   if (tx.TransactionType === "MPTokenAuthorize" && !MPT_ID.test(String(tx.MPTokenIssuanceID ?? ""))) throw new XrplValidationError(`${at}.MPTokenIssuanceID must be 48 hex characters`);
@@ -216,6 +258,49 @@ const round6 = (x) => Math.round(x * 1e6) / 1e6;
 const units = (a) => (isIssued(a) ? Number(a.value) : Number(a) / 1e6);
 const assetOf = (a) => (isIssued(a) ? { currency: a.currency, issuer: a.issuer } : { currency: "XRP" });
 
+// A vault's asset (an Issue: { currency: "XRP" }, { currency, issuer } or { mpt_issuance_id }) against an amount.
+const currencyKey = (c) => (isRlusdCode(c) ? RLUSD : String(c).toUpperCase());
+function sameAsset(amount, asset) {
+  if (!asset || typeof asset !== "object") return false;
+  if (isMpt(amount)) return amount.mpt_issuance_id === asset.mpt_issuance_id;
+  if (isIssued(amount)) return amount.issuer === asset.issuer && currencyKey(amount.currency) === currencyKey(asset.currency);
+  return (typeof amount === "string" || typeof amount === "number") && String(asset.currency).toUpperCase() === "XRP" && !asset.issuer;
+}
+const assetName = (asset) => (asset?.mpt_issuance_id ? asset.mpt_issuance_id : asset?.issuer ? currencyName(asset.currency) : "XRP");
+// A token amount's value; null for XRP, whose vault and loan figures this check doesn't compare.
+const tokenValue = (a) => (isIssued(a) || isMpt(a) ? Number(a.value) : null);
+
+// What a loan costs the borrower (XLS-66 appendix A-2): an amortized payment each period, plus the service fee; the
+// origination fee comes off the principal paid out. The effective rate is the yearly rate at which those payments are
+// worth what the borrower receives.
+export function loanCost(tx) {
+  const principal = Number(tx.PrincipalRequested);
+  const payments = tx.PaymentTotal ?? 1;
+  const interval = tx.PaymentInterval ?? 60;
+  const periodic = ((tx.InterestRate ?? 0) / (100 * RATE_UNIT)) * (interval / SECONDS_PER_YEAR);
+  const payment = periodic > 0 ? (principal * periodic * (1 + periodic) ** payments) / ((1 + periodic) ** payments - 1) : principal / payments;
+  const perPeriod = payment + Number(tx.LoanServiceFee ?? 0);
+  const received = principal - Number(tx.LoanOriginationFee ?? 0);
+  const worth = (i) => (i === 0 ? perPeriod * payments : (perPeriod * (1 - (1 + i) ** -payments)) / i);
+  let rate = 0;
+  if (received <= 0) rate = Infinity;
+  else if (worth(0) > received) {
+    let lo = 0, hi = 1;
+    while (worth(hi) > received && hi < 1e6) hi *= 2;
+    for (let k = 0; k < 200; k++) { const mid = (lo + hi) / 2; if (worth(mid) > received) lo = mid; else hi = mid; }
+    rate = (lo + hi) / 2;
+  }
+  return { principal, received, payments, interval, payment: perPeriod, repaid: perPeriod * payments, effectivePct: rate === Infinity ? Infinity : Math.round(rate * (SECONDS_PER_YEAR / interval) * 1000) / 10 };
+}
+
+// A closed-ended vault's phase now (XLS-65, LendingProtocolV1_1): deposits until SubscriptionDate, then neither
+// deposits nor withdrawals until RedemptionDate. null for an open-ended vault.
+function vaultPhase(vault) {
+  if (Number(vault.VaultKind ?? 0) !== VAULT_CLOSED_ENDED) return null;
+  const now = rippleNow();
+  return now <= Number(vault.SubscriptionDate) ? "subscription" : now < Number(vault.RedemptionDate) ? "investment" : "redemption";
+}
+
 // The best rate (units received per unit given) the ledger offers now for giving `give` to get `receive`: the top of
 // the order book and the AMM pool's spot price, whichever is better. null = neither exists.
 async function bestRate(ask, give, receive) {
@@ -280,6 +365,19 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     }
   };
   const credential = (subject, issuer, type) => ledgerEntry({ credential: { subject, issuer, credential_type: type } });
+  // The ledger entries an account owns (a vault's pseudo-account owns its loan brokers); undefined when unreadable.
+  const ownedEntries = async (address) => {
+    try {
+      const r = await ask("account_objects", { account: address, limit: 400 });
+      ledgerUsed = true;
+      if (r.error) throw new Error(r.error_message || r.error);
+      return r.account_objects ?? [];
+    } catch (err) {
+      if (!ledgerDown) add("XRPL_LEDGER_UNAVAILABLE", "info", net.name, { error: String(err.message).slice(0, 120) });
+      ledgerDown = true;
+      return undefined;
+    }
+  };
   const tokens = [];
   const seenTokens = new Set();
   const parties = [];
@@ -359,7 +457,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     }
 
     // What the issuer of a token the account is about to hold (trust line, buy, pool deposit) can do to it.
-    const issuerRisks = async (amount, where) => {
+    const issuerRisks = async (amount, where, { fee = true } = {}) => {
       if (!isIssued(amount) || fakeRlusd(amount, where)) return;
       const issuer = amount.issuer;
       const info = await account(issuer);
@@ -369,7 +467,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       const rippleRlusd = issuer === net.rlusdIssuer && isRlusdCode(amount.currency);
       if (info.flags & LSF.allowClawback) add("XRPL_ISSUER_CAN_CLAW_BACK", rippleRlusd ? "info" : "orange", issuer, { token: currencyName(amount.currency), ...(rippleRlusd && { note: "regulated stablecoin: Ripple can claw back RLUSD" }) });
       if (info.flags & LSF.globalFreeze) add("XRPL_ISSUER_FROZEN", "orange", issuer, { token: currencyName(amount.currency) });
-      if (info.transferRate > 1_000_000_000) add("XRPL_TRANSFER_FEE", "orange", issuer, { feePercent: Math.round((info.transferRate / 1e7 - 100) * 100) / 100 });
+      if (fee && info.transferRate > 1_000_000_000) add("XRPL_TRANSFER_FEE", "orange", issuer, { feePercent: Math.round((info.transferRate / 1e7 - 100) * 100) / 100 });
     };
 
     if (type === "TrustSet" && isIssued(tx.LimitAmount) && Number(tx.LimitAmount.value) > 0) await issuerRisks(tx.LimitAmount, "LimitAmount");
@@ -418,6 +516,119 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       }
     }
 
+    // Single Asset Vaults (XLS-65) and the Lending Protocol (XLS-66). A deposit buys shares of a pool whose owner can
+    // lend it out, without collateral, to borrowers the owner picks; a closed-ended vault (a fixed-term fund) keeps it
+    // until its redemption date; a paper loss (LossUnrealized) prices deposits at the vault's full value but
+    // withdrawals at the value minus the loss. A withdrawal can send the assets to another account. A LoanSet is
+    // signed by both the borrower and the loan broker's owner: the cost is worked out for the borrower, and the
+    // lender lends unsecured. Entries are read by their ID (ledger_entry index).
+    const entry = async (id, kind) => {
+      const node = await ledgerEntry({ index: id });
+      return node && node.LedgerEntryType && node.LedgerEntryType !== kind ? null : node;
+    };
+    // The vault's token when the account is about to hold it through the vault: a fake RLUSD, or what its issuer can
+    // do to it (no transfer fee: vaults don't charge it).
+    const vaultToken = async (vault) => {
+      const asset = vault.Asset;
+      if (asset?.mpt_issuance_id) {
+        const m = await mptOf(asset.mpt_issuance_id, "Vault.Asset");
+        if (m && m.flags & LSF_MPT.canClawback) add("XRPL_ISSUER_CAN_CLAW_BACK", m.rippleRlusd ? "info" : "orange", m.issuer, { token: m.token });
+        if (m && m.flags & LSF_MPT.locked) add("XRPL_MPT_LOCKED", "orange", m.issuer, { token: m.token, effect: "the issuer has locked this MPT, so the deposit fails" });
+        return m?.token ?? asset.mpt_issuance_id;
+      }
+      if (asset?.issuer) await issuerRisks(asset, "Vault.Asset", { fee: false });
+      return assetName(asset);
+    };
+
+    if ((type === "VaultDeposit" || type === "VaultWithdraw") && tx.VaultID) {
+      const deposit = type === "VaultDeposit";
+      if (deposit) fakeRlusd(tx.Amount, "Amount");
+      const vault = await entry(tx.VaultID, "Vault");
+      if (vault === null) add("XRPL_VAULT_NOT_FOUND", "orange", tx.VaultID, { effect: "there is no such vault, so the transaction fails" });
+      else if (vault) {
+        parties.push(vault.Owner);
+        const shares = !deposit && isMpt(tx.Amount) && tx.Amount.mpt_issuance_id === vault.ShareMPTID;
+        if (!shares && !sameAsset(tx.Amount, vault.Asset)) add("XRPL_VAULT_WRONG_ASSET", "orange", tx.VaultID, { vaultAsset: assetName(vault.Asset), effect: `the vault holds ${assetName(vault.Asset)}${deposit ? "" : " (or its shares)"}, so the transaction fails` });
+        const token = deposit ? await vaultToken(vault) : assetName(vault.Asset);
+        const total = Number(vault.AssetsTotal ?? 0), available = Number(vault.AssetsAvailable ?? 0), loss = Number(vault.LossUnrealized ?? 0);
+        const phase = vaultPhase(vault);
+        const amount = tokenValue(tx.Amount);
+        if (deposit) {
+          if (phase === "subscription") add("XRPL_VAULT_LOCKUP", "orange", tx.VaultID, { token, subscriptionEnds: rippleTime(vault.SubscriptionDate), redemptionFrom: rippleTime(vault.RedemptionDate), effect: `a fixed-term fund: from ${rippleTime(vault.SubscriptionDate)} you can't withdraw this deposit until ${rippleTime(vault.RedemptionDate)}` });
+          else if (phase) add("XRPL_VAULT_CLOSED", "orange", tx.VaultID, { subscriptionEnded: rippleTime(vault.SubscriptionDate), effect: "this fixed-term fund no longer takes deposits, so the transaction fails" });
+          if (loss > 0 && total > 0) add("XRPL_VAULT_PAPER_LOSS", "orange", tx.VaultID, { token, lossPct: pct(loss, total), effect: `the vault carries a paper loss of ${pct(loss, total)}% on loans that may not be repaid: a deposit is priced at the vault's full value but withdrawals at the value minus that loss, so until it clears you can take out about that much less than you put in, and if the loans default the loss is real` });
+          const brokers = (await ownedEntries(vault.Account))?.filter((e) => e.LedgerEntryType === "LoanBroker") ?? [];
+          if (brokers.length || total > available) {
+            const debt = brokers.reduce((s, b) => s + Number(b.DebtTotal ?? 0), 0);
+            const cover = brokers.reduce((s, b) => s + Number(b.CoverAvailable ?? 0), 0);
+            add("XRPL_VAULT_LENDS", "orange", vault.Owner, { token, loanBrokers: brokers.length, lentOutPct: pct(total - available, total), ...(debt > 0 && { firstLossCoverPct: pct(cover, debt) }), effect: "the vault lends deposits out without collateral, to borrowers its owner picks: a default beyond the owner's first-loss cover is a loss for the depositors, and only the part not lent out can be withdrawn at a time" });
+          }
+          if (Number(vault.Flags) & LSF_VAULT_PRIVATE && tx.Account !== vault.Owner) add("XRPL_VAULT_PRIVATE", "info", tx.VaultID, { effect: "a private vault: only accounts with the credentials its permissioned domain asks for can deposit; for anyone else the deposit fails" });
+          const max = Number(vault.AssetsMaximum ?? 0);
+          if (amount !== null && max > 0 && total + amount > max) add("XRPL_VAULT_FULL", "orange", tx.VaultID, { assetsMaximum: vault.AssetsMaximum, assetsTotal: vault.AssetsTotal ?? "0", effect: "the deposit would take the vault past its maximum, so the transaction fails" });
+        } else {
+          if (phase === "investment") add("XRPL_VAULT_LOCKED", "orange", tx.VaultID, { redemptionFrom: rippleTime(vault.RedemptionDate), effect: `this fixed-term fund blocks withdrawals until ${rippleTime(vault.RedemptionDate)}, so the transaction fails` });
+          if (!shares && amount !== null && amount > available) add("XRPL_VAULT_ILLIQUID", "orange", tx.VaultID, { token, available: vault.AssetsAvailable ?? "0", effect: "the vault has less than this available now (the rest is lent out), so the transaction fails" });
+          if (loss > 0 && total > 0) add("XRPL_VAULT_PAPER_LOSS", "info", tx.VaultID, { token, lossPct: pct(loss, total), effect: `withdrawing now takes the vault's paper loss of ${pct(loss, total)}%: you get about that much less than if its loans recover` });
+        }
+      }
+    }
+    if (WITHDRAWS.has(type) && tx.Destination && tx.Destination !== tx.Account) {
+      add("XRPL_WITHDRAW_TO_OTHER", "orange", tx.Destination, { amount: tx.Amount, effect: "sends what you withdraw to this account, not to yours" });
+    }
+
+    if (type === "LoanSet" && tx.LoanBrokerID) {
+      const broker = await entry(tx.LoanBrokerID, "LoanBroker");
+      if (broker === null) add("XRPL_LOAN_BROKER_NOT_FOUND", "orange", tx.LoanBrokerID, { effect: "there is no such loan broker, so the transaction fails" });
+      else if (broker) {
+        const lender = broker.Owner;
+        const borrower = tx.Account === lender ? tx.Counterparty : tx.Account;
+        parties.push(lender, borrower);
+        if (tx.Account !== lender && tx.Counterparty !== undefined && tx.Counterparty !== lender) add("XRPL_LOAN_NOT_THE_BROKER", "orange", lender, { effect: "neither the account nor the Counterparty owns this loan broker, so the transaction fails" });
+        else if (!borrower) add("XRPL_LOAN_NO_BORROWER", "orange", lender, { effect: "the loan broker's owner sends it without naming the borrower in Counterparty, so the transaction fails" });
+        else {
+          const vault = await entry(broker.VaultID, "Vault");
+          let token = vault ? assetName(vault.Asset) : undefined;
+          if (vault?.Asset?.issuer) fakeRlusd(vault.Asset, "Vault.Asset");
+          if (vault?.Asset?.mpt_issuance_id) token = (await mptOf(vault.Asset.mpt_issuance_id, "Vault.Asset"))?.token ?? token;
+          const cost = loanCost(tx);
+          const money = { ...(token && { token }), principal: String(tx.PrincipalRequested), borrowerReceives: round6(cost.received), totalRepaid: round6(cost.repaid) };
+          if (cost.effectivePct > LOAN_COSTLY_PCT) {
+            const effect = cost.received > 0 ? `the borrower gets ${round6(cost.received)} and pays back ${round6(cost.repaid)}: about ${cost.effectivePct}% a year with the fees` : `the origination fee takes the whole principal: the borrower gets nothing and pays back ${round6(cost.repaid)}`;
+            add("XRPL_LOAN_COSTLY", "orange", borrower, { ...money, interestRatePct: (tx.InterestRate ?? 0) / RATE_UNIT, ...(cost.received > 0 && { effectiveAnnualPct: cost.effectivePct }), effect });
+          }
+          add("XRPL_LOAN_TERMS", "info", borrower, {
+            borrower, lender, ...money,
+            payments: cost.payments, every: span(cost.interval), paymentEach: round6(cost.payment),
+            interestRatePct: (tx.InterestRate ?? 0) / RATE_UNIT, ...(cost.received > 0 && { effectiveAnnualPct: cost.effectivePct }),
+            ...(tx.LateInterestRate && { lateInterestRatePct: tx.LateInterestRate / RATE_UNIT }), ...(tx.LatePaymentFee !== undefined && { latePaymentFee: String(tx.LatePaymentFee) }),
+            gracePeriod: span(tx.GracePeriod ?? 60),
+            effect: "an unsecured loan: the borrower owes these payments, and the loan broker can default the loan when one is more than the grace period late; the broker's first-loss cover and then the vault's depositors take what isn't repaid",
+          });
+          const who = await account(borrower);
+          if (who && !who.exists) add("XRPL_BORROWER_NOT_FOUND", "orange", borrower, { effect: "the borrower's account doesn't exist, so the transaction fails" });
+          if (vault) {
+            if (Number(vault.AssetsAvailable ?? 0) < Number(tx.PrincipalRequested)) add("XRPL_VAULT_ILLIQUID", "orange", broker.VaultID, { ...(token && { token }), available: vault.AssetsAvailable ?? "0", effect: "the vault has less than the principal available, so the transaction fails" });
+            const phase = vaultPhase(vault);
+            if (phase && phase !== "investment") add("XRPL_LOAN_OUTSIDE_TERM", "orange", broker.VaultID, { phase, effect: "a fixed-term fund lends only between its subscription end and its redemption date, so the transaction fails" });
+            else if (phase && rippleNow() + cost.interval * cost.payments + 60 > Number(vault.RedemptionDate)) add("XRPL_LOAN_OUTSIDE_TERM", "orange", broker.VaultID, { redemptionFrom: rippleTime(vault.RedemptionDate), effect: "the last payment would fall after the fund's redemption date, so the transaction fails" });
+          }
+        }
+      }
+    }
+
+    if (type === "LoanPay" && tx.LoanID) {
+      const loan = await entry(tx.LoanID, "Loan");
+      if (loan === null) add("XRPL_LOAN_NOT_FOUND", "orange", tx.LoanID, { effect: "there is no such loan, so the transaction fails" });
+      else if (loan && loan.Borrower !== tx.Account) add("XRPL_LOAN_NOT_YOURS", "orange", loan.Borrower, { effect: "only the borrower can pay this loan, so the transaction fails" });
+      else if (loan && !Number(loan.PaymentRemaining ?? 0)) add("XRPL_LOAN_PAID_OFF", "orange", tx.LoanID, { effect: "the loan is paid off, so the transaction fails" });
+      else if (loan) {
+        const late = rippleNow() > Number(loan.NextPaymentDueDate);
+        if (late && !(Number(tx.Flags) & TF_LOAN_LATE_PAYMENT)) add("XRPL_LOAN_PAYMENT_LATE", "orange", tx.LoanID, { dueSince: rippleTime(loan.NextPaymentDueDate), effect: "the payment is past due: without the tfLoanLatePayment flag the ledger refuses it, and a late payment also owes the late fee and late interest" });
+        add("XRPL_LOAN_PAYMENT", "info", tx.LoanID, { paymentDue: round6(Number(loan.PeriodicPayment ?? 0) + Number(loan.LoanServiceFee ?? 0)), nextDue: rippleTime(loan.NextPaymentDueDate), paymentsRemaining: Number(loan.PaymentRemaining), ...(late && { late: true, ...(loan.LatePaymentFee !== undefined && { latePaymentFee: String(loan.LatePaymentFee) }) }) });
+      }
+    }
+
     if (type === "NFTokenCreateOffer" && Number(tx.Flags) & TF_SELL_NFTOKEN && (tx.Amount === "0" || tx.Amount === 0 || (isIssued(tx.Amount) && Number(tx.Amount.value) === 0))) {
       add("XRPL_NFT_GIVEAWAY", "orange", tx.Destination ?? null, { effect: "offers the NFT for nothing; whoever accepts it gets it for free" });
     }
@@ -455,12 +666,13 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
 
     if (!JUDGED.has(type) && !BENIGN.has(type)) add("XRPL_TX_NOT_ANALYZED", "orange", tx.Account, { transactionType: type });
 
-    // The destination of a payment (or account delete) on the ledger: missing, refusing, or asking for a tag.
-    if ((type === "Payment" || type === "AccountDelete") && tx.Destination) {
+    // The destination of a payment, account delete or withdrawal to another account on the ledger: missing, refusing,
+    // or asking for a tag.
+    if ((type === "Payment" || type === "AccountDelete" || (WITHDRAWS.has(type) && tx.Destination !== tx.Account)) && tx.Destination) {
       const dest = await account(tx.Destination);
       const xrp = typeof tx.Amount === "string" || typeof tx.Amount === "number";
       if (dest && !dest.exists) {
-        if (type === "AccountDelete") add("XRPL_DESTINATION_NOT_FOUND", "orange", tx.Destination);
+        if (type !== "Payment") add("XRPL_DESTINATION_NOT_FOUND", "orange", tx.Destination);
         else if (xrp && Number(tx.Amount) < 1_000_000) add("XRPL_DESTINATION_NOT_ACTIVATED", "orange", tx.Destination, { effect: "the destination doesn't exist and the amount is below the 1 XRP reserve, so the payment fails" });
         else if (xrp) add("XRPL_NEW_DESTINATION", "info", tx.Destination, { effect: "this payment creates the destination account" });
         else add("XRPL_DESTINATION_NOT_ACTIVATED", "orange", tx.Destination, { effect: "the destination doesn't exist, so it can't hold this token" });
@@ -500,7 +712,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     // Everyone the transaction pays, hands the account or permissions to, trusts or trades with (destinations, new keys,
     // signers and delegates, token issuers), for the OFAC SDN screen below.
     parties.push(
-      ...["Destination", "RegularKey", "Owner", "Authorize", "Unauthorize", "Issuer", "Holder", "Subject"].map((k) => tx[k]),
+      ...["Destination", "RegularKey", "Owner", "Authorize", "Unauthorize", "Issuer", "Holder", "Subject", "Counterparty"].map((k) => tx[k]),
       ...["Amount", "SendMax", "DeliverMin", "LimitAmount", "TakerGets", "TakerPays"].map((k) => (isIssued(tx[k]) ? tx[k].issuer : isMpt(tx[k]) ? mptIssuer(tx[k].mpt_issuance_id) : null)),
       ...(tx.MPTokenIssuanceID ? [mptIssuer(tx.MPTokenIssuanceID)] : []),
       ...(Array.isArray(tx.SignerEntries) ? tx.SignerEntries.map((e) => e?.SignerEntry?.Account) : []),
@@ -555,7 +767,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : typeof tx.Amount === "object" ? tx.Amount : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows, checks, payment channels and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, Batch transactions (every inner transaction judged; batches of several accounts that aren't all-or-nothing), permission delegation (DelegateSet that lets another account move funds), MPTs (opting in to one whose issuer can claw back, has locked it or charges a fee; fake RLUSD tickers; payments that would fail), every destination, new key, signer, delegate and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows, checks, payment channels and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, Batch transactions (every inner transaction judged; batches of several accounts that aren't all-or-nothing), permission delegation (DelegateSet that lets another account move funds), MPTs (opting in to one whose issuer can claw back, has locked it or charges a fee; fake RLUSD tickers; payments that would fail), vaults (deposits into vaults that lend without collateral, fixed-term funds that lock the deposit, vaults with a paper loss; withdrawals to another account; deposits and withdrawals that would fail) and loans (the terms and the borrower's effective yearly cost, flagged above 36%; loans and loan payments that would fail), every destination, new key, signer, delegate, token issuer, vault owner, lender and borrower against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
     sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
     checkedAt: new Date().toISOString(),
   };

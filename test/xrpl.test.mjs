@@ -87,7 +87,7 @@ test("trust lines: clawback, frozen issuer, transfer fee, fake RLUSD; Ripple's R
 test("escrow to someone else, NFT for nothing and unknown types are orange; a ledger outage is info", async () => {
   assert.equal((await run({ TransactionType: "EscrowCreate", Destination: OTHER, Amount: "1000000", FinishAfter: 900000000 })).reasons[0].code, "XRPL_ESCROW_TO_OTHER");
   assert.equal((await run({ TransactionType: "NFTokenCreateOffer", NFTokenID: "00", Amount: "0", Flags: 1 })).reasons[0].code, "XRPL_NFT_GIVEAWAY");
-  assert.equal((await run({ TransactionType: "VaultCreate" })).reasons[0].code, "XRPL_TX_NOT_ANALYZED");
+  assert.equal((await run({ TransactionType: "XChainCommit" })).reasons[0].code, "XRPL_TX_NOT_ANALYZED");
   assert.equal((await run({ TransactionType: "OfferCreate" })).verdict, "green");
   const down = await analyzeXrpl(await parseXrplRequest({ type: "xrpl", tx: { TransactionType: "Payment", Account: ME, Destination: OTHER, Amount: "15000" } }), { fetchImpl: ledger({ down: true }) });
   assert.deepEqual(codes(down), ["info:XRPL_LEDGER_UNAVAILABLE"]);
