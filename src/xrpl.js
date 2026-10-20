@@ -12,7 +12,9 @@
 // is nothing valid to accept and the transaction would fail. A Batch (XLS-56) is judged by every transaction inside it,
 // so a takeover can't hide in one; inner transactions of other accounts without all-or-nothing are orange (your part
 // can go through while theirs fails). Permission delegation (XLS-75): a DelegateSet that lets another account send
-// payments, checks, escrows, channels, DEX orders or NFT trades for you is red, other permissions orange.
+// payments, checks, escrows, channels, DEX orders or NFT trades for you is red, other permissions orange. MPTs (XLS-33):
+// opting in to hold one gets the trust-line issuer checks; a ticker of RLUSD not issued by Ripple is red; a payment
+// that would fail (locked, not transferable, a destination that hasn't opted in or isn't authorised) is orange.
 // The ledger is read through public JSON-RPC (no key); when it can't be reached the check says so (info) and the
 // rules that need no ledger still apply. Fail-closed as in presign-guard.js: errors are non-2xx, never "green".
 
@@ -36,6 +38,10 @@ export const LSF = { requireDestTag: 0x00020000, requireAuth: 0x00040000, disall
 const TF_PARTIAL_PAYMENT = 0x00020000;
 const TF_SELL_NFTOKEN = 0x00000001;
 const LSF_CREDENTIAL_ACCEPTED = 0x00010000;
+// MPTokenIssuance flags, the MPToken (a holder's balance) flag, and MPTokenAuthorize's tfMPTUnauthorize.
+const LSF_MPT = { locked: 0x01, requireAuth: 0x04, canTransfer: 0x20, canClawback: 0x40 };
+const LSF_MPTOKEN_AUTHORIZED = 0x02;
+const TF_MPT_UNAUTHORIZE = 0x01;
 const RIPPLE_EPOCH = 946684800; // XRPL times are seconds since 2000-01-01
 const rippleTime = (t) => new Date((Number(t) + RIPPLE_EPOCH) * 1000).toISOString();
 // A credential type is hex; show it as text when it is readable.
@@ -45,8 +51,8 @@ export const credentialName = (hex) => {
 };
 
 // Types judged by a rule below, and everyday types with nothing to flag on their own.
-const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept", "Batch", "DelegateSet"]);
-const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete"]);
+const JUDGED = new Set(["Payment", "TrustSet", "SetRegularKey", "SignerListSet", "AccountSet", "AccountDelete", "EscrowCreate", "NFTokenCreateOffer", "OfferCreate", "AMMCreate", "AMMDeposit", "CredentialCreate", "CredentialAccept", "Batch", "DelegateSet", "MPTokenAuthorize"]);
+const BENIGN = new Set(["OfferCancel", "EscrowFinish", "EscrowCancel", "CheckCash", "CheckCancel", "NFTokenMint", "NFTokenBurn", "NFTokenCancelOffer", "NFTokenAcceptOffer", "TicketCreate", "AMMWithdraw", "AMMVote", "AMMBid", "CredentialDelete", "PermissionedDomainSet", "PermissionedDomainDelete", "MPTokenIssuanceCreate", "MPTokenIssuanceDestroy", "MPTokenIssuanceSet"]);
 
 // Batch (XLS-56): 2 to 8 inner transactions, exactly one mode flag, at most 24 batch signers.
 const BATCH_MODES = [["tfAllOrNothing", 0x00010000], ["tfOnlyOne", 0x00020000], ["tfUntilFailure", 0x00040000], ["tfIndependent", 0x00080000]];
@@ -86,6 +92,32 @@ export function isXrplAddress(value) {
   return bytes[0] === 0 && sum.subarray(0, 4).equals(bytes.subarray(21, 25));
 }
 
+// An account ID (20 bytes) as an r-address: 0x00 + the ID + a 4-byte double-SHA-256 checksum, in base58.
+function addressOf(accountId) {
+  const payload = Buffer.concat([Buffer.from([0]), accountId]);
+  const sum = createHash("sha256").update(createHash("sha256").update(payload).digest()).digest();
+  const bytes = Buffer.concat([payload, sum.subarray(0, 4)]);
+  let n = BigInt(`0x${bytes.toString("hex")}`);
+  let out = "";
+  while (n > 0n) { out = ALPHABET[Number(n % 58n)] + out; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; out = ALPHABET[0] + out; }
+  return out;
+}
+
+// MPTs (XLS-33): an amount is { mpt_issuance_id, value }; the issuance ID is 24 bytes, the issuer's sequence (4) and
+// its account ID (20).
+const MPT_ID = /^[0-9A-Fa-f]{48}$/;
+const isMpt = (a) => Boolean(a && typeof a === "object" && typeof a.mpt_issuance_id === "string");
+export const mptIssuer = (id) => (MPT_ID.test(String(id)) ? addressOf(Buffer.from(String(id).slice(8), "hex")) : null);
+// The ticker (or else the name) in an issuance's metadata (XLS-89: hex-encoded JSON, long or compact keys).
+export function mptTicker(issuance) {
+  try {
+    const meta = JSON.parse(Buffer.from(String(issuance?.MPTokenMetadata ?? ""), "hex").toString("utf8"));
+    const name = meta.ticker ?? meta.t ?? meta.name ?? meta.n;
+    return typeof name === "string" && name.trim() ? name.trim().slice(0, 40) : null;
+  } catch { return null; }
+}
+
 export const isXrplRequest = (body) => Boolean(body && typeof body === "object" && body.type === "xrpl");
 
 // The fields of one transaction (the one signed, or one inside a Batch) that must be addresses, hex or a valid
@@ -95,8 +127,12 @@ function validateTx(tx, at) {
   if (!isXrplAddress(tx.Account)) throw new XrplValidationError(`${at}.Account must be a valid XRPL address (r…)`);
   const credential = tx.TransactionType.startsWith("Credential");
   const delegate = tx.TransactionType === "DelegateSet";
-  for (const field of ["Destination", "RegularKey", ...(credential ? ["Subject", "Issuer"] : []), ...(delegate ? ["Authorize"] : [])]) {
+  for (const field of ["Destination", "RegularKey", "Holder", ...(credential ? ["Subject", "Issuer"] : []), ...(delegate ? ["Authorize"] : [])]) {
     if (tx[field] !== undefined && !isXrplAddress(tx[field])) throw new XrplValidationError(`${at}.${field} must be a valid XRPL address (r…)`);
+  }
+  if (tx.TransactionType === "MPTokenAuthorize" && !MPT_ID.test(String(tx.MPTokenIssuanceID ?? ""))) throw new XrplValidationError(`${at}.MPTokenIssuanceID must be 48 hex characters`);
+  for (const field of ["Amount", "SendMax", "DeliverMin"]) {
+    if (isMpt(tx[field]) && !MPT_ID.test(tx[field].mpt_issuance_id)) throw new XrplValidationError(`${at}.${field}.mpt_issuance_id must be 48 hex characters`);
   }
   if (credential && (typeof tx.CredentialType !== "string" || !/^([0-9A-Fa-f]{2}){1,64}$/.test(tx.CredentialType))) {
     throw new XrplValidationError(`${at}.CredentialType must be hex, 1 to 64 bytes`);
@@ -227,10 +263,11 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       return null;
     }
   };
-  // A credential on the ledger: the entry, null when there is none, undefined when the ledger can't be read.
-  const credential = async (subject, issuer, type) => {
+  // A ledger entry (a credential, an MPT issuance or holding): the node, null when there is none, undefined when the
+  // ledger can't be read.
+  const ledgerEntry = async (params) => {
     try {
-      const r = await ask("ledger_entry", { credential: { subject, issuer, credential_type: type } });
+      const r = await ask("ledger_entry", params);
       ledgerUsed = true;
       if (r.error === "entryNotFound") return null;
       if (r.error || !r.node) throw new Error(r.error_message || r.error || "no ledger entry");
@@ -241,6 +278,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       return undefined;
     }
   };
+  const credential = (subject, issuer, type) => ledgerEntry({ credential: { subject, issuer, credential_type: type } });
   const tokens = [];
   const seenTokens = new Set();
   const parties = [];
@@ -284,6 +322,39 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       if (Number(tx.Flags) & TF_PARTIAL_PAYMENT) add("XRPL_PARTIAL_PAYMENT", "orange", tx.Destination, { effect: "a partial payment may deliver far less than Amount; receivers must read delivered_amount" });
       fakeRlusd(tx.Amount, "Amount");
       if (isIssued(tx.SendMax)) fakeRlusd(tx.SendMax, "SendMax");
+    }
+
+    // An MPT's issuance on the ledger, its issuer and the name to show. A ticker of RLUSD from anyone but Ripple is a
+    // fake; another ticker goes to the name check below.
+    const mptOf = async (id, where) => {
+      const issuer = mptIssuer(id);
+      const issuance = await ledgerEntry({ mpt_issuance: id });
+      if (issuance === null) add("XRPL_MPT_NOT_FOUND", "orange", id, { where, effect: "there is no such MPT on the ledger, so the transaction fails" });
+      if (!issuance) return null;
+      const ticker = mptTicker(issuance);
+      const rippleRlusd = Boolean(ticker && isRlusdCode(ticker) && issuer === net.rlusdIssuer);
+      if (ticker && isRlusdCode(ticker) && !rippleRlusd) add("XRPL_FAKE_RLUSD", "red", issuer, { where, issuer, rippleIssuer: net.rlusdIssuer, mpt: id });
+      else if (ticker && !rippleRlusd && !seenTokens.has(`${ticker}.${issuer}`)) { seenTokens.add(`${ticker}.${issuer}`); tokens.push({ address: `${ticker}.${issuer}`, symbol: ticker }); }
+      return { issuance, issuer, flags: Number(issuance.Flags) || 0, token: ticker ?? id, rippleRlusd };
+    };
+
+    // Opting in to hold an MPT (MPTokenAuthorize without Holder, which is the issuer authorising someone, and without
+    // tfMPTUnauthorize): what its issuer can do to it, as for a trust line.
+    if (type === "MPTokenAuthorize" && tx.Holder === undefined && !(Number(tx.Flags) & TF_MPT_UNAUTHORIZE)) {
+      const m = await mptOf(tx.MPTokenIssuanceID, "MPTokenIssuanceID");
+      if (m) {
+        if (m.flags & LSF_MPT.canClawback) add("XRPL_ISSUER_CAN_CLAW_BACK", m.rippleRlusd ? "info" : "orange", m.issuer, { token: m.token });
+        if (m.flags & LSF_MPT.locked) add("XRPL_ISSUER_FROZEN", "orange", m.issuer, { token: m.token });
+        if (Number(m.issuance.TransferFee) > 0) add("XRPL_TRANSFER_FEE", "orange", m.issuer, { feePercent: Number(m.issuance.TransferFee) / 1000 });
+      }
+    }
+
+    // Paying with an MPT fails when the issuer has locked it, or doesn't let it move between holders (only to and
+    // from the issuer); the destination's side is checked with the destination below.
+    const mpt = type === "Payment" && isMpt(tx.Amount) ? await mptOf(tx.Amount.mpt_issuance_id, "Amount") : null;
+    if (mpt) {
+      if (mpt.flags & LSF_MPT.locked) add("XRPL_MPT_LOCKED", "orange", mpt.issuer, { token: mpt.token, effect: "the issuer has locked this MPT, so the payment fails" });
+      if (!(mpt.flags & LSF_MPT.canTransfer) && tx.Account !== mpt.issuer && tx.Destination !== mpt.issuer) add("XRPL_MPT_NOT_TRANSFERABLE", "orange", mpt.issuer, { token: mpt.token, effect: "the issuer only lets this MPT go back to the issuer, not to other holders, so the payment fails" });
     }
 
     // What the issuer of a token the account is about to hold (trust line, buy, pool deposit) can do to it.
@@ -387,6 +458,15 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
             if (!has) add("XRPL_DESTINATION_NO_TRUSTLINE", "orange", tx.Destination, { token: currencyName(tx.Amount.currency), effect: "the destination has no trust line for this token, so the payment fails" });
           } catch { /* the account lookup already reported an outage, if any */ }
         }
+        // An MPT payment needs the destination to hold the MPT (opted in), authorised if the issuer requires it.
+        if (mpt && tx.Destination !== mpt.issuer) {
+          const holding = await ledgerEntry({ mptoken: { mpt_issuance_id: tx.Amount.mpt_issuance_id, account: tx.Destination } });
+          if (holding === null) add("XRPL_DESTINATION_NO_MPTOKEN", "orange", tx.Destination, { token: mpt.token, effect: "the destination hasn't opted in to hold this MPT, so the payment fails" });
+          else if (holding) {
+            if (mpt.flags & LSF_MPT.requireAuth && !(Number(holding.Flags) & LSF_MPTOKEN_AUTHORIZED)) add("XRPL_DESTINATION_NOT_AUTHORIZED", "orange", tx.Destination, { token: mpt.token, effect: "the issuer hasn't authorised the destination to hold this MPT, so the payment fails" });
+            if (Number(holding.Flags) & LSF_MPT.locked) add("XRPL_MPT_LOCKED", "orange", tx.Destination, { token: mpt.token, effect: "the issuer has locked the destination's balance of this MPT, so the payment fails" });
+          }
+        }
       }
     }
 
@@ -403,7 +483,8 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
     // signers and delegates, token issuers), for the OFAC SDN screen below.
     parties.push(
       ...["Destination", "RegularKey", "Owner", "Authorize", "Unauthorize", "Issuer", "Holder", "Subject"].map((k) => tx[k]),
-      ...["Amount", "SendMax", "DeliverMin", "LimitAmount", "TakerGets", "TakerPays"].map((k) => (isIssued(tx[k]) ? tx[k].issuer : null)),
+      ...["Amount", "SendMax", "DeliverMin", "LimitAmount", "TakerGets", "TakerPays"].map((k) => (isIssued(tx[k]) ? tx[k].issuer : isMpt(tx[k]) ? mptIssuer(tx[k].mpt_issuance_id) : null)),
+      ...(tx.MPTokenIssuanceID ? [mptIssuer(tx.MPTokenIssuanceID)] : []),
       ...(Array.isArray(tx.SignerEntries) ? tx.SignerEntries.map((e) => e?.SignerEntry?.Account) : []),
     );
   };
@@ -456,7 +537,7 @@ export async function analyzeXrpl(req, { fetchImpl = globalThis.fetch } = {}) {
       ...(tx.Amount !== undefined && { amount: isIssued(tx.Amount) ? { ...tx.Amount, token: currencyName(tx.Amount.currency) } : typeof tx.Amount === "object" ? tx.Amount : String(tx.Amount) }),
       ...(req.origin && { origin: req.origin }),
     },
-    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, Batch transactions (every inner transaction judged; batches of several accounts that aren't all-or-nothing), permission delegation (DelegateSet that lets another account move funds), every destination, new key, signer, delegate and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
+    scope: "XRP Ledger transactions before signing: account takeover (SetRegularKey, SignerListSet, disabling the master key), AccountDelete, partial payments, fake RLUSD (and RLUSD look-alike names; other famous token names via the AI check), destinations that refuse or need a tag, trust lines to issuers that can claw back, freeze or charge a transfer fee, escrows and NFT offers that hand value to someone else, credentials issued for another account or accepted when there is nothing valid to accept, Batch transactions (every inner transaction judged; batches of several accounts that aren't all-or-nothing), permission delegation (DelegateSet that lets another account move funds), MPTs (opting in to one whose issuer can claw back, has locked it or charges a fee; fake RLUSD tickers; payments that would fail), every destination, new key, signer, delegate and token issuer against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. DEX orders are screened for the token bought and a limit far below the order book or AMM price; AMM pool funding for risky tokens. Not covered: full simulation of how an order fills.",
     sources: [...(ledgerUsed ? ["xrpl-ledger"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(req.origin ? ["pg1"] : []), ...aiSources],
     checkedAt: new Date().toISOString(),
   };

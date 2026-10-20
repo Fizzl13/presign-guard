@@ -11,12 +11,19 @@ const FAKE = "rrrrrrrrrrrrrrrrrrrrBZbvji";
 const RLUSD = "524C555344000000000000000000000000000000";
 
 // accounts: address -> { flags, transferRate } or null (= not found); lines: address -> [currency…]
-function ledger({ accounts = {}, lines = {}, credentials = {}, down = false } = {}) {
+// mpts: issuance id -> { Flags, TransferFee, MPTokenMetadata }; holdings: "id|account" -> { Flags }
+function ledger({ accounts = {}, lines = {}, credentials = {}, mpts = {}, holdings = {}, down = false } = {}) {
   return async (_url, init) => {
     if (down) throw new Error("node down");
     const { method, params: [p] } = JSON.parse(init.body);
     let result;
-    if (method === "ledger_entry" && p.credential) {
+    if (method === "ledger_entry" && p.mpt_issuance) {
+      const m = mpts[p.mpt_issuance];
+      result = m ? { node: { LedgerEntryType: "MPTokenIssuance", Flags: 0, ...m } } : { error: "entryNotFound" };
+    } else if (method === "ledger_entry" && p.mptoken) {
+      const h = holdings[`${p.mptoken.mpt_issuance_id}|${p.mptoken.account}`];
+      result = h ? { node: { LedgerEntryType: "MPToken", Flags: 0, ...h } } : { error: "entryNotFound" };
+    } else if (method === "ledger_entry" && p.credential) {
       const c = credentials[`${p.credential.subject}|${p.credential.issuer}|${p.credential.credential_type}`];
       result = c ? { node: { LedgerEntryType: "Credential", Subject: p.credential.subject, Issuer: p.credential.issuer, CredentialType: p.credential.credential_type, ...c } } : { error: "entryNotFound" };
     } else if (method === "account_info") {
@@ -268,8 +275,70 @@ test("DelegateSet (XLS-75): permissions that move funds are red, others orange, 
   await assert.rejects(parse({ ...delegate("Payment"), Authorize: "rNope" }), /Authorize must be a valid XRPL address/);
 });
 
-test("an MPT amount is shown as it is", async () => {
-  const mpt = { mpt_issuance_id: "00000004A407AF5856CCF3C42619DAA925813FC955C72983", value: "100" };
-  const r = await run({ TransactionType: "Payment", Destination: OTHER, Amount: mpt }, { accounts: { [OTHER]: {} } });
-  assert.deepEqual(r.subject.amount, mpt);
+
+// An MPT issuance ID is the issuer's sequence (4 bytes) and account ID (20 bytes).
+const mptId = (address, seq = 42) => seq.toString(16).toUpperCase().padStart(8, "0") + Buffer.from(accountId(address)).toString("hex").toUpperCase();
+function accountId(address) {
+  const ALPHABET = "rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz";
+  let n = 0n;
+  for (const ch of address) n = n * 58n + BigInt(ALPHABET.indexOf(ch));
+  return Buffer.from(n.toString(16).padStart(50, "0"), "hex").subarray(1, 21);
+}
+const meta = (o) => Buffer.from(JSON.stringify(o)).toString("hex").toUpperCase();
+
+test("MPTs (XLS-33): issuer, ticker and the metadata of the xrpl.org example", async () => {
+  const { mptIssuer, mptTicker } = await import("../src/xrpl.js");
+  assert.equal(mptIssuer(mptId(OTHER)), OTHER);
+  assert.equal(mptIssuer(mptId(FAKE, 7)), FAKE, "an address with leading zero bytes");
+  assert.equal(mptIssuer("nope"), null);
+  assert.equal(mptTicker({ MPTokenMetadata: meta({ t: "GOLD", n: "Gold" }) }), "GOLD", "compact keys");
+  assert.equal(mptTicker({ MPTokenMetadata: "7B227469636B6572223A20225442494C4C222C20226E616D65223A2022542D42696C6C205969656C6420546F6B656E227D" }), "TBILL");
+  assert.equal(mptTicker({ MPTokenMetadata: "ZZ" }), null);
+  assert.equal(mptTicker({}), null);
+});
+
+test("MPTs: opting in gets the issuer checks; a fake RLUSD ticker is red; letting someone hold yours is fine", async () => {
+  const id = mptId(OTHER);
+  const optIn = { TransactionType: "MPTokenAuthorize", MPTokenIssuanceID: id };
+  const plain = await run(optIn, { mpts: { [id]: { MPTokenMetadata: meta({ ticker: "GOLD" }) } } });
+  assert.equal(plain.verdict, "green", codes(plain).join());
+  const risky = await run(optIn, { mpts: { [id]: { Flags: 0x40 | 0x01, TransferFee: 2500, MPTokenMetadata: meta({ ticker: "GOLD" }) } } });
+  assert.deepEqual(codes(risky), ["orange:XRPL_ISSUER_CAN_CLAW_BACK", "orange:XRPL_ISSUER_FROZEN", "orange:XRPL_TRANSFER_FEE"]);
+  assert.deepEqual([risky.reasons[0].subject, risky.reasons[0].details.token, risky.reasons[2].details.feePercent], [OTHER, "GOLD", 2.5]);
+  assert.deepEqual(codes(await run(optIn)), ["orange:XRPL_MPT_NOT_FOUND"]);
+  assert.deepEqual(codes(await run(optIn, { down: true })), ["info:XRPL_LEDGER_UNAVAILABLE"]);
+
+  const fake = await run(optIn, { mpts: { [id]: { MPTokenMetadata: meta({ ticker: "RLUSD" }) } } });
+  assert.equal(fake.verdict, "red"); assert.equal(fake.reasons[0].code, "XRPL_FAKE_RLUSD");
+  const rippleId = mptId(RIPPLE);
+  const real = await run({ ...optIn, MPTokenIssuanceID: rippleId }, { mpts: { [rippleId]: { Flags: 0x40, MPTokenMetadata: meta({ ticker: "RLUSD" }) } } });
+  assert.deepEqual(codes(real), ["info:XRPL_ISSUER_CAN_CLAW_BACK"], "Ripple's own: clawback by design");
+
+  // The issuer authorising a holder, or a holder leaving: nothing to check. Issuer housekeeping is fine too.
+  assert.equal((await run({ ...optIn, Holder: THIRD })).verdict, "green");
+  assert.equal((await run({ ...optIn, Flags: 1 })).verdict, "green");
+  for (const t of ["MPTokenIssuanceCreate", "MPTokenIssuanceSet", "MPTokenIssuanceDestroy"]) assert.equal((await run({ TransactionType: t })).verdict, "green", t);
+
+  await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { TransactionType: "MPTokenAuthorize", Account: ME } }), /MPTokenIssuanceID must be 48 hex/);
+  await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { ...optIn, Account: ME, Holder: "rNope" } }), /Holder/);
+});
+
+test("MPTs: a payment that would fail is orange (locked, not transferable, destination not opted in or not authorised)", async () => {
+  const id = mptId(THIRD);
+  const pay = { TransactionType: "Payment", Destination: OTHER, Amount: { mpt_issuance_id: id, value: "100" } };
+  const ok = { accounts: { [OTHER]: {} }, mpts: { [id]: { Flags: 0x20, MPTokenMetadata: meta({ ticker: "GOLD" }) } }, holdings: { [`${id}|${OTHER}`]: {} } };
+  const good = await run(pay, ok);
+  assert.equal(good.verdict, "green", codes(good).join());
+  assert.deepEqual(good.subject.amount, pay.Amount, "an MPT amount is shown as it is");
+
+  assert.deepEqual(codes(await run(pay, { ...ok, holdings: {} })), ["orange:XRPL_DESTINATION_NO_MPTOKEN"]);
+  assert.deepEqual(codes(await run(pay, { ...ok, mpts: { [id]: { Flags: 0 } } })), ["orange:XRPL_MPT_NOT_TRANSFERABLE"]);
+  assert.equal((await run({ ...pay, Destination: THIRD }, { ...ok, accounts: { [THIRD]: {} }, mpts: { [id]: { Flags: 0 } } })).verdict, "green", "back to the issuer is always allowed");
+  assert.deepEqual(codes(await run(pay, { ...ok, mpts: { [id]: { Flags: 0x20 | 0x01 } } })), ["orange:XRPL_MPT_LOCKED"]);
+  assert.deepEqual(codes(await run(pay, { ...ok, mpts: { [id]: { Flags: 0x20 | 0x04 } } })), ["orange:XRPL_DESTINATION_NOT_AUTHORIZED"]);
+  assert.equal((await run(pay, { ...ok, mpts: { [id]: { Flags: 0x20 | 0x04 } }, holdings: { [`${id}|${OTHER}`]: { Flags: 0x02 } } })).verdict, "green");
+  const lockedHolder = await run(pay, { ...ok, holdings: { [`${id}|${OTHER}`]: { Flags: 0x01 } } });
+  assert.deepEqual([codes(lockedHolder), lockedHolder.reasons[0].subject], [["orange:XRPL_MPT_LOCKED"], OTHER]);
+  assert.deepEqual(codes(await run(pay, { mpts: ok.mpts })), ["orange:XRPL_DESTINATION_NOT_ACTIVATED"], "no account, no holding lookup");
+  await assert.rejects(parseXrplRequest({ type: "xrpl", tx: { ...pay, Account: ME, Amount: { mpt_issuance_id: "12", value: "1" } } }), /mpt_issuance_id must be 48 hex/);
 });
