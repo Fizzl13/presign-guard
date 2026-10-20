@@ -23,9 +23,9 @@
 <meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature on EVM chains, Solana, the XRP Ledger or Algorand, including the token itself. $0.01 per check in USDC via x402 on Base, Solana, the XRP Ledger, Algorand or Stellar.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Unbounded:wght@500;600;700;800&display=swap">
 <style>
-  /* fizzl brand v2: the fizzl.eu look. Ink + mint, Space Grotesk headings, DM Sans text, three dots as the motif.
+  /* fizzl brand v2: the fizzl.eu look. Ink + mint, Unbounded headings, Lexend text, three dots as the motif.
      Keep this block identical in presign-guard, x402-doctor and ichimoku-signal. */
   :root {
     color-scheme: dark;
@@ -33,7 +33,7 @@
     --mint: #61f5c3; --mint-soft: rgba(97,245,195,.12); --mint-line: rgba(97,245,195,.35);
     --text: #f4f8f7; --soft: #a8b5b2;
     --green: #6ee7b7; --green-bg: rgba(110,231,183,.14); --orange: #fdba74; --orange-bg: rgba(253,186,116,.14); --red: #fca5a5; --red-bg: rgba(252,165,165,.14);
-    --head: 'Space Grotesk', system-ui, sans-serif; --body: 'DM Sans', system-ui, sans-serif;
+    --head: 'Unbounded', system-ui, sans-serif; --body: 'Lexend', system-ui, sans-serif;
     --mono: ui-monospace, 'SF Mono', Consolas, monospace;
   }
   * { box-sizing: border-box; }
@@ -43,7 +43,7 @@
   .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 22px; margin-bottom: 44px; border-bottom: 1px solid var(--line); }
   .brand { display: flex; align-items: center; gap: 12px; color: var(--text); text-decoration: none; }
   .brand .mark { width: 40px; height: 40px; display: block; flex: none; }
-  .brand b { font-family: var(--head); font-size: 18px; letter-spacing: -.02em; display: block; line-height: 1.1; }
+  .brand b { font-family: var(--head); font-size: 18px; letter-spacing: -.01em; display: block; line-height: 1.1; }
   .brand small { color: var(--soft); font-size: 12.5px; }
   .brand small em { color: var(--mint); font-style: normal; font-weight: 700; }
   .live { font: 600 12px/1 var(--mono); color: var(--soft); border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; white-space: nowrap; }
@@ -55,7 +55,7 @@
   .dots i { display: block; border-radius: 50%; background: var(--mint); }
   .dots i:nth-child(1) { width: 9px; height: 9px; } .dots i:nth-child(2) { width: 6px; height: 6px; margin-bottom: 5px; } .dots i:nth-child(3) { width: 4px; height: 4px; margin-bottom: 10px; }
   .eyebrow { font: 600 13px/1 var(--mono); color: var(--mint); margin-bottom: 18px; letter-spacing: .02em; }
-  h1 { font-size: clamp(34px, 7vw, 56px); line-height: 1.04; margin: 0 0 18px; letter-spacing: -.04em; font-weight: 700; font-family: var(--head); }
+  h1 { font-size: clamp(34px, 7vw, 56px); line-height: 1.04; margin: 0 0 18px; letter-spacing: -.02em; font-weight: 700; font-family: var(--head); }
   h1 em { font-style: normal; color: var(--mint); }
   .lead { color: var(--soft); font-size: 18px; margin: 0 0 40px; max-width: 58ch; }
   h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--text); margin: 52px 0 14px; display: flex; align-items: center; }
