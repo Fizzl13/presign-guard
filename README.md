@@ -38,6 +38,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
 | `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |
 | `POST /mcp` | free / paid | MCP server (Streamable HTTP): see below |
+| `POST /mcp/free` | free | The same MCP server with only the free checks |
 | `POST /feedback` | free | Report a bug or a missing feature: see [Feedback](#feedback) |
 | `GET /health` | free | Liveness |
 | `GET /openapi.json` | free | OpenAPI 3.1 spec with prices (`x-payment-info`) |
@@ -94,6 +95,8 @@ Every Fizzl skill (x402 Doctor, presign-guard, the Agent Wallet and Ichimoku Sig
 ## MCP
 
 `https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`. Directories can read its tools without connecting from the server card at `/.well-known/mcp/server-card.json` (the same list as `tools/list`).
+
+`https://presign-guard.fizzl.eu/mcp/free` is the same server with only the two free checks (`presign_quick_check`, `token_quick_verdict`), for directories whose clients don't pay, such as Claude's connectors directory. Claude calls connectors from Anthropic's outbound range (`160.79.104.0/21`), so calls from there share one pool of 300 free calls an hour instead of 10 per address, on both endpoints.
 
 Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agents](docs/claude-code-pre-trade.md): a token check and an Ichimoku trend check before every order, with a ready-made `CLAUDE.md` rule.
 

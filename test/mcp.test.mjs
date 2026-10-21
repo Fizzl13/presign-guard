@@ -16,7 +16,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { wrapMCPClientWithPayment } from "@x402/mcp";
 import { x402Client } from "@x402/core/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
-import { createMcpRouter, FREE_CALLS_PER_HOUR } from "../src/mcp.js";
+import { createMcpRouter, FREE_CALLS_PER_HOUR, isAnthropicIp } from "../src/mcp.js";
 import { createSigner, verifyReceipt } from "../src/receipt.js";
 import feedbackModule from "../src/feedback.cjs";
 
@@ -124,10 +124,19 @@ before(async () => {
 after(() => { servers.forEach((s) => s.close()); globalThis.fetch = realFetch; });
 beforeEach(() => { state.verify = 0; state.settle = 0; state.goplus = 0; state.dex = 0; });
 
-async function mcpClient() {
+async function mcpClient(path = "/mcp") {
   const client = new Client({ name: "test", version: "1.0.0" });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}${path}`)));
   return client;
+}
+
+// Claude's connectors directory wants a title and readOnlyHint or destructiveHint on every tool.
+function assertAnnotated(tools) {
+  for (const t of tools) {
+    assert.ok(t.title, `${t.name} has a title`);
+    const a = t.annotations || {};
+    assert.ok(a.readOnlyHint === true || typeof a.destructiveHint === "boolean", `${t.name}: readOnlyHint or destructiveHint`);
+  }
 }
 
 test("feedback tool: free, answers with an id and records the report via mcp", async () => {
@@ -152,7 +161,30 @@ test("lists the free quick checks and the paid tools with their prices", async (
   assert.match(tools.find((t) => t.name === "presign_check").description, /\$0\.01/);
   assert.match(tools.find((t) => t.name === "presign_check_explain").description, /\$0\.03/);
   assert.deepEqual(tools.find((t) => t.name === "presign_check").inputSchema.required.sort(), ["type"], "chainId is only required for EVM checks (parseRequest enforces it), not for type xrpl");
+  assertAnnotated(tools);
   await client.close();
+});
+
+test("mcp/free: only the two free checks, annotated, with no price or paid tool in descriptions or answers", async () => {
+  const client = await mcpClient("/mcp/free");
+  const { tools } = await client.listTools();
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["presign_quick_check", "token_quick_verdict"]);
+  assertAnnotated(tools);
+  for (const t of tools) assert.doesNotMatch(t.description, /\$\d|presign_check|token_verdict\b/, `${t.name} points to nothing paid`);
+  const red = await client.callTool({ name: "presign_quick_check", arguments: { ...APPROVAL, spender: EOA, amount: (2n ** 256n - 1n).toString() } });
+  assert.deepEqual(red.structuredContent, { verdict: "red", note: "Verdict only." });
+  assert.ok((await client.callTool({ name: "presign_check", arguments: APPROVAL })).isError, "no paid tool here");
+  await client.close();
+  assert.equal((await fetch(`${baseUrl}/mcp/free`)).status, 405);
+});
+
+test("Claude's outbound addresses share one larger free pool", () => {
+  assert.equal(isAnthropicIp("160.79.104.1"), true);
+  assert.equal(isAnthropicIp("::ffff:160.79.111.255"), true);
+  assert.equal(isAnthropicIp("160.79.112.0"), false);
+  assert.equal(isAnthropicIp("160.79.103.255"), false);
+  assert.equal(isAnthropicIp("127.0.0.1"), false);
+  assert.equal(isAnthropicIp(undefined), false);
 });
 
 test("server card lists the same tools as tools/list on /mcp", async () => {

@@ -269,7 +269,8 @@ app.get("/v1/sanctions", (_req, res) => {
 const feedback = feedbackModule.createFeedback({ service: "presign", record: usageLog.record, agentOf });
 app.use(feedback.router(express));
 
-// MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402.
+// MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402. POST /mcp/free: only the two free
+// checks, for directories whose clients do not pay (Claude's connectors directory).
 // One free limit per IP for the free MCP tools and GET /v1/token/quick together.
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
 app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, signer: SIGNER, limiter: freeLimiter, feedback }));
