@@ -39,6 +39,23 @@ import {
 
 export const VERSION = "1.6.0";
 export const FREE_CALLS_PER_HOUR = 10;
+// Claude calls remote MCP servers from Anthropic's outbound range (platform.claude.com/docs/en/api/ip-addresses), so
+// every Claude user of a connector arrives from the same few addresses. A per-IP limit would hold all of them to one
+// caller's 10 an hour; they share a larger pool instead.
+const ANTHROPIC_OUTBOUND = [["160.79.104.0", 21]];
+export const SHARED_FREE_CALLS_PER_HOUR = 300;
+
+function ipv4Number(ip) {
+  const m = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || ""));
+  if (!m || m.slice(1).some((p) => Number(p) > 255)) return null;
+  return m.slice(1).reduce((n, p) => n * 256 + Number(p), 0);
+}
+
+export function isAnthropicIp(ip) {
+  const n = ipv4Number(ip);
+  if (n === null) return false;
+  return ANTHROPIC_OUTBOUND.some(([base, bits]) => Math.floor(n / 2 ** (32 - bits)) === Math.floor(ipv4Number(base) / 2 ** (32 - bits)));
+}
 
 const CHAINS = INPUT_SCHEMA.properties.chainId.enum;
 
@@ -318,27 +335,31 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
   };
 }
 
-function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {} }) {
+// free: only the free tools, for directories whose clients don't pay (POST /mcp/free, e.g. Claude's connectors
+// directory): no paid tool, no feedback tool, and descriptions and answers that don't point to paid tools.
+function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {}, free = false }) {
   const server = new McpServer({ name: "presign-guard", version: VERSION });
+  const limitReached = (paid) => toolError(free ? "Free limit reached for this hour. Try again later." : `Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use ${paid}.`);
 
   server.registerTool(
     "presign_quick_check",
     {
       title: "Quick pre-sign verdict (free)",
-      description:
-        `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature, XRP Ledger transaction (type xrpl) or Algorand transaction (type algorand) your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
+      description: free
+        ? `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature, XRP Ledger transaction (type xrpl) or Algorand transaction (type algorand) your agent is about to sign. Red: don't sign; orange: tell the user why before going on. Nothing is signed or sent. Limited to ${FREE_CALLS_PER_HOUR} calls per hour.`
+        : `Free: the green/orange/red verdict only, for a transaction, token approval, EIP-712 signature, XRP Ledger transaction (type xrpl) or Algorand transaction (type algorand) your agent is about to sign. Limited to ${FREE_CALLS_PER_HOUR} calls per hour. For the reason codes and details use presign_check ($0.01); for a plain-language explanation presign_check_explain ($0.03).`,
       inputSchema: CHECK_INPUT,
       outputSchema: OUTPUT.presign_quick_check,
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: examplesMeta(INPUT_EXAMPLE),
     },
     async (args) => {
-      if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use presign_check ($0.01 USDC via x402) or POST https://presign-guard.fizzl.eu/v1/check.`);
+      if (!allowFree()) return limitReached("presign_check ($0.01 USDC via x402) or POST https://presign-guard.fizzl.eu/v1/check");
       const checked = await validate(args);
       if (checked.error) return toolError(checked.error);
       try {
         const r = await check(checked.request);
-        return json({ verdict: r.verdict, note: "Verdict only. presign_check ($0.01) returns the reasons and details." });
+        return json({ verdict: r.verdict, note: free ? "Verdict only." : "Verdict only. presign_check ($0.01) returns the reasons and details." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
       }
@@ -349,27 +370,28 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
     "token_quick_verdict",
     {
       title: "Quick token verdict (free)",
-      description:
-        `Free: the green/orange/red verdict and grade only, for a Solana or EVM token your agent is about to buy, hold or accept. Limited to ${FREE_CALLS_PER_HOUR} free calls per hour (shared with presign_quick_check). For the reasons, one-line summary and market data use token_verdict ($0.01).`,
+      description: free
+        ? `Free: the green/orange/red verdict and grade only, for a Solana or EVM token your agent is about to buy, hold or accept. Limited to ${FREE_CALLS_PER_HOUR} free calls per hour (shared with presign_quick_check).`
+        : `Free: the green/orange/red verdict and grade only, for a Solana or EVM token your agent is about to buy, hold or accept. Limited to ${FREE_CALLS_PER_HOUR} free calls per hour (shared with presign_quick_check). For the reasons, one-line summary and market data use token_verdict ($0.01).`,
       inputSchema: TOKEN_INPUT,
       outputSchema: OUTPUT.token_quick_verdict,
       annotations: { readOnlyHint: true, openWorldHint: true },
       _meta: examplesMeta(TOKEN_INPUT_EXAMPLE),
     },
     async (args) => {
-      if (!allowFree()) return toolError(`Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use token_verdict ($0.01 USDC via x402) or GET https://presign-guard.fizzl.eu/v1/token.`);
+      if (!allowFree()) return limitReached("token_verdict ($0.01 USDC via x402) or GET https://presign-guard.fizzl.eu/v1/token");
       const checked = validateToken(args);
       if (checked.error) return toolError(checked.error);
       try {
         const r = await tokenVerdict(checked.request);
-        return json({ verdict: r.verdict, grade: r.grade, note: "Verdict only. token_verdict ($0.01) returns the reasons, summary and market data." });
+        return json({ verdict: r.verdict, grade: r.grade, note: free ? "Verdict only." : "Verdict only. token_verdict ($0.01) returns the reasons, summary and market data." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
       }
     }
   );
 
-  for (const tool of PAID_TOOLS) {
+  for (const tool of free ? [] : PAID_TOOLS) {
     const getPaid = paidWrappers[tool.name];
     const price = priceOf(tool);
     server.registerTool(
@@ -404,7 +426,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       }
     );
   }
-  if (feedback) {
+  if (feedback && !free) {
     server.registerTool(
       feedback.mcpTool.name,
       {
@@ -412,7 +434,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
         description: feedback.mcpTool.description,
         inputSchema: feedback.mcpShape(z),
         ...(feedback.mcpOutputShape ? { outputSchema: feedback.mcpOutputShape(z) } : {}),
-        annotations: { readOnlyHint: false, openWorldHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
         // Marked as an example, so a checker that sends it is easy to spot in the log.
         _meta: examplesMeta({ type: "other", message: "Example report from the tool listing: please ignore." }),
       },
@@ -447,12 +469,14 @@ export async function serverCard(server) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, tool })]));
+  const allowFreeFor = (ip) => () => (isAnthropicIp(ip) ? shared("anthropic") : limiter(ip));
 
-  router.post("/mcp", express.json({ limit: "64kb" }), async (req, res) => {
-    const server = buildServer({ paidWrappers, allowFree: () => limiter(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] } });
+  // POST /mcp/free: the same server with only the free tools, for Claude's connectors directory.
+  const handle = (free) => async (req, res) => {
+    const server = buildServer({ paidWrappers, allowFree: allowFreeFor(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] }, free });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();
@@ -465,7 +489,9 @@ export function createMcpRouter({ resourceServer, network, payTo, solana = null,
       console.error("[mcp] error:", err);
       if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: "internal error" }, id: null });
     }
-  });
+  };
+  router.post("/mcp", express.json({ limit: "64kb" }), handle(false));
+  router.post("/mcp/free", express.json({ limit: "64kb" }), handle(true));
   // Static server card (SEP-1649) for MCP directories: the same tools as tools/list on /mcp,
   // read once from a server built like the one per request, so it never goes stale.
   let card = null;
@@ -478,8 +504,8 @@ export function createMcpRouter({ resourceServer, network, payTo, solana = null,
       res.status(500).json({ error: "server card unavailable" });
     }
   });
-  router.all("/mcp", (_req, res) => {
-    res.status(405).set("Allow", "POST").json({ jsonrpc: "2.0", error: { code: -32000, message: "Method not allowed; POST JSON-RPC to /mcp" }, id: null });
+  router.all(["/mcp", "/mcp/free"], (req, res) => {
+    res.status(405).set("Allow", "POST").json({ jsonrpc: "2.0", error: { code: -32000, message: `Method not allowed; POST JSON-RPC to ${req.path}` }, id: null });
   });
   return router;
 }

@@ -50,9 +50,12 @@ function describeMcpCall(req, body) {
   return {
     route: call.tool,
     via: "mcp",
-    input: a.address
-      ? { chain: a.chain, target: a.address }
-      : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang },
+    input: {
+      ...(a.address
+        ? { chain: a.chain, target: a.address }
+        : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang }),
+      ...(req.path === "/mcp/free" ? { endpoint: "free" } : {}),
+    },
     result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
     payment: usageLog.mcpPayment(req.body, body),
   };
@@ -114,7 +117,7 @@ export function describePresignCall(req, _res, body) {
   if (req.method === "GET" && req.path === "/.well-known/agent-registration.json") return { route: "agent registration", via: "discovery", input: {}, result: { status: _res.statusCode } };
   // Who reads the MCP server card (directories such as Smithery).
   if (req.method === "GET" && req.path === "/.well-known/mcp/server-card.json") return { route: "mcp server card", via: "discovery", input: {}, result: { status: _res.statusCode } };
-  if (req.method === "POST" && req.path === "/mcp") return describeMcpCall(req, body);
+  if (req.method === "POST" && (req.path === "/mcp" || req.path === "/mcp/free")) return describeMcpCall(req, body);
   if (req.method === "GET" && req.path === "/v1/token") return describeTokenCall(req, body);
   if (req.method === "GET" && req.path === "/v1/token/quick") {
     const q = req.query || {};
