@@ -364,6 +364,23 @@ test("Base, established token (DEGEN): pools and contracts are not counted as wh
   assert.ok(!codes(r).includes("TOP_HOLDERS_CONCENTRATED"));
 });
 
+test("Base, LP lock and an unknown pair age: 10,000+ holders isn't a young token (EURC, cbETH); a few hundred still is", async () => {
+  const noAge = (address, symbol) => { const p = pair(address, { liq: 1e6, createdDaysAgo: 0, symbol }); delete p.pairCreatedAt; return [p]; };
+  const unlocked = { is_open_source: "1", lp_holders: [{ address: "0xlp", percent: "1", is_locked: 0 }] };
+  const old = "0x7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d";
+  const fresh = "0x7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e";
+  FIXTURES.goplusEvm[old] = { ...unlocked, holder_count: "114326" };
+  FIXTURES.goplusEvm[fresh] = { ...unlocked, holder_count: "312" };
+  FIXTURES.dex[old] = noAge(old, "OLD");
+  FIXTURES.dex[fresh] = noAge(fresh, "NEW");
+  const established = await tokenVerdict({ chain: "base", address: old }, NOW);
+  assert.equal(established.market.ageSeconds, null);
+  assert.deepEqual([established.verdict, established.grade], ["green", "SAFE"]);
+  assert.equal(established.reasons.find((x) => x.code === "LP_NOT_LOCKED").severity, "info");
+  const young = await tokenVerdict({ chain: "base", address: fresh }, NOW);
+  assert.deepEqual(codes(young, "orange"), ["LP_NOT_LOCKED"]);
+});
+
 test("Base, trusted token: issuer powers, thin DexScreener liquidity and LP lock are context; a big wallet still counts", async () => {
   const r = await tokenVerdict({ chain: "base", address: WETH }, NOW);
   assert.deepEqual(codes(r, "orange"), ["TOP_HOLDERS_CONCENTRATED"]);

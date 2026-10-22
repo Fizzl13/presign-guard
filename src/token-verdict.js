@@ -50,6 +50,9 @@ export const TOKEN_CHAINS = {
 export const LOW_LIQUIDITY_USD = 50_000;
 export const NEW_TOKEN_SECONDS = 24 * 3600;
 export const YOUNG_TOKEN_SECONDS = 30 * 86400; // unlocked LP matters most in the first month
+// DexScreener leaves out pairCreatedAt for some pools (EURC and cbETH on Base: one Aerodrome pool each). Then a
+// token with this many holders (GoPlus) doesn't count as young; a token launched this month rarely has them.
+export const ESTABLISHED_HOLDERS = 10_000;
 export const LP_LOCKED_MIN_PCT = 50;
 export const TOP_HOLDER_MAX_PCT = 20;
 export const TOP10_MAX_PCT = 50;
@@ -196,13 +199,13 @@ function reasonCollector() {
 
 // trusted: on the GoPlus trust list. DexScreener mostly returns the pairs where a token
 // is the base token, so the liquidity of a quote asset (USDC, WETH) looks far too low.
-function marketReasons(market, add, { lpLockedPct, trusted = false } = {}) {
+function marketReasons(market, add, { lpLockedPct, trusted = false, established = false } = {}) {
   if (!market) { add("NO_DEX_MARKET", trusted ? "info" : "orange"); return; }
   if (market.liquidityUsd < LOW_LIQUIDITY_USD) add("LOW_LIQUIDITY", trusted ? "info" : "orange", { liquidityUsd: market.liquidityUsd });
   if (market.ageSeconds !== null && market.ageSeconds < NEW_TOKEN_SECONDS) add("NEW_TOKEN", "orange", { ageSeconds: market.ageSeconds });
   if (lpLockedPct !== null && lpLockedPct !== undefined && lpLockedPct < LP_LOCKED_MIN_PCT) {
     // Concentrated-liquidity pools have no LP token to lock, so only a young token is flagged.
-    const young = market.ageSeconds === null || market.ageSeconds < YOUNG_TOKEN_SECONDS;
+    const young = market.ageSeconds === null ? !established : market.ageSeconds < YOUNG_TOKEN_SECONDS;
     add("LP_NOT_LOCKED", young && !trusted ? "orange" : "info", { lpLockedPct: pct1(lpLockedPct) });
   }
   if (!market.socials) add("NO_SOCIALS", "info");
@@ -322,7 +325,7 @@ function evmReasons({ sec, market, controls, controllers, official = false }, ad
   const lpLockedPct = lp.length
     ? lp.filter((h) => flag(h.is_locked) || BURN.has(String(h.address).toLowerCase())).reduce((s, h) => s + (num(h.percent) ?? 0) * 100, 0)
     : null;
-  marketReasons(market, add, { lpLockedPct, trusted });
+  marketReasons(market, add, { lpLockedPct, trusted, established: num(sec?.holder_count) >= ESTABLISHED_HOLDERS });
   // Wallets only: the big contract holders of an EVM token are pools, lockers,
   // staking, vesting and bridges (veAERO holds half of AERO).
   if (Array.isArray(sec?.holders)) {
