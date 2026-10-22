@@ -11,6 +11,8 @@ import {
 import { mintConfigAddress, decodeMintConfig, TOKEN_2022_PROGRAM, TOKEN_ACL_PROGRAM } from "../src/token-acl.js";
 import { GENESIS_PROGRAM } from "../src/launch-escrow.js";
 import { getAddressDecoder, getAddressEncoder } from "@solana/kit";
+import { encodeAbiParameters, toFunctionSelector } from "viem";
+import { controllerSummary, describeHolder, finalHolder } from "../src/controllers.js";
 
 const NOW = Date.UTC(2026, 8, 25, 12);
 const DAY = 86400e3;
@@ -39,6 +41,16 @@ const NOMARKET = "0x2222222222222222222222222222222222222222";
 const WETH = "0x4200000000000000000000000000000000000006";
 const CBBTC = "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf";
 const PAUSED = "0x6666666666666666666666666666666666666666";
+
+// A 32-byte word: a number, or an address padded on the left.
+const word = (v) => "0x" + (typeof v === "string" ? v.slice(2).toLowerCase() : BigInt(v).toString(16)).padStart(64, "0");
+const sel = (signature) => toFunctionSelector(signature);
+const SLOT = {
+  admin: "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103",
+  zosAdmin: "0x10d6a54a4754c8869d6886b5f5d7fbfa5b4522237ea5c60d11bc4e7a1ff9390b",
+  implementation: "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+};
+const ownersOf = (n) => encodeAbiParameters([{ type: "address[]" }], [Array.from({ length: n }, (_, i) => `0x${String(i + 1).padStart(40, "0")}`)]);
 
 const off = { status: "0" };
 const on = { status: "1" };
@@ -121,6 +133,9 @@ const FIXTURES = {
     },
     [PAUSED]: { "0x5c975abb": "0x" + "0".repeat(63) + "1" },
   },
+  // eth_getStorageAt answers by contract and slot (unset slots are zero), and eth_getCode by address (no code: a wallet).
+  slots: {},
+  code: {},
 };
 
 // Solana RPC getAccountInfo answers, filled in before() (the PDAs need async derivation).
@@ -176,8 +191,17 @@ before(async () => {
     }
     if (u.hostname === "base-rpc.publicnode.com") {
       if (down.has("rpc")) throw new TypeError("fetch failed");
-      // One JSON-RPC batch per token.
-      return Response.json(JSON.parse(init.body).map(({ id, params: [{ to, data }] }) => {
+      // One JSON-RPC batch per token (or per role holder): storage slots, code and eth_call.
+      return Response.json(JSON.parse(init.body).map(({ id, method, params }) => {
+        if (method === "eth_getStorageAt") {
+          rpcCalls.push("slot");
+          return { jsonrpc: "2.0", id, result: FIXTURES.slots[params[0]]?.[params[1]] ?? word(0) };
+        }
+        if (method === "eth_getCode") {
+          rpcCalls.push("code");
+          return { jsonrpc: "2.0", id, result: FIXTURES.code[params[0]] ?? "0x" };
+        }
+        const [{ to, data }] = params;
         rpcCalls.push(data.slice(0, 10));
         const result = FIXTURES.rpc[to]?.[data.slice(0, 10)];
         return result ? { jsonrpc: "2.0", id, result } : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } };
@@ -378,8 +402,111 @@ test("Base, controls: no RPC calls when GoPlus answers; RPC down means no contro
   FIXTURES.dex[silent] = [pair(silent, { liq: 2e6, createdDaysAgo: 400 })];
   const r = await tokenVerdict({ chain: "base", address: silent }, NOW);
   assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
-  assert.ok(!r.reasons.some((x) => ["TOKEN_PAUSABLE", "TOKEN_BLACKLIST", "TOKEN_PAUSED"].includes(x.code)));
+  assert.ok(!r.reasons.some((x) => ["TOKEN_PAUSABLE", "TOKEN_BLACKLIST", "TOKEN_PAUSED", "TOKEN_CONTROLLERS", "TOKEN_UPGRADE_ONE_KEY"].includes(x.code)));
   assert.ok(!r.sources.includes("chain"));
+});
+
+// Who holds a token's powers (src/controllers.js). Addresses: 0xa… wallets, 0xb… contracts.
+const KEY = "0xaaaa000000000000000000000000000000000001";
+const SAFE = "0xbbbb000000000000000000000000000000000001";
+const PROXY_ADMIN = "0xbbbb000000000000000000000000000000000002";
+const TIMELOCK = "0xbbbb000000000000000000000000000000000003";
+const OLD_MULTISIG = "0xbbbb000000000000000000000000000000000004";
+const EURC = "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42";
+function controlFixture(token, goplus, { slots = {}, calls = {} } = {}) {
+  FIXTURES.goplusEvm[token] = { is_open_source: "1", ...goplus };
+  FIXTURES.dex[token] = [pair(token, { liq: 2e6, createdDaysAgo: 400 })];
+  FIXTURES.slots[token] = slots;
+  FIXTURES.rpc[token] = { ...FIXTURES.rpc[token], ...calls };
+}
+FIXTURES.code[SAFE] = "0x6080";
+FIXTURES.rpc[SAFE] = { [sel("getThreshold()")]: word(2), [sel("getOwners()")]: ownersOf(3) };
+FIXTURES.code[PROXY_ADMIN] = "0x6080";
+FIXTURES.rpc[PROXY_ADMIN] = { [sel("owner()")]: word(TIMELOCK) };
+FIXTURES.code[TIMELOCK] = "0x6080";
+FIXTURES.rpc[TIMELOCK] = { [sel("getMinDelay()")]: word(172800) };
+FIXTURES.code[OLD_MULTISIG] = "0x6080";
+FIXTURES.rpc[OLD_MULTISIG] = { [sel("required()")]: word(3), [sel("getOwners()")]: ownersOf(5) };
+
+test("Base, who can upgrade: one key on a token nobody vouches for is orange, and every role holder is named", async () => {
+  const token = "0x7777777777777777777777777777777777777777";
+  controlFixture(token, { is_proxy: "1" }, { slots: { [SLOT.admin]: word(KEY) }, calls: { [sel("owner()")]: word(SAFE) } });
+  const r = await tokenVerdict({ chain: "base", address: token }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["orange", "CAUTION"]);
+  assert.deepEqual(codes(r, "orange"), ["TOKEN_UPGRADE_ONE_KEY"]);
+  const byCode = Object.fromEntries(r.reasons.map((x) => [x.code, x]));
+  assert.deepEqual(byCode.TOKEN_UPGRADE_ONE_KEY.details, { upgrader: KEY, key: KEY });
+  assert.equal(byCode.TOKEN_CONTROLLERS.details.summary, "upgrade: one key; owner: 2-of-3 multisig");
+  assert.match(r.one_liner, /^CAUTION: one key can upgrade the contract/);
+  assert.equal(r.controllers.upgradeVia, "proxy admin");
+  assert.deepEqual(r.controllers.holders.find((h) => h.address === SAFE), { address: SAFE, roles: ["owner"], type: "multisig", threshold: 2, owners: 3 });
+  assert.ok(r.sources.includes("chain"));
+});
+
+test("Base, an upgrade through a ProxyAdmin owned by a two-day timelock: context, not a warning", async () => {
+  const token = "0x7878787878787878787878787878787878787878";
+  controlFixture(token, { is_proxy: "1" }, { slots: { [SLOT.admin]: word(PROXY_ADMIN) } });
+  const r = await tokenVerdict({ chain: "base", address: token }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
+  assert.equal(r.reasons.find((x) => x.code === "TOKEN_CONTROLLERS").details.summary, "upgrade: timelock (2 days delay) via a contract");
+  assert.deepEqual(finalHolder(r.controllers.holders[0]), { address: TIMELOCK, type: "timelock", delaySeconds: 172800, via: [PROXY_ADMIN] });
+});
+
+test("Base, one key that can upgrade a trust-list or official token (cbBTC, EURC) is context: the issuer keeps it on purpose", async () => {
+  // Set up like cbBTC on Base (verdicts are cached, so a fresh address): FiatToken roles, the ZeppelinOS admin slot.
+  const trusted = "0x7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c";
+  controlFixture(trusted, { is_proxy: "1", trust_list: "1", owner_address: "0x5e8114643966b7fd7d5cfdd8695ffc5c51ff32c0" }, {
+    slots: { [SLOT.zosAdmin]: word(KEY) }, calls: FIXTURES.rpc[CBBTC],
+  });
+  const cb = await tokenVerdict({ chain: "base", address: trusted }, NOW);
+  assert.deepEqual([cb.verdict, cb.grade], ["green", "SAFE"]);
+  assert.equal(cb.reasons.find((x) => x.code === "TOKEN_UPGRADE_ONE_KEY").severity, "info");
+  assert.equal(cb.one_liner, "SAFE: no red flags, on the GoPlus trust list; issuer can pause transfers and blacklist holders");
+  assert.equal(cb.reasons.find((x) => x.code === "TOKEN_CONTROLLERS").details.summary, "upgrade: one key; owner: one key; pause: one key; blacklist: one key");
+
+  controlFixture(EURC, { is_proxy: "1" }, { slots: { [SLOT.zosAdmin]: word(KEY) } }); // not on the GoPlus trust list
+  const eurc = await tokenVerdict({ chain: "base", address: EURC }, NOW);
+  assert.deepEqual([eurc.verdict, eurc.grade], ["green", "SAFE"]);
+  assert.equal(eurc.reasons.find((x) => x.code === "TOKEN_UPGRADE_ONE_KEY").severity, "info");
+});
+
+test("Base, UUPS proxy: its owner likely upgrades it; said, but never orange on a guess", async () => {
+  const token = "0x7979797979797979797979797979797979797979";
+  controlFixture(token, { is_proxy: "1" }, { slots: { [SLOT.implementation]: word("0x9999999999999999999999999999999999999999") }, calls: { [sel("owner()")]: word(KEY) } });
+  const r = await tokenVerdict({ chain: "base", address: token }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
+  assert.ok(!codes(r).includes("TOKEN_UPGRADE_ONE_KEY"));
+  assert.equal(r.reasons.find((x) => x.code === "TOKEN_CONTROLLERS").details.summary, "upgrade (UUPS, likely the owner): one key; owner: one key");
+  assert.equal(r.controllers.upgradeVia, "owner (UUPS)");
+});
+
+test("Base, a mintable token: GoPlus's owner is classified (an older MultiSigWallet); a renounced owner costs no RPC calls", async () => {
+  const minted = "0x7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a";
+  controlFixture(minted, { is_mintable: "1", owner_address: OLD_MULTISIG });
+  const r = await tokenVerdict({ chain: "base", address: minted }, NOW);
+  assert.equal(r.reasons.find((x) => x.code === "TOKEN_CONTROLLERS").details.summary, "owner: 3-of-5 multisig");
+  assert.ok(!r.controllers.upgradeVia);
+
+  const renounced = "0x7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b7b";
+  controlFixture(renounced, { is_mintable: "1", owner_address: "0x0000000000000000000000000000000000000000" });
+  rpcCalls.length = 0;
+  const plain = await tokenVerdict({ chain: "base", address: renounced }, NOW);
+  assert.ok(!rpcCalls.includes("slot") && !rpcCalls.includes(sel("owner()")), rpcCalls.join()); // only the pause/blacklist getters
+  assert.ok(!codes(plain).includes("TOKEN_CONTROLLERS"));
+  assert.ok(!plain.controllers);
+});
+
+test("controller descriptions: timelock run by a multisig, a delegated wallet, a renounced owner, the same holder named once", () => {
+  const timelock = { address: TIMELOCK, type: "timelock", delaySeconds: 3 * 3600, admin: { address: SAFE, type: "multisig", threshold: 4, owners: 7 } };
+  assert.equal(describeHolder(timelock), "timelock (3 h delay, run by 4-of-7 multisig)");
+  assert.equal(describeHolder({ address: KEY, type: "key", delegated: true }), "one key");
+  assert.equal(describeHolder({ address: PROXY_ADMIN, type: "contract", owner: { address: KEY, type: "key" } }), "one key via a contract");
+  assert.equal(describeHolder({ address: PROXY_ADMIN, type: "contract" }), "a contract");
+  assert.equal(controllerSummary({ upgradeVia: null, holders: [
+    { address: "0x0000000000000000000000000000000000000000", roles: ["owner"], type: "renounced" },
+    { address: KEY, roles: ["mint", "pause"], type: "key" },
+    { address: "0xaaaa000000000000000000000000000000000002", roles: ["mint"], type: "key" },
+  ] }), "owner: renounced; mint: one key; pause: one key");
 });
 
 test("Base, honeypot: red, AVOID, and the GoPlus token rules from /v1/check apply", async () => {
