@@ -338,14 +338,16 @@ function evmReasons({ sec, market, controls, controllers, official = false }, ad
   }
 }
 
-// Who can upgrade, mint, pause or blacklist (controllers.js): asked for a proxy, and for a token whose owner
-// GoPlus says has such a power. A plain token with no owner costs no extra RPC calls.
+// Who can upgrade, mint, pause or blacklist (controllers.js): asked for a proxy, for a token whose owner GoPlus
+// says has such a power, and for a mintable token GoPlus names no owner for (AERO: a Minter contract mints it). A
+// plain token with no owner, or with a renounced one, costs no extra RPC calls.
 const OWNER_POWERS = ["is_mintable", "transfer_pausable", "is_blacklisted", "owner_change_balance", "slippage_modifiable"];
 const ownerOf = (sec) => {
   const a = String(sec?.owner_address ?? "").toLowerCase();
   return isAddress(a, { strict: false }) && !/^0x0{40}$/.test(a) && a !== "0x000000000000000000000000000000000000dead" ? a : null;
 };
-const needsControllerCheck = (sec, owner) => Boolean(sec && (flag(sec.is_proxy) || (owner && OWNER_POWERS.some((f) => flag(sec[f])))));
+const needsControllerCheck = (sec, owner) => Boolean(sec && (flag(sec.is_proxy) || (owner && OWNER_POWERS.some((f) => flag(sec[f])))
+  || (flag(sec.is_mintable) && !sec.owner_address)));
 
 // ---------- verdict ----------
 

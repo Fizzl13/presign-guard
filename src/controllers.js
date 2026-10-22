@@ -11,8 +11,10 @@
 // Each holder is then classified. No code is one key (an EIP-7702 wallet is still one key). getThreshold() and
 // getOwners() (Safe), or required() and getOwners() (the older MultiSigWallet, Tether's), is a multisig.
 // getMinDelay() (OpenZeppelin TimelockController) or delay() with admin() (Compound's Timelock) is a timelock.
-// Another contract with an owner() (a ProxyAdmin, a minter contract) is followed to that owner, two hops at
-// most. The zero and dead addresses mean renounced.
+// Another contract is followed to the account that runs it, two hops at most: its owner() (a ProxyAdmin, a minter
+// contract), or else the getter its protocol uses for that: defaultAdmin() (OpenZeppelin's AccessControl with
+// admin rules), admin(), governance(), governor(), gov(), or team() (the Velodrome-style Minter that mints AERO,
+// run by a Safe). The zero and dead addresses mean renounced.
 
 import { decodeFunctionResult, encodeFunctionData, parseAbi } from "viem";
 import { rpcBatch } from "./presign-guard.js";
@@ -36,10 +38,17 @@ const ABI = parseAbi([
   "function getMinDelay() view returns (uint256)",
   "function delay() view returns (uint256)",
   "function admin() view returns (address)",
+  "function defaultAdmin() view returns (address)",
+  "function governance() view returns (address)",
+  "function governor() view returns (address)",
+  "function gov() view returns (address)",
+  "function team() view returns (address)",
 ]);
 const call = (to, functionName) => ["eth_call", [{ to, data: encodeFunctionData({ abi: ABI, functionName }) }, "latest"]];
 const ROLE_GETTERS = [["owner", "owner"], ["masterMinter", "mint"], ["minter", "mint"], ["pauser", "pause"], ["blacklister", "blacklist"]];
-const CLASSIFIERS = ["getThreshold", "required", "getOwners", "getMinDelay", "delay", "admin", "owner"];
+// Who runs a contract, in the order asked: the first one set (not zero, not the contract itself) is followed.
+const RUN_BY = ["owner", "defaultAdmin", "admin", "governance", "governor", "gov", "team"];
+const CLASSIFIERS = ["getThreshold", "required", "getOwners", "getMinDelay", "delay", ...RUN_BY];
 export const ROLES = ["upgrade", "owner", "mint", "pause", "blacklist"];
 const MAX_HOPS = 2;
 const RENOUNCED = new Set(["0x0000000000000000000000000000000000000000", "0x000000000000000000000000000000000000dead"]);
@@ -55,7 +64,8 @@ function owners(raw) {
   try { return decodeFunctionResult({ abi: ABI, functionName: "getOwners", data: raw }); } catch { return null; }
 }
 
-// { type: "key" | "multisig" | "timelock" | "contract" | "renounced" | "unknown", … } for one address.
+// { type: "key" | "multisig" | "timelock" | "contract" | "renounced" | "unknown", … } for one address. A contract
+// carries the account that runs it as owner, and ownerVia when that came from a getter other than owner().
 async function classify(chainId, address, hops = 0) {
   if (RENOUNCED.has(address)) return { type: "renounced" };
   let code, answers;
@@ -77,8 +87,10 @@ async function classify(chainId, address, hops = 0) {
   const delay = uint(r.delay);
   const admin = setAddress(r.admin);
   if (delay !== null && admin) return { type: "timelock", delaySeconds: delay, ...(hops < MAX_HOPS && { admin: await next(admin) }) };
-  const owner = setAddress(r.owner);
-  if (owner && owner !== address && hops < MAX_HOPS) return { type: "contract", owner: await next(owner) };
+  const getter = RUN_BY.find((fn) => setAddress(r[fn]) && setAddress(r[fn]) !== address);
+  if (getter && hops < MAX_HOPS) {
+    return { type: "contract", owner: await next(setAddress(r[getter])), ...(getter !== "owner" && { ownerVia: `${getter}()` }) };
+  }
   return { type: "contract" };
 }
 

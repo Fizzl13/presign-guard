@@ -444,6 +444,12 @@ FIXTURES.code[TIMELOCK] = "0x6080";
 FIXTURES.rpc[TIMELOCK] = { [sel("getMinDelay()")]: word(172800) };
 FIXTURES.code[OLD_MULTISIG] = "0x6080";
 FIXTURES.rpc[OLD_MULTISIG] = { [sel("required()")]: word(3), [sel("getOwners()")]: ownersOf(5) };
+const MINTER = "0xbbbb000000000000000000000000000000000005"; // like Aerodrome's Minter: no owner(), run by team()
+FIXTURES.code[MINTER] = "0x6080";
+FIXTURES.rpc[MINTER] = { [sel("team()")]: word(SAFE) };
+const ADMINED = "0xbbbb000000000000000000000000000000000006"; // admin() without a delay: not a timelock
+FIXTURES.code[ADMINED] = "0x6080";
+FIXTURES.rpc[ADMINED] = { [sel("owner()")]: word(ADMINED), [sel("admin()")]: word(KEY) };
 
 test("Base, who can upgrade: one key on a token nobody vouches for is orange, and every role holder is named", async () => {
   const token = "0x7777777777777777777777777777777777777777";
@@ -511,6 +517,28 @@ test("Base, a mintable token: GoPlus's owner is classified (an older MultiSigWal
   assert.ok(!rpcCalls.includes("slot") && !rpcCalls.includes(sel("owner()")), rpcCalls.join()); // only the pause/blacklist getters
   assert.ok(!codes(plain).includes("TOKEN_CONTROLLERS"));
   assert.ok(!plain.controllers);
+});
+
+test("Base, a mintable token GoPlus names no owner for (like AERO): its Minter is followed through team() to a Safe", async () => {
+  const token = "0x7f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f";
+  controlFixture(token, { is_mintable: "1" }, { calls: { [sel("minter()")]: word(MINTER) } });
+  const r = await tokenVerdict({ chain: "base", address: token }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"]);
+  assert.equal(r.reasons.find((x) => x.code === "TOKEN_CONTROLLERS").details.summary, "mint: 2-of-3 multisig via a contract");
+  assert.deepEqual(r.controllers.holders, [{
+    address: MINTER, roles: ["mint"], type: "contract", ownerVia: "team()",
+    owner: { address: SAFE, type: "multisig", threshold: 2, owners: 3 },
+  }]);
+});
+
+test("Base, an upgrade through a contract run by admin() (no delay, owner() is itself): one key behind it is orange", async () => {
+  const token = "0x7f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f";
+  controlFixture(token, { is_proxy: "1" }, { slots: { [SLOT.admin]: word(ADMINED) } });
+  const r = await tokenVerdict({ chain: "base", address: token }, NOW);
+  assert.deepEqual([r.verdict, r.grade], ["orange", "CAUTION"]);
+  assert.deepEqual(r.reasons.find((x) => x.code === "TOKEN_UPGRADE_ONE_KEY").details, { upgrader: ADMINED, key: KEY, via: [ADMINED] });
+  assert.equal(r.reasons.find((x) => x.code === "TOKEN_CONTROLLERS").details.summary, "upgrade: one key via a contract");
+  assert.equal(r.controllers.holders[0].ownerVia, "admin()");
 });
 
 test("controller descriptions: timelock run by a multisig, a delegated wallet, a renounced owner, the same holder named once", () => {
