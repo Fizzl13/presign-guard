@@ -11,7 +11,7 @@ An agent with a wallet can be talked into signing a drainer approval, buying a h
 
 - **The decoding:** EVM transactions are simulated, and Solana instructions are decoded and simulated.
 - **The parties:** the spender or recipient is screened against the OFAC SDN list and theft and phishing reports.
-- **The token itself:** honeypots, impersonation, high tax, and mint or freeze powers.
+- **The token itself:** honeypots, impersonation, high tax, mint or freeze powers, and who holds them (one key, a multisig or a timelock).
 
 **The rule, every time:**
 

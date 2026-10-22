@@ -21,8 +21,9 @@ import {
   issuerControls, controlReasons, needsControlCheck,
 } from "./presign-guard.js";
 import { permissionedToken } from "./token-acl.js";
+import { tokenControllers, controllerReasons } from "./controllers.js";
 import { launchEscrows } from "./launch-escrow.js";
-import { secondOpinion } from "./jev.js";
+import { secondOpinion, isOfficialToken } from "./jev.js";
 import { isXrplAddress, ledger, isRlusdCode, currencyName, RLUSD, LSF, BLACKHOLES, XRPL_NETWORKS } from "./xrpl.js";
 import { ALGORAND_NETWORKS, ALGORAND_ZERO } from "./algorand-tx.js";
 
@@ -308,12 +309,14 @@ async function withoutLaunchEscrows(holders) {
   return { holders: holders.map((h) => (escrows.has(h.owner) ? { ...h, excluded: true } : h)), escrowPct };
 }
 
-function evmReasons({ sec, market, controls }, add) {
+function evmReasons({ sec, market, controls, controllers, official = false }, add) {
   // The same GoPlus rules as the token part of /v1/check, without a subject. On a
   // trust-list token (USDT, USDC) the issuer's powers are context, as on Solana.
   const trusted = flag(sec?.trust_list);
   tokenReasons(null, sec, (code, severity, _subject, details) => add(code, trusted && severity === "orange" ? "info" : severity, details));
   controlReasons(controls, add);
+  // Circle's EURC isn't on the GoPlus trust list but is set up like its USDC: the known official contracts count too.
+  controllerReasons(controllers, add, { trusted: trusted || official });
   if (flag(sec?.cannot_buy)) add("TOKEN_CANNOT_BUY", "orange");
   const lp = Array.isArray(sec?.lp_holders) ? sec.lp_holders : [];
   const lpLockedPct = lp.length
@@ -331,6 +334,15 @@ function evmReasons({ sec, market, controls }, add) {
     })), add);
   }
 }
+
+// Who can upgrade, mint, pause or blacklist (controllers.js): asked for a proxy, and for a token whose owner
+// GoPlus says has such a power. A plain token with no owner costs no extra RPC calls.
+const OWNER_POWERS = ["is_mintable", "transfer_pausable", "is_blacklisted", "owner_change_balance", "slippage_modifiable"];
+const ownerOf = (sec) => {
+  const a = String(sec?.owner_address ?? "").toLowerCase();
+  return isAddress(a, { strict: false }) && !/^0x0{40}$/.test(a) && a !== "0x000000000000000000000000000000000000dead" ? a : null;
+};
+const needsControllerCheck = (sec, owner) => Boolean(sec && (flag(sec.is_proxy) || (owner && OWNER_POWERS.some((f) => flag(sec[f])))));
 
 // ---------- verdict ----------
 
@@ -360,6 +372,7 @@ const PHRASES = {
   BALANCE_MUTABLE: () => "balances can be changed",
   TOKEN_OWNER_CAN_CHANGE_BALANCES: () => "owner can change balances",
   TOKEN_PAUSED: () => "transfers are paused",
+  TOKEN_UPGRADE_ONE_KEY: () => "one key can upgrade the contract",
   TOKEN_FROZEN: () => "issuer froze all transfers",
   TOKEN_ISSUER_NOT_FOUND: () => "issuer account doesn't exist",
   CLAWBACK_ENABLED: () => "issuer can claw tokens back",
@@ -564,6 +577,7 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
   let partial = false;
   let market;
   let permissionedInfo = null;
+  let controllersInfo = null;
 
   if (chain === "solana") {
     const [sec, rug, pairs] = await Promise.all([getSolanaSecurity(address), getRugcheck(address), getMarket(chain, address)]);
@@ -585,9 +599,14 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     const [sec, pairs] = await Promise.all([getTokenSecurity(chainId, address), getMarket(chain, address)]);
     market = summarizeMarket(pairs, chain, address, now);
     partial = sec.partial;
-    const controls = needsControlCheck(sec.data) ? await issuerControls(chainId, address) : null;
-    if (controls) sources.push("chain");
-    evmReasons({ sec: sec.data, market, controls }, add);
+    const owner = ownerOf(sec.data);
+    const [controls, controllers] = await Promise.all([
+      needsControlCheck(sec.data) ? issuerControls(chainId, address) : null,
+      needsControllerCheck(sec.data, owner) ? tokenControllers(chainId, address, { ownerHint: owner }) : null,
+    ]);
+    if (controls || controllers) sources.push("chain");
+    if (controllers?.holders.length) controllersInfo = controllers;
+    evmReasons({ sec: sec.data, market, controls, controllers, official: isOfficialToken(chainId, address) }, add);
   }
 
   // Jev's second opinion on the name (src/jev.js): only when the token isn't already flagged as a copy.
@@ -613,6 +632,7 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     token: { chain, address, name: market?.name ?? null, symbol: market?.symbol ?? null },
     market,
     ...(permissionedInfo && { permissioned: permissionedInfo }),
+    ...(controllersInfo && { controllers: controllersInfo }),
     ...(partial && { partial: true }),
     sources,
     checkedAt: new Date(now).toISOString(),

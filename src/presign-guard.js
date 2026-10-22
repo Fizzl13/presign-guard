@@ -253,6 +253,34 @@ function ethCalls(chainId, to, datas) {
   });
 }
 
+// Any read-only JSON-RPC requests ([method, params] pairs) as one batch, with the same answers as ethCalls:
+// the result, null for a revert, undefined for no answer. Used by the token controller reads (controllers.js).
+function rpcBatch(chainId, requests) {
+  return cached(`batch:${chainId}:${JSON.stringify(requests)}`, async () => {
+    let res;
+    try {
+      res = await fetch(process.env[`RPC_URL_${chainId}`] || RPC_URLS[chainId], {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(requests.map(([method, params], id) => ({ jsonrpc: "2.0", id, method, params }))),
+        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+      });
+    } catch (err) {
+      throw new UpstreamError(`Chain RPC unreachable (${err.name})`);
+    }
+    const body = res.ok ? await res.json().catch(() => null) : null;
+    if (!Array.isArray(body)) throw new UpstreamError(`Chain RPC error${res.ok ? "" : ` (HTTP ${res.status})`}`);
+    const results = requests.map((_, id) => {
+      const answer = body.find((x) => x?.id === id);
+      if (typeof answer?.result === "string") return answer.result;
+      if (answer?.error && /revert/i.test(String(answer.error.message))) return null;
+      return undefined;
+    });
+    if (results.every((x) => x === undefined)) throw new UpstreamError("Chain RPC error (no answers)"); // not cached
+    return results;
+  });
+}
+
 // GoPlus approval_security sometimes calls a plain contract a proxy (DEGEN on
 // Base: a full 11.6 KB contract with no proxy slot set, while token_security
 // says is_proxy=0). Confirm on-chain against the standard layouts; the first
@@ -384,7 +412,7 @@ const needsControlCheck = (sec) => sec && sec.transfer_pausable === undefined &&
 // Shared with the token verdict (token-verdict.js).
 export {
   ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
-  issuerControls, controlReasons, needsControlCheck,
+  issuerControls, controlReasons, needsControlCheck, rpcBatch,
 };
 
 // ---------- input helpers ----------

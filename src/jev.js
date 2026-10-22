@@ -26,6 +26,8 @@ const OFFICIAL = {
   // XRP Ledger tokens are "<currency>.<issuer>" (the currency as text, e.g. "RLUSD.r…"). XRP itself is no token.
   xrpl: { RLUSD: "RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
 };
+// The real contract of one of those tokens (EVM chains; addresses lowercase).
+export const isOfficialToken = (chainId, address) => Object.values(OFFICIAL[chainId] ?? {}).includes(String(address).toLowerCase());
 // XRPL: a currency name that is RLUSD with something added or changed (RLUSD2, RLUSDC, RL-USD, R1USD) is a copy of
 // Ripple's stablecoin by its name alone; decided by code like the rules above. RLUSD itself from another issuer is
 // already red in the XRPL checks (XRPL_FAKE_RLUSD, TOKEN_IMPERSONATION).
