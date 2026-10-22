@@ -23,6 +23,9 @@ const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wall
 const DELEGATED_BAD = "0xbad0000000000000000000000000000000000005"; // EIP-7702 wallet delegating to PHISH
 const DELEGATED_UNVERIFIED = "0xbad0000000000000000000000000000000000006"; // delegating to unverified code
 const UNVERIFIED_IMPL = "0xbad0000000000000000000000000000000000007";
+const SOURCIFY_IMPL = "0xbad0000000000000000000000000000000000008"; // unverified per GoPlus, an exact match on Sourcify
+const DELEGATED_SOURCIFY = "0xbad0000000000000000000000000000000000009"; // delegating to it (like Coinbase's EIP7702Proxy)
+const sourcifyCalls = [];
 const UNDEPLOYED = "0xbad0000000000000000000000000000000000021"; // no code yet (a CREATE2 address nobody deployed)
 const TRUSTED_IMPL = "0x5555000000000000000000000000000000000001"; // on GoPlus's trust list
 const REAL_PROXY = "0x3333000000000000000000000000000000000001"; // GoPlus is_proxy, EIP-1967 slot set on-chain
@@ -157,7 +160,7 @@ function mockRpc(opts) {
   if (address === MIN_PROXY) {
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3` }));
   }
-  const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2) }[address];
+  const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2), [DELEGATED_SOURCIFY]: SOURCIFY_IMPL.slice(2) }[address];
   const result = delegateTo ? "0xef0100" + delegateTo : address === UNDEPLOYED ? "0x" : "0x6080604052";
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
 }
@@ -190,7 +193,7 @@ function mockGoplus(url) {
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
     ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
-    : { is_contract: isEoa ? "0" : "1", is_open_source: u.includes(UNVERIFIED_IMPL) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
+    : { is_contract: isEoa ? "0" : "1", is_open_source: [UNVERIFIED_IMPL, SOURCIFY_IMPL].some((x) => u.includes(x)) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
         ...(u.includes(TRUSTED_IMPL) && { trust_list: "1" }),
         ...([REAL_PROXY, FAKE_PROXY, MIN_PROXY, UNCHECKED_PROXY].some((p) => u.includes(p)) && { is_proxy: "1" }) };
   return new Response(JSON.stringify({ code: 1, message: "OK", result }));
@@ -227,6 +230,10 @@ before(async () => {
   globalThis.fetch = async (url, opts) => {
     const u = String(url);
     if (u.includes("gopluslabs")) return mockGoplus(u);
+    if (u.includes("sourcify.dev")) {
+      sourcifyCalls.push(u);
+      return u.toLowerCase().includes(SOURCIFY_IMPL) ? Response.json({ match: "exact_match", runtimeMatch: "exact_match", creationMatch: "exact_match", chainId: "8453", address: SOURCIFY_IMPL }) : Response.json({ customCode: "not_found" }, { status: 404 });
+    }
     if (u.includes("api.anthropic.com")) { claudeBodies.push(JSON.parse(opts.body)); return mockClaude(); }
     if (u.includes("api.typesafe.ai")) {
       const q = JSON.parse(opts.body).questions;
@@ -527,6 +534,27 @@ test("EIP-7702 authorization to a clean, verified contract is orange: the contra
   assert.deepEqual([a.severity, a.subject, a.details], ["orange", GOOD, { chains: [8453] }]);
   assert.deepEqual(r.body.subject, { kind: "authorization", chainId: 8453, delegate: GOOD, authorizationChainId: 8453, origin: "app.uniswap.org" });
   assert.ok(!r.body.reasons.some((x) => x.severity === "red"));
+});
+
+test("code GoPlus calls unverified but Sourcify has verified is verified: a delegate, a contract, an authorization", async () => {
+  // A wallet delegating to it (like Coinbase Smart Wallet's 7702 upgrade to its EIP7702Proxy): no orange.
+  const d = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: DELEGATED_SOURCIFY, amount: "1000000" });
+  assert.ok(!codes(d).includes("UNVERIFIED_DELEGATE"), JSON.stringify(d.body.reasons));
+  assert.ok(d.body.reasons.some((x) => x.code === "VERIFIED_ON_SOURCIFY" && x.subject === SOURCIFY_IMPL));
+  // The contract itself as a spender: no UNVERIFIED_CONTRACT.
+  const c = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: SOURCIFY_IMPL, amount: "1000000" });
+  assert.ok(!codes(c).includes("UNVERIFIED_CONTRACT"));
+  assert.ok(codes(c).includes("VERIFIED_ON_SOURCIFY"));
+  // An authorization to it: orange like any verified delegate (it gets the whole wallet), not red.
+  const a = await check({ type: "authorization", chainId: 8453, address: SOURCIFY_IMPL });
+  assert.equal(a.body.verdict, "orange", JSON.stringify(a.body.reasons));
+  assert.ok(!codes(a).includes("AUTHORIZATION_TO_UNVERIFIED_CONTRACT"));
+  assert.ok(codes(a).includes("VERIFIED_ON_SOURCIFY"));
+  // Code neither GoPlus nor Sourcify has verified stays unverified; GoPlus-verified code isn't asked about.
+  const u = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: DELEGATED_UNVERIFIED, amount: "1000000" });
+  assert.ok(codes(u).includes("UNVERIFIED_DELEGATE"));
+  assert.ok(sourcifyCalls.some((x) => x.toLowerCase().includes(UNVERIFIED_IMPL)));
+  assert.ok(!sourcifyCalls.some((x) => x.toLowerCase().includes(GOOD.toLowerCase())), "GoPlus said verified: Sourcify not asked");
 });
 
 test("EIP-7702 authorization: red for a flagged contract, unverified code, no contract yet or a delegated wallet", async () => {

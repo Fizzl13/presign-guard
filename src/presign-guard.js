@@ -330,6 +330,25 @@ function getContractSecurity(chainId, address) {
   });
 }
 
+// Is the code at an address source-verified? GoPlus's is_open_source misses contracts verified on Sourcify only:
+// Coinbase's EIP7702Proxy on Base (0x7702cb55…, the delegate of Coinbase Smart Wallet's 7702 upgrade) was
+// "unverified" per GoPlus on 22 Oct 2026 and an exact match on Sourcify, which made every payment to such a wallet
+// orange and an authorization to it red. So before calling code unverified, Sourcify is asked.
+// "goplus" or "sourcify" when verified, null when not (or Sourcify can't be reached: then GoPlus's answer stands).
+const SOURCIFY_URL = (process.env.SOURCIFY_URL || "https://sourcify.dev/server").replace(/\/+$/, "");
+async function verifiedBy(chainId, address, goplusContract) {
+  if (flag(goplusContract?.is_open_source)) return "goplus";
+  if (process.env.SOURCIFY === "off") return null;
+  const onSourcify = await cached(`sourcify:${chainId}:${address.toLowerCase()}`, async () => {
+    const res = await fetch(`${SOURCIFY_URL}/v2/contract/${chainId}/${address}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000) });
+    if (res.status === 404) return false;
+    if (!res.ok) throw new Error(`sourcify ${res.status}`); // not cached: asked again next time
+    const j = await res.json();
+    return [j.match, j.runtimeMatch, j.creationMatch].some((m) => m === "exact_match" || m === "match");
+  }).catch(() => false);
+  return onSourcify ? "sourcify" : null;
+}
+
 // Token risk for an ERC-20 (null data when GoPlus has no record, e.g. an NFT collection).
 function getTokenSecurity(chainId, token) {
   return cached(`token:${chainId}:${token}`, async () => {
@@ -1009,7 +1028,9 @@ async function analyzeAuthorization(req) {
     ];
     if (flags.length) add("AUTHORIZATION_TO_FLAGGED_CONTRACT", "red", d, { flags });
     const deployedCode = code !== undefined && /^0x[0-9a-f]+$/i.test(code) && !/^0x0*$/i.test(code) && !DELEGATION_CODE.test(code);
-    if (deployedCode && c.data && !flag(c.data.is_open_source)) add("AUTHORIZATION_TO_UNVERIFIED_CONTRACT", "red", d);
+    const verified = deployedCode && c.data ? await verifiedBy(req.chainId, d, c.data) : null;
+    if (deployedCode && c.data && !verified) add("AUTHORIZATION_TO_UNVERIFIED_CONTRACT", "red", d);
+    if (verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", d);
     const deployed = Number(c.data?.deployed_time);
     if (deployed && Math.floor(Date.now() / 1000) - deployed < RECENT_DEPLOY_SECONDS) add("RECENTLY_DEPLOYED", "orange", d);
     if (!sc) add("SANCTIONS_SCREEN_UNAVAILABLE", "info", d);
@@ -1117,10 +1138,15 @@ export async function analyze(req) {
         getAddressSecurity(req.chainId, address7702),
         getContractSecurity(req.chainId, address7702),
       ]);
-      delegate = { address: address7702, addrSec: da.data, contract: dc.data, partial: da.partial || dc.partial };
+      const verified = flag(dc.data?.is_contract) ? await verifiedBy(req.chainId, address7702, dc.data) : null;
+      delegate = { address: address7702, addrSec: da.data, contract: dc.data, partial: da.partial || dc.partial, verified };
     }
-    const proxy = !delegated && flag(c.data?.is_contract) && flag(c.data?.is_proxy) ? await confirmProxy(req.chainId, address) : null;
-    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated, delegate, proxy }];
+    const contract = !delegated && flag(c.data?.is_contract);
+    const [proxy, verified] = await Promise.all([
+      contract && flag(c.data?.is_proxy) ? confirmProxy(req.chainId, address) : null,
+      contract ? verifiedBy(req.chainId, address, c.data) : null,
+    ]);
+    return [address, { addrSec: a.data, contract: c.data, partial: a.partial || c.partial, delegated, delegate, proxy, verified }];
   }));
   const results = new Map(lookups);
 
@@ -1158,7 +1184,7 @@ export async function analyze(req) {
   const isContract = (address) => flag(results.get(address)?.contract?.is_contract) && !results.get(address).delegated;
   const now = Math.floor(Date.now() / 1000);
 
-  for (const [address, { addrSec, contract, partial, delegated, delegate, proxy }] of results) {
+  for (const [address, { addrSec, contract, partial, delegated, delegate, proxy, verified }] of results) {
     if (partial) add("PARTIAL_SOURCE_DATA", "info", address);
     if (delegated) add("EIP7702_DELEGATED_WALLET", "info", address, { delegate: delegate.address });
     if (delegate) {
@@ -1169,9 +1195,10 @@ export async function analyze(req) {
         ...(flag(delegate.contract?.doubt_list) ? ["doubt_list"] : []),
       ];
       if (flags.length) add("MALICIOUS_DELEGATE", "red", address, { delegate: delegate.address, flags });
-      else if (delegate.contract && flag(delegate.contract.is_contract) && !flag(delegate.contract.is_open_source)) {
+      else if (delegate.contract && flag(delegate.contract.is_contract) && !delegate.verified) {
         add("UNVERIFIED_DELEGATE", "orange", address, { delegate: delegate.address });
       }
+      if (delegate.verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", delegate.address);
     }
     for (const f of ADDRESS_RED_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "red", address);
     for (const f of ADDRESS_ORANGE_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "orange", address);
@@ -1183,7 +1210,8 @@ export async function analyze(req) {
       const malicious = Array.isArray(contract.malicious_behavior) ? contract.malicious_behavior : [];
       if (malicious.length) add("MALICIOUS_CONTRACT_BEHAVIOR", "red", address, malicious);
       if (flag(contract.doubt_list)) add("ON_DOUBT_LIST", "red", address);
-      if (!flag(contract.is_open_source)) add("UNVERIFIED_CONTRACT", "orange", address);
+      if (!verified) add("UNVERIFIED_CONTRACT", "orange", address);
+      else if (verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", address);
       if (proxy === "unchecked") add("UPGRADEABLE_PROXY", "info", address, { confirmed: false });
       else if (proxy) add("UPGRADEABLE_PROXY", "info", address, proxy);
       const deployed = Number(contract.deployed_time);
