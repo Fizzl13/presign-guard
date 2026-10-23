@@ -9,7 +9,7 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 - Agent skill: `npx skills add Fizzl13/presign-guard`, or in Claude Code `/plugin marketplace add Fizzl13/x402-doctor` then `/plugin install presign-guard@fizzl`. Every Fizzl skill: https://github.com/Fizzl13/fizzl-skills
 - [OpenAPI](https://presign-guard.fizzl.eu/openapi.json): every paid route with its price, input and output schema
 - [x402 discovery document](https://presign-guard.fizzl.eu/.well-known/x402)
-- MCP server (streamable HTTP): https://presign-guard.fizzl.eu/mcp, with the free tools `presign_quick_check` and `token_quick_verdict`
+- MCP server (streamable HTTP): https://presign-guard.fizzl.eu/mcp, with the free tools `presign_quick_check`, `token_quick_verdict` and `injection_quick_check`
 
 ## Paid API
 - `POST /v1/check` ($0.01): verdict and reason codes for a transaction, approval, signature or message about to be signed (EVM, `type: "solana"`, `"xrpl"` or `"algorand"`)
@@ -22,6 +22,7 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 
 ## Free
 - `GET /v1/sanctions`: the OFAC SDN digital-currency addresses as open data, synced from the US Treasury
+- `POST /v1/injection/quick`: the prompt-injection verdict only (green/orange/red), for texts up to 8,000 characters, 10 free calls an hour
 - [Website](https://presign-guard.fizzl.eu/): what each check catches, with examples
 
 ## Optional

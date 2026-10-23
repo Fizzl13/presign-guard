@@ -51,7 +51,10 @@ function describeMcpCall(req, body) {
     route: call.tool,
     via: "mcp",
     input: {
-      ...(a.address
+      // The prompt-injection tools: where the text came from and how long it was, never the text itself.
+      ...(typeof a.text === "string"
+        ? { source: typeof a.source === "string" ? a.source.slice(0, 16) : undefined, chars: a.text.length }
+        : a.address
         ? { chain: a.chain, target: a.address }
         : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang }),
       ...(req.path === "/mcp/free" ? { endpoint: "free" } : {}),
@@ -126,12 +129,12 @@ export function describePresignCall(req, _res, body) {
   }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method === "GET" && req.path === "/v1/screen") return describeScreenCall(req, body);
-  // The prompt-injection check: where the text came from and how long it was, never the text itself.
-  if (req.method === "POST" && req.path === "/v1/injection") {
+  // The prompt-injection check (paid, or the free quick one): where the text came from and how long it was, never the text.
+  if (req.method === "POST" && (req.path === "/v1/injection" || req.path === "/v1/injection/quick")) {
     const input = req.body || {};
     const b = body || {};
     return {
-      route: "injection",
+      route: req.path === "/v1/injection/quick" ? "injection_quick" : "injection",
       via: req.get && req.get("sec-fetch-site") === "same-origin" ? "web" : "api",
       input: { source: typeof input.source === "string" ? input.source.slice(0, 16) : undefined, chars: typeof input.text === "string" ? input.text.length : undefined },
       result: {
