@@ -29,6 +29,7 @@ import { fizzlCors } from "./src/fizzl-cors.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { createScreenRouter, validateScreenQuery } from "./src/screen.js";
+import { createInjectionRouter } from "./src/injection.js";
 import { ofacStatus, startOfacSync, sanctionsList } from "./src/ofac.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
@@ -298,6 +299,7 @@ app.use(createCheckRouter());
 app.use(createTokenRouter());
 app.use(createApprovalsRouter());
 app.use(createScreenRouter());
+app.use(createInjectionRouter());
 if (creditStore) app.use(creditsRouter(express, { store: creditStore, costs: CREDIT_COSTS, publicUrl: PUBLIC_URL }));
 
 // The OFAC SDN list for GET /v1/screen: loaded now, re-checked every few hours (OFAC_SDN=off skips it, e.g. locally).

@@ -152,7 +152,7 @@ test("feedback tool: free, answers with an id and records the report via mcp", a
 test("lists the free quick checks and the paid tools with their prices", async () => {
   const client = await mcpClient();
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["feedback", "presign_check", "presign_check_explain", "presign_quick_check", "screen_wallet", "token_quick_verdict", "token_verdict", "wallet_approvals"]);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["feedback", "injection_check", "presign_check", "presign_check_explain", "presign_quick_check", "screen_wallet", "token_quick_verdict", "token_verdict", "wallet_approvals"]);
   assert.match(tools.find((t) => t.name === "token_verdict").description, /\$0\.01/);
   assert.match(tools.find((t) => t.name === "wallet_approvals").description, /\$0\.02/);
   assert.deepEqual(tools.find((t) => t.name === "wallet_approvals").inputSchema.required.sort(), ["address", "chain"]);
