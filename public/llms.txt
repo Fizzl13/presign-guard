@@ -1,6 +1,6 @@
 # presign-guard
 
-> Pre-sign safety checks for AI agents and wallets: before an agent signs a transaction, a token approval, a Permit/Permit2/EIP-3009 signature or a message, presign-guard answers green, orange or red with reason codes (known drainers, sanctioned addresses, unlimited approvals, look-alike tokens, simulated balance changes). Also token safety verdicts (honeypot, rug pull, mint or freeze authority, unlocked liquidity), wallet approval audits and OFAC SDN sanctions screening of any address. EVM chains, Solana, the XRP Ledger and Algorand. Free quick checks; paid verdicts from $0.01 per call over x402 (USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger) or MPP; errors are never charged. MCP server at https://presign-guard.fizzl.eu/mcp.
+> Pre-sign safety checks for AI agents and wallets: before an agent signs a transaction, a token approval, a Permit/Permit2/EIP-3009 signature or a message, presign-guard answers green, orange or red with reason codes (known drainers, sanctioned addresses, unlimited approvals, look-alike tokens, simulated balance changes). Also token safety verdicts (honeypot, rug pull, mint or freeze authority, unlocked liquidity), wallet approval audits, OFAC SDN sanctions screening of any address, and prompt-injection checks for text an agent receives. EVM chains, Solana, the XRP Ledger and Algorand. Free quick checks; paid verdicts from $0.01 per call over x402 (USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger) or MPP; errors are never charged. MCP server at https://presign-guard.fizzl.eu/mcp.
 
 On red: don't sign. On orange: tell the owner why before going on. No account or API key needed; every paid answer carries a signed receipt.
 
@@ -17,6 +17,7 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 - `GET /v1/token?chain=<chain>&address=<token>` ($0.01): is this token safe to buy, or a honeypot or rug pull? Grade, reasons and market data
 - `GET /v1/approvals?chain=<chain>&address=<wallet>` ($0.02): every open approval of a wallet and which to revoke
 - `GET /v1/screen?address=<address>` ($0.01): is this wallet sanctioned? Any chain's address against the OFAC SDN list
+- `POST /v1/injection` ($0.01): is this text a prompt-injection trap for your agent? A web page, email, tool result, API answer or another agent's message that tries to make it pay, leak keys or ignore its instructions
 - `GET /v1/credits`: prepaid credit packs (100 checks for $0.80, 1,000 for $7.00)
 
 ## Free

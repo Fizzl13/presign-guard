@@ -21,6 +21,7 @@ import express from "express";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
   approvalsBazaarExtension, approvalsServiceMetadata, SCREEN_ROUTE, screenBazaarExtension, screenServiceMetadata,
+  INJECTION_ROUTE, injectionBazaarExtension, injectionServiceMetadata,
 } from "./discovery.js";
 import { builderCodeExtension, merchantExtension } from "./merchant.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
@@ -1474,6 +1475,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
   const tokenPrice = `$${TOKEN_ROUTE.price}`;
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
   const screenPrice = `$${SCREEN_ROUTE.price}`;
+  const injectionPrice = `$${INJECTION_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
       "Is this transaction, approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
@@ -1517,6 +1519,19 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       mimeType: "application/json",
       ...screenServiceMetadata,
       extensions: { ...screenBazaarExtension(), ...sellerExtensions },
+    },
+    [`POST ${INJECTION_ROUTE.path}`]: {
+      accepts: [
+        { scheme: "exact", price: injectionPrice, network, payTo },
+        ...(solana?.payTo ? [{ scheme: "exact", price: injectionPrice, network: solana.network, payTo: solana.payTo }] : []),
+        ...xrplAccept(xrpl, injectionPrice, `POST ${INJECTION_ROUTE.path}`),
+        ...algorandAccept(algorand, injectionPrice),
+        ...stellarAccept(stellar, injectionPrice),
+      ],
+      description: "Is this text a prompt-injection trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to make the agent ignore its instructions, pay or send money, hand over keys or private data, or obey a fake user, admin or support message? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
+      mimeType: "application/json",
+      ...injectionServiceMetadata,
+      extensions: { ...injectionBazaarExtension(), ...sellerExtensions },
     },
   };
 }

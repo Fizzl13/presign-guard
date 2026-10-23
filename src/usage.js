@@ -126,6 +126,21 @@ export function describePresignCall(req, _res, body) {
   }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method === "GET" && req.path === "/v1/screen") return describeScreenCall(req, body);
+  // The prompt-injection check: where the text came from and how long it was, never the text itself.
+  if (req.method === "POST" && req.path === "/v1/injection") {
+    const input = req.body || {};
+    const b = body || {};
+    return {
+      route: "injection",
+      via: req.get && req.get("sec-fetch-site") === "same-origin" ? "web" : "api",
+      input: { source: typeof input.source === "string" ? input.source.slice(0, 16) : undefined, chars: typeof input.text === "string" ? input.text.length : undefined },
+      result: {
+        verdict: b.verdict === null ? "none" : b.verdict,
+        reasons: Array.isArray(b.reasons) ? b.reasons.filter((r) => r.severity !== "info").map((r) => r.code).join(", ") || undefined : undefined,
+        error: b.error,
+      },
+    };
+  }
   // The free open list: who downloads it (presign-guard-payer-screen and others), never the list itself.
   if (req.method === "GET" && req.path === "/v1/sanctions") return { route: "sanctions list", via: "api", input: {}, result: { status: _res.statusCode, count: (body || {}).count } };
   // Credit packs: the purchase (never the key itself) and balance lookups.

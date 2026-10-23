@@ -3,7 +3,7 @@
   "name": "io.github.Fizzl13/presign-guard",
   "title": "presign-guard",
   "description": "Safe to sign? EVM/Solana/XRPL/Algorand txs, permits, EIP-7702, tokens; OFAC screen: green/orange/red",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "repository": {
     "url": "https://github.com/Fizzl13/presign-guard",
     "source": "github"
