@@ -19,6 +19,7 @@ Add the remote MCP server `https://presign-guard.fizzl.eu/mcp` (Streamable HTTP)
 | `presign_check` | $0.01 | The full verdict and reason codes |
 | `presign_check_explain` | $0.03 | The same plus a plain-language explanation |
 | `token_quick_verdict` | free, shares the 10/hour | The token verdict and grade only |
+| `injection_quick_check` | free, shares the 10/hour | The prompt-injection verdict only (texts up to 8,000 characters) |
 | `token_verdict` | $0.01 | The full token verdict |
 | `wallet_approvals` | $0.02 | Every open approval of a wallet (EVM chains or Solana) and which to revoke |
 | `screen_wallet` | $0.01 | Is this wallet sanctioned? Any chain's address against the OFAC SDN list |
@@ -46,7 +47,8 @@ Examples:
 
 ## Free
 
-- The MCP tools `presign_quick_check` and `token_quick_verdict` (10 calls an hour together).
+- The MCP tools `presign_quick_check`, `token_quick_verdict` and `injection_quick_check` (10 calls an hour together).
+- `POST /v1/injection/quick` with `{"text": "…"}`: the prompt-injection verdict only, for texts up to 8,000 characters (the same 10 an hour).
 - `GET /v1/credits`: prepaid credit packs (100 checks for $0.80, 1000 for $7.00) for agents that check often.
 
 ## Paying

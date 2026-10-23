@@ -37,6 +37,8 @@ import { addressFormat } from "./screen.js";
 import { partySanctionsReasons } from "./ofac.js";
 
 export const MAX_TEXT_CHARS = 32000;
+// The free quick check (src/injection-quick.js, MCP injection_quick_check): at most two parts.
+export const QUICK_MAX_CHARS = 8000;
 const PART_CHARS = 4000;
 const PART_OVERLAP = 200;
 export const SOURCES = ["web", "email", "tool", "api", "agent", "chat", "document", "other"];
@@ -84,10 +86,10 @@ const MAX_ADDRESSES = 20;
 
 // ---------- input ----------
 
-export function parseInjectionRequest(body) {
+export function parseInjectionRequest(body, { maxChars = MAX_TEXT_CHARS } = {}) {
   const b = body && typeof body === "object" ? body : {};
   if (typeof b.text !== "string" || !b.text.trim()) throw new ValidationError("text must be the text the agent received (a page, email, tool result, API answer or message)");
-  if (b.text.length > MAX_TEXT_CHARS) throw new ValidationError(`text may be at most ${MAX_TEXT_CHARS} characters`);
+  if (b.text.length > maxChars) throw new ValidationError(`text may be at most ${maxChars} characters${maxChars < MAX_TEXT_CHARS ? ` here; the paid POST /v1/injection takes up to ${MAX_TEXT_CHARS}` : ""}`);
   if (b.source !== undefined && !SOURCES.includes(b.source)) throw new ValidationError(`source must be one of ${SOURCES.join(", ")}`);
   if (b.task !== undefined && (typeof b.task !== "string" || b.task.length > 500)) throw new ValidationError("task must be one sentence (at most 500 characters): what the agent is doing for its user");
   return { text: b.text, source: b.source ?? "other", task: b.task?.trim() || "a task for its user (not given)" };

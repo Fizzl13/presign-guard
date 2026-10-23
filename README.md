@@ -35,6 +35,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `POST /v1/injection` | $0.01 USDC | Prompt-injection check: is a text your agent received (page, email, tool result, API answer, another agent's message) a trap? (see below) |
+| `POST /v1/injection/quick` | free, shares the 10 calls/hour | The prompt-injection verdict only, for texts up to 8,000 characters |
 | `GET /v1/sanctions` | free | Open data: every digital currency address on the OFAC SDN list with its entry (name, programs, currency), the list's publish date; refreshed every 6 hours. Solana addresses also carry their USDC and USDT token accounts, because a token transfer names that account and not the owner (ready for a denylist such as a Privy condition set). For screening locally, e.g. with [`presign-guard-payer-screen`](https://www.npmjs.com/package/presign-guard-payer-screen) |
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
 | `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |
@@ -98,7 +99,7 @@ Every Fizzl skill (x402 Doctor, presign-guard, the Agent Wallet and Ichimoku Sig
 
 `https://presign-guard.fizzl.eu/mcp` is an MCP server (Streamable HTTP, stateless) for Claude, Cursor and agent frameworks, listed in the official MCP registry as `io.github.Fizzl13/presign-guard`. Directories can read its tools without connecting from the server card at `/.well-known/mcp/server-card.json` (the same list as `tools/list`).
 
-`https://presign-guard.fizzl.eu/mcp/free` is the same server with only the two free checks (`presign_quick_check`, `token_quick_verdict`), for directories whose clients don't pay, such as Claude's connectors directory. Claude calls connectors from Anthropic's outbound range (`160.79.104.0/21`), so calls from there share one pool of 300 free calls an hour instead of 10 per address, on both endpoints.
+`https://presign-guard.fizzl.eu/mcp/free` is the same server with only the free checks (`presign_quick_check`, `token_quick_verdict`, `injection_quick_check`), for directories whose clients don't pay, such as Claude's connectors directory. Claude calls connectors from Anthropic's outbound range (`160.79.104.0/21`), so calls from there share one pool of 300 free calls an hour instead of 10 per address, on both endpoints.
 
 Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agents](docs/claude-code-pre-trade.md): a token check and an Ichimoku trend check before every order, with a ready-made `CLAUDE.md` rule.
 
@@ -108,6 +109,7 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 | `presign_check` | $0.01 USDC via x402 | The full verdict and reason codes, as `POST /v1/check` |
 | `presign_check_explain` | $0.03 USDC via x402 | The same plus a plain-language explanation, as `POST /v1/check/explain` |
 | `token_quick_verdict` | free, shares the 10 calls/hour | The token verdict and grade only |
+| `injection_quick_check` | free, shares the 10 calls/hour | The prompt-injection verdict only, for texts up to 8,000 characters |
 | `token_verdict` | $0.01 USDC via x402 | The full token verdict, as `GET /v1/token` |
 | `wallet_approvals` | $0.02 USDC via x402 | The wallet approval audit, as `GET /v1/approvals` |
 | `screen_wallet` | $0.01 USDC via x402 | The wallet sanctions screen, as `GET /v1/screen` |
@@ -259,7 +261,7 @@ TypeSafe's Jev gives four probabilities (the highest part of the text counts): *
 | orange | `POSSIBLE_MANIPULATION` (manipulation 0.5 to 0.9), `CREDENTIAL_REQUEST` (secrets ≥ 0.9), `HIDDEN_CHARACTERS` (direction-control characters) |
 | info | `PAYMENT_REQUEST` and `AUTHORITY_CLAIM` (≥ 0.85; an invoice or a payment hint alone stays green), `KNOWN_INJECTION_PHRASE` (a known phrase; quoted or discussed when Jev sees no manipulation), `ZERO_WIDTH_CHARACTERS`, `SANCTIONS_SCREENED`, `NO_SIGNS` |
 
-The thresholds were set on 23 Oct 2026 with 43 ordinary texts (API answers, emails, web pages, tool output, agents' messages), 36 planted traps (in English, Dutch and Spanish; in HTML comments, JSON fields, fake system messages and phishing mails) and 80 real x402 listings that address agents: every trap was red or orange, no ordinary text was red, and four API usage hints ("Pay $0.001 USDC via x402…") and 1 of the 80 listings came out orange. Two runs differed by at most 0.07. Claude was tried as a second opinion on the in-between cases and flagged three of the four usage hints, so the in-between stays orange. Without Jev (no `TYPESAFE_API_KEY`, an error or a timeout) there is no verdict (503, not charged). The text is never stored or logged; the usage log keeps its length, source and the verdict.
+The thresholds were set on 23 Oct 2026 with 43 ordinary texts (API answers, emails, web pages, tool output, agents' messages), 36 planted traps (in English, Dutch and Spanish; in HTML comments, JSON fields, fake system messages and phishing mails) and 80 real x402 listings that address agents: every trap was red or orange, no ordinary text was red, and four API usage hints ("Pay $0.001 USDC via x402…") and 1 of the 80 listings came out orange. Two runs differed by at most 0.07. Claude was tried as a second opinion on the in-between cases and flagged three of the four usage hints, so the in-between stays orange. Without Jev (no `TYPESAFE_API_KEY`, an error or a timeout) there is no verdict (503, not charged). To try it first: `POST /v1/injection/quick` (or the MCP tool `injection_quick_check`) gives the verdict only, free, for texts up to 8,000 characters, within the shared limit of 10 free calls an hour. The text is never stored or logged; the usage log keeps its length, source and the verdict.
 
 ## Request types
 
