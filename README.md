@@ -78,6 +78,13 @@ exec curl -s --max-time 4.8 -X POST https://presign-guard.fizzl.eu/v1/check \
   -H 'content-type: application/json' -H "x-credit-key: $(cat "$HOME/.ows/presign-guard.key")" --data-binary @-
 ```
 
+Buy the credits with OWS itself: `ows pay request` pays our x402 402 (USDC on Base) and prints the credit key. Run it as the wallet's owner (with the wallet passphrase, not the agent token: the agent token's policy needs the credits first).
+
+```bash
+key=$(ows pay request --wallet my-wallet https://presign-guard.fizzl.eu/v1/credits/100 | jq -er .credit_key) \
+  && (umask 077; echo "$key" > ~/.ows/presign-guard.key)
+```
+
 Register a policy that runs it (`examples/ows/presign-guard-policy.json`: `"executable"` set to that script, `"rules": []`, which OWS requires even when empty, and `"action": "deny"`) and attach it to the agent's API key. Paid with a [credit pack](#credit-packs): one credit per check.
 
 ```bash
