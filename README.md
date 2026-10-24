@@ -68,6 +68,30 @@ A call that fails (400 or 5xx) gives its credits back. With no key, a malformed 
 
 Packs are only offered when balances persist: set `CREDITS_REDIS_URL` (a persistent Redis, for example a free Upstash database; Render only). Without it the credit routes don't exist.
 
+## Open Wallet Standard (OWS) policy
+
+[OWS](https://github.com/open-wallet-standard/core) (MoonPay's wallet standard for agents, used by Ripple's XRPL AI Starter Kit) checks policies before it decrypts a key for an agent token (`ows_key_…`). Its built-in rules cover chains and expiry; anything that looks inside the transaction needs a custom executable, and OWS ships none. presign-guard is one: `POST /v1/check` also takes the **PolicyContext** OWS writes to the policy's stdin, and answers with the **PolicyResult** OWS reads from stdout, `{ "allow": …, "reason": … }`, next to the usual verdict and reasons.
+
+```bash
+# ~/.ows/plugins/policies/presign-guard.sh (examples/ows/presign-guard.sh), chmod +x
+exec curl -s --max-time 4.8 -X POST https://presign-guard.fizzl.eu/v1/check \
+  -H 'content-type: application/json' -H "x-credit-key: $(cat "$HOME/.ows/presign-guard.key")" --data-binary @-
+```
+
+Register a policy that runs it (`examples/ows/presign-guard-policy.json`: `"executable"` set to that script, `"action": "deny"`) and attach it to the agent's API key. Paid with a [credit pack](#credit-packs): one credit per check.
+
+| Chain (`chain_id`) | `sign_transaction` (`transaction.raw_hex`) | Other requests |
+| :-- | :-- | :-- |
+| EVM (`eip155:*`, the chains above) | The unsigned envelope, legacy or typed; an EIP-7702 transaction is judged by its delegation | `sign_typed_data` (permits, Permit2, x402 authorizations), `sign_message`, `sign_hash` |
+| Solana (`solana:5eykt…`) | The wire transaction | not checked |
+| XRP Ledger (`xrpl:mainnet`, `xrpl:testnet`) | The binary-encoded transaction, decoded and judged like `type: "xrpl"` | not checked |
+
+- `green` allows; `red` denies; `orange` (a person should look) denies, unless the policy's `config` sets `"allow_orange": true`.
+- What presign-guard doesn't check (another chain, a request type above marked "not checked", a payload it can't decode) is denied with the reason, unless `"allow_unchecked": true`. Either way the status is an error, so no credit is spent.
+- `config.address` (the wallet's address) lets EVM transactions be simulated.
+- OWS denies a policy that hasn't answered within 5 s. presign-guard answers an OWS request within 4.2 s: when a lookup is slower, it denies with the reason (status 504, no credit spent) rather than letting OWS cut it off.
+- No key or no credits left: the answer is the 402, which has no `allow`, so OWS denies. Fail closed.
+
 ## Agent skill
 
 [`skills/presign-check`](skills/presign-check/SKILL.md) is an [Agent Skill](https://agentskills.io) that teaches a coding agent (Claude Code, Codex, Cursor and others that read `SKILL.md`) to check before it signs, buys or sends:

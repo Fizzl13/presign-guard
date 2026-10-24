@@ -4,6 +4,7 @@ import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createCheckRouter } from "../src/presign-guard.js";
+import { serializeTransaction } from "viem";
 import { generateKeyPairSync, sign as edSign } from "node:crypto";
 import { jcs, mandateDigest, eip3009Binding } from "../src/mandate.js";
 import { resetPg1, pg1Paused, pg1KeyStatus, pg1KeyStatusNow } from "../src/pg1.js";
@@ -1399,4 +1400,44 @@ test("address history self-test (GET /health): off without a key, ok when Alchem
   const bad = await historySelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async () => Response.json({ error: { message: "Unsupported method for secretkey" } }) });
   assert.match(bad.selfTest, /^failed \(history chain 8453: Unsupported method for …\)$/);
   assert.equal(historyStatus({}).on, false);
+});
+
+// ---------- Open Wallet Standard policies (src/ows.js) ----------
+
+// The unsigned EIP-1559 envelope OWS hands a policy as transaction.raw_hex (hex without 0x).
+const owsTx = (to, data) => serializeTransaction({ chainId: 8453, type: "eip1559", to, data, nonce: 0, gas: 100000n, maxFeePerGas: 1n, maxPriorityFeePerGas: 1n }).slice(2);
+const owsContext = (raw_hex, policy_config) => ({ chain_id: "eip155:8453", wallet_id: "w", api_key_id: "k", request_type: "sign_transaction", transaction: { effects: [], raw_hex }, spending: { daily_total: "0", date: "2026-10-24" }, timestamp: "2026-10-24T18:00:00Z", ...(policy_config && { policy_config }) });
+
+test("OWS: a PolicyContext gets the same verdict as the plain check, plus allow and reason", async () => {
+  const green = await check(owsContext(owsTx(TOKEN, approveData(GOOD, 1000000))));
+  assert.equal(green.status, 200);
+  assert.equal(green.body.verdict, "green");
+  assert.equal(green.body.allow, true);
+  assert.equal(green.body.reason, "presign-guard green");
+  const red = await check(owsContext(owsTx(TOKEN, approveData(EOA, MAX256))));
+  assert.equal(red.body.verdict, "red");
+  assert.equal(red.body.allow, false);
+  assert.match(red.body.reason, /^presign-guard red: .*UNLIMITED_APPROVAL_TO_EOA/);
+});
+
+test("OWS: orange is denied unless the policy's config allows it", async () => {
+  const orange = owsTx(TOKEN, approveData(GOOD, MAX256));
+  const denied = await check(owsContext(orange));
+  assert.deepEqual([denied.body.verdict, denied.body.allow], ["orange", false]);
+  const allowed = await check(owsContext(orange, { allow_orange: true }));
+  assert.deepEqual([allowed.body.verdict, allowed.body.allow], ["orange", true]);
+});
+
+test("OWS: what isn't checked is denied with a reason (an error status, so nothing is charged), or allowed with allow_unchecked", async () => {
+  const btc = { ...owsContext("00"), chain_id: "bip122:000000000019d6689c085ae165831e93" };
+  const denied = await check(btc);
+  assert.equal(denied.status, 400);
+  assert.equal(denied.body.allow, false);
+  assert.match(denied.body.reason, /^presign-guard denied: presign-guard doesn't check bip122/);
+  const allowed = await check({ ...btc, policy_config: { allow_unchecked: true } });
+  assert.equal(allowed.status, 400);
+  assert.equal(allowed.body.allow, true);
+  assert.match(allowed.body.reason, /didn't check this \(allow_unchecked\)/);
+  const broken = await check(owsContext("0102"));
+  assert.deepEqual([broken.status, broken.body.allow], [400, false]);
 });
