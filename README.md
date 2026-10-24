@@ -78,7 +78,14 @@ exec curl -s --max-time 4.8 -X POST https://presign-guard.fizzl.eu/v1/check \
   -H 'content-type: application/json' -H "x-credit-key: $(cat "$HOME/.ows/presign-guard.key")" --data-binary @-
 ```
 
-Register a policy that runs it (`examples/ows/presign-guard-policy.json`: `"executable"` set to that script, `"action": "deny"`) and attach it to the agent's API key. Paid with a [credit pack](#credit-packs): one credit per check.
+Register a policy that runs it (`examples/ows/presign-guard-policy.json`: `"executable"` set to that script, `"rules": []`, which OWS requires even when empty, and `"action": "deny"`) and attach it to the agent's API key. Paid with a [credit pack](#credit-packs): one credit per check.
+
+```bash
+ows policy create --file presign-guard-policy.json
+ows key create --name my-agent --wallet my-wallet --policy presign-guard
+```
+
+Tested with OWS 1.4.3: a USDC transfer is signed, an unlimited approval is refused with `policy denied: presign-guard red: UNLIMITED_APPROVAL, UNLIMITED_APPROVAL_TO_EOA`.
 
 | Chain (`chain_id`) | `sign_transaction` (`transaction.raw_hex`) | Other requests |
 | :-- | :-- | :-- |
@@ -90,7 +97,7 @@ Register a policy that runs it (`examples/ows/presign-guard-policy.json`: `"exec
 - What presign-guard doesn't check (another chain, a request type above marked "not checked", a payload it can't decode) is denied with the reason, unless `"allow_unchecked": true`. Either way the status is an error, so no credit is spent.
 - `config.address` (the wallet's address) lets EVM transactions be simulated.
 - OWS denies a policy that hasn't answered within 5 s. presign-guard answers an OWS request within 4.2 s: when a lookup is slower, it denies with the reason (status 504, no credit spent) rather than letting OWS cut it off.
-- No key or no credits left: the answer is the 402, which has no `allow`, so OWS denies. Fail closed.
+- No key, a wrong key or no credits left: the answer is the 402 with `"allow": false` and a reason that says how to get credits, so OWS denies and shows it. Fail closed.
 
 ## Agent skill
 

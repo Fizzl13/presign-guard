@@ -87,6 +87,30 @@ export function owsToCheck(ctx) {
   throw new OwsUnchecked(`presign-guard doesn't check ${chain}`);
 }
 
+// A PolicyContext that arrives unpaid (no credit key, a wrong one, or one without credits) gets its 402 as usual, with
+// the PolicyResult OWS reads added. Without `allow`, OWS 1.4.3 denies with "invalid JSON from executable: missing field
+// `allow`", which doesn't say what to do. Mounted before the paywall on POST /v1/check(/explain), after parsing the body.
+const CREDIT_PROBLEMS = {
+  invalid: "the x-credit-key header is not a credit key",
+  unknown: "this credit key has no credits (used up, expired or mistyped)",
+  insufficient: "this credit key has too few credits left",
+  unavailable: "credits can't be checked right now; try again",
+};
+export function owsPaymentRequired(publicUrl) {
+  return (req, res, next) => {
+    if (!isOwsContext(req.body)) return next();
+    const json = res.json.bind(res);
+    res.json = (body) => {
+      if (res.statusCode === 402 && body && typeof body === "object" && !("allow" in body)) {
+        const problem = CREDIT_PROBLEMS[res.getHeader("x-credit-status")] ?? "no credit key was sent";
+        body = { ...body, allow: false, reason: `presign-guard: ${problem}. Send one in the x-credit-key header (examples/ows/presign-guard.sh reads ~/.ows/presign-guard.key): 100 checks for $0.80 at ${publicUrl}/v1/credits/100` };
+      }
+      return json(body);
+    };
+    next();
+  };
+}
+
 // The PolicyResult for a verdict: green allows; orange only with allow_orange; red never. The reason names the verdict
 // and the reason codes that aren't just information.
 export function owsResult(result, options = {}) {
