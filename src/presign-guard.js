@@ -697,6 +697,8 @@ function parseMessage(body) {
     kind: "message", method, offchain: true, value: 0n, grants: [], target: null,
     ...(chainId && { chainId }), ...(from && { from }),
     text: decoded.text, bytes: decoded.bytes, signIn: decoded.text !== null ? parseSignIn(decoded.text) : null,
+    // Set by src/ows.js for a Solana or XRPL message whose bytes are a whole transaction of that chain.
+    ...((body.disguisedTransaction === "solana" || body.disguisedTransaction === "xrpl") && { disguisedTransaction: body.disguisedTransaction }),
   };
 }
 
@@ -945,6 +947,7 @@ async function analyzeMessage(req) {
 
   if (req.method === "eth_sign") add("ETH_SIGN", "red", req.from ?? null, { bytes: req.bytes });
   else if (req.text === null) add("UNREADABLE_MESSAGE", "orange", req.from ?? null, { bytes: req.bytes, ...(req.bytes === 32 && { looksLike: "a 32-byte hash" }) });
+  if (req.disguisedTransaction) add("MESSAGE_IS_TRANSACTION", "red", req.from ?? null, { chain: req.disguisedTransaction, effect: `signing this message signs ${req.disguisedTransaction === "solana" ? "a Solana" : "an XRPL"} transaction` });
 
   if (s) {
     add("SIGN_IN_REQUEST", "info", s.domain, { address: s.address, uri: s.uri, chainId: s.chainId, ...(s.expirationTime && { expirationTime: s.expirationTime }) });

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { encode as encodeXrpl } from "ripple-binary-codec";
 import { serializeTransaction } from "viem";
+import * as k from "@solana/kit";
 import { isOwsContext, owsToCheck, owsResult, OwsUnchecked } from "../src/ows.js";
 
 const TO = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -58,10 +59,53 @@ test("owsToCheck: a Solana wire transaction goes as base64; XRPL binary is decod
   assert.equal(owsToCheck(ctx("xrpl:testnet", "sign_transaction", { transaction: { raw_hex: encodeXrpl(tx) } })).body.network, "xrpl:1");
 });
 
+// A Solana transaction message (what a transaction's signatures sign), and an XRPL transaction, as message bytes.
+function solanaMessageHex() {
+  const W = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9", OTHER = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM", SYSTEM = "11111111111111111111111111111111";
+  const data = new Uint8Array(12); new DataView(data.buffer).setUint32(0, 2, true); new DataView(data.buffer).setBigUint64(4, 1000000n, true);
+  let m = k.createTransactionMessage({ version: 0 });
+  m = k.setTransactionMessageFeePayer(k.address(W), m);
+  m = k.setTransactionMessageLifetimeUsingBlockhash({ blockhash: SYSTEM, lastValidBlockHeight: 0n }, m);
+  m = k.appendTransactionMessageInstruction({ programAddress: k.address(SYSTEM), accounts: [{ address: k.address(W), role: k.AccountRole.WRITABLE_SIGNER }, { address: k.address(OTHER), role: k.AccountRole.WRITABLE }], data }, m);
+  return Buffer.from(k.compileTransaction(m).messageBytes).toString("hex");
+}
+const XRPL_TX = { TransactionType: "Payment", Account: "rfryheo6yzFdLWj8qUQtZc7zG9MKkBkUEy", Destination: "rMnHeutYALco8RYFVcmuU4BCgSzBpPEh32", Amount: "1000", Fee: "12", Sequence: 5, Flags: 0 };
+
+test("owsToCheck: a Solana or XRPL message is a message; one whose bytes are a whole transaction is marked", () => {
+  const sol = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+  const signIn = Buffer.from("app.example wants you to sign in with your Solana account:\n5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9").toString("hex");
+  assert.deepEqual(owsToCheck(ctx(sol, "sign_message", { transaction: { raw_hex: signIn } })).body, { type: "message", method: "personal_sign", message: `0x${signIn}` });
+  assert.equal(owsToCheck(ctx(sol, "sign_message", { transaction: { raw_hex: solanaMessageHex() } })).body.disguisedTransaction, "solana");
+  assert.equal(owsToCheck(ctx(sol, "sign_message", { transaction: { raw_hex: "deadbeef".repeat(8) } })).body.disguisedTransaction, undefined); // binary, not a transaction
+  assert.equal(owsToCheck(ctx("xrpl:mainnet", "sign_message", { transaction: { raw_hex: encodeXrpl(XRPL_TX) } })).body.disguisedTransaction, "xrpl");
+  assert.equal(owsToCheck(ctx("xrpl:mainnet", "sign_message", { transaction: { raw_hex: signIn } })).body.disguisedTransaction, undefined);
+});
+
+test("OWS messages end to end: plain text allowed, binary needs a person, a disguised transaction is refused", async () => {
+  const express = (await import("express")).default;
+  const { createCheckRouter } = await import("../src/presign-guard.js");
+  const app = express(); app.use(createCheckRouter());
+  const server = app.listen(0);
+  const post = async (body) => (await fetch(`http://127.0.0.1:${server.address().port}/v1/check`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).json();
+  const sol = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+  try {
+    let r = await post(ctx(sol, "sign_message", { transaction: { raw_hex: Buffer.from("Sign in to app.example").toString("hex") } }));
+    assert.deepEqual([r.verdict, r.allow], ["green", true]);
+    r = await post(ctx(sol, "sign_message", { transaction: { raw_hex: "deadbeef".repeat(8) } }));
+    assert.deepEqual([r.verdict, r.allow], ["orange", false]);
+    r = await post(ctx(sol, "sign_message", { transaction: { raw_hex: solanaMessageHex() }, policy_config: { allow_orange: true } }));
+    assert.deepEqual([r.verdict, r.allow], ["red", false]);
+    assert.match(r.reason, /MESSAGE_IS_TRANSACTION \(signing this message signs a Solana transaction\)/);
+    r = await post(ctx("xrpl:mainnet", "sign_message", { transaction: { raw_hex: encodeXrpl(XRPL_TX) } }));
+    assert.deepEqual([r.verdict, r.allow], ["red", false]);
+    assert.match(r.reason, /signs an XRPL transaction/);
+  } finally { server.close(); }
+});
+
 test("owsToCheck: what presign-guard can't judge is refused (the handler denies it unless allow_unchecked)", () => {
   assert.throws(() => owsToCheck(ctx("bip122:000000000019d6689c085ae165831e93", "sign_transaction", { transaction: { raw_hex: "00" } })), /doesn't check bip122/);
-  assert.throws(() => owsToCheck(ctx("xrpl:mainnet", "sign_message", { transaction: { raw_hex: "00" } })), /isn't checked, only transactions/);
-  assert.throws(() => owsToCheck(ctx("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "sign_message", { transaction: { raw_hex: "00" } })), OwsUnchecked);
+  assert.throws(() => owsToCheck(ctx("xrpl:mainnet", "sign_hash", { transaction: { raw_hex: "00" } })), /isn't checked, only transactions and messages/);
+  assert.throws(() => owsToCheck(ctx("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", "sign_hash", { transaction: { raw_hex: "00" } })), OwsUnchecked);
   assert.throws(() => owsToCheck(ctx("eip155:8453", "sign_transaction", { transaction: { raw_hex: "zz" } })), /raw_hex must be/);
   assert.throws(() => owsToCheck(ctx("eip155:8453", "sign_transaction", { transaction: { raw_hex: "0102" } })), /not an EVM transaction/);
 });
