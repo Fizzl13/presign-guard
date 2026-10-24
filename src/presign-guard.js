@@ -1544,6 +1544,8 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
 export function createCheckRouter() {
   const router = express.Router();
   router.use(express.json({ limit: "64kb" })); // batch permits and Seaport orders can be large
+  // server.js parses /v1/check before the paywall (for OWS's 402); a body it couldn't parse fails here, after payment.
+  router.use((req, _res, next) => next(req.fizzlJsonError));
 
   // OWS kills a policy that hasn't answered within 5 s and denies; answering first keeps the reason and the error
   // status (so nothing is charged for a check OWS would throw away). Most checks take 1–2 s; a slow lookup can take more.

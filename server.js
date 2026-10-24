@@ -16,6 +16,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { stellarConfig, stellarFacilitator, STELLAR_NETWORK } from "./src/stellar.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
+import { owsPaymentRequired } from "./src/ows.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
@@ -287,6 +288,10 @@ app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);
 app.use(validateScreenQuery);
 app.use(mirrorChallengeIntoBody);
+// An OWS policy without credits gets a 402 that says what to do (src/ows.js). The body is parsed here for that; one
+// that isn't valid JSON still gets the 402 first, and its 400 from the check router once paid, as before.
+const checkJson = express.json({ limit: "64kb" });
+app.post(["/v1/check", "/v1/check/explain"], (req, res, next) => checkJson(req, res, (err) => { if (err) req.fizzlJsonError = err; next(); }), owsPaymentRequired(PUBLIC_URL));
 // Our own services (PlainText) skip the paywall with the internal key (src/internal.js).
 const isInternal = internalAccess();
 app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
