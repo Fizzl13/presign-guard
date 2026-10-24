@@ -12,6 +12,8 @@
 //   { type: "authorization", chainId, address, authorizationChainId?, nonce?, from? } // an EIP-7702 delegation
 //   { type: "xrpl",        network?, tx }          // an unsigned XRP Ledger transaction (src/xrpl.js)
 //   { type: "algorand",    transaction | transactions, from? } // base64 msgpack Algorand transaction(s) (src/algorand-tx.js)
+//   { chain_id, request_type, transaction | typed_data, policy_config? } // an OWS PolicyContext (src/ows.js): the
+//                                                    answer also carries the OWS PolicyResult, { allow, reason }
 //   Add lang: "nl" | "en" on /v1/check/explain.
 //
 // Fail-closed rule: every error returns a non-2xx status and verdict: null, never "green".
@@ -40,6 +42,7 @@ import { checkMandatePayment } from "./mandate.js";
 import { parseRequirements, checkX402Payment } from "./x402-requirements.js";
 import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS } from "./simulate.js";
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
+import { isOwsContext, owsToCheck, owsResult } from "./ows.js";
 import { decodeMessage, parseSignIn, siteOf } from "./message.js";
 import { createHistory, poisoningReasons, transferRecipients } from "./poisoning.js";
 import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons, addAgentPaymentRecipients } from "./solana-tx.js";
@@ -1542,22 +1545,44 @@ export function createCheckRouter() {
   const router = express.Router();
   router.use(express.json({ limit: "64kb" })); // batch permits and Seaport orders can be large
 
+  // OWS kills a policy that hasn't answered within 5 s and denies; answering first keeps the reason and the error
+  // status (so nothing is charged for a check OWS would throw away). Most checks take 1–2 s; a slow lookup can take more.
+  const OWS_BUDGET_MS = 4200;
+  const withinBudget = (work) => {
+    let timer;
+    const late = new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(`the check took longer than ${OWS_BUDGET_MS / 1000} s, and OWS waits at most 5 s`), { status: 504 })), OWS_BUDGET_MS); });
+    return Promise.race([work, late]).finally(() => clearTimeout(timer));
+  };
   const handler = (withExplanation) => async (req, res) => {
+    // An OWS policy's PolicyContext (src/ows.js) becomes an ordinary check; the answer adds { allow, reason }.
+    const ows = isOwsContext(req.body);
+    const allowUnchecked = ows && req.body.policy_config?.allow_unchecked === true;
     try {
-      // XRP Ledger transactions have their own parser and rules (src/xrpl.js).
-      const result = isXrplRequest(req.body) ? await analyzeXrpl(await parseXrplRequest(req.body)) : await analyze(parseRequest(req.body));
-      if (withExplanation) {
-        const lang = req.body.lang === "nl" ? "nl" : "en";
-        result.explanation = { lang, text: await explain(result, lang) };
-      }
+      const translated = ows ? owsToCheck(req.body) : null;
+      const body = translated ? translated.body : req.body;
+      const work = (async () => {
+        // XRP Ledger transactions have their own parser and rules (src/xrpl.js).
+        const result = isXrplRequest(body) ? await analyzeXrpl(await parseXrplRequest(body)) : await analyze(parseRequest(body));
+        if (withExplanation) {
+          const lang = req.body.lang === "nl" ? "nl" : "en";
+          result.explanation = { lang, text: await explain(result, lang) };
+        }
+        return result;
+      })();
+      const result = translated ? await withinBudget(work) : await work;
+      if (translated) Object.assign(result, owsResult(result, translated.options));
       res.set("Cache-Control", "no-store").json(result);
     } catch (err) {
       const status = err.status ?? 500;
       if (status >= 500) console.error("[presign-guard]", err);
+      // For OWS: something presign-guard can't judge is denied, unless the policy allows unchecked requests. Either
+      // way the status stays an error, so no payment settles and credits come back.
+      const policy = ows ? { allow: status < 500 && allowUnchecked, reason: `presign-guard ${status < 500 && allowUnchecked ? "didn't check this (allow_unchecked)" : "denied"}: ${status === 500 ? "internal error" : err.message}`.slice(0, 500) } : {};
       res.status(status).json({
-        error: status === 400 ? "invalid_request" : status === 503 ? "upstream_unavailable" : "internal_error",
+        error: status === 400 ? "invalid_request" : status === 503 ? "upstream_unavailable" : status === 504 ? "timeout" : "internal_error",
         message: status === 500 ? "Internal error" : err.message,
         verdict: null,
+        ...policy,
       });
     }
   };
