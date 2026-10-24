@@ -322,6 +322,14 @@ for (const { base64 } of p0.transactions) {
 
 The deposit checked before the account exists fails in the simulation: still orange `SIMULATION_FAILS`, now with `details.missingAccounts` (accounts it writes to that don't exist yet and that it doesn't create itself) and a note to check it again after the earlier transaction has landed. Checked after, it comes back green with exactly what leaves the wallet (1 USDC plus the fee). With `submit: "bundle"` (all signed with one blockhash and sent together as a Jito bundle) there is no landing in between: each transaction is still decoded, but a later one's simulation can fail only because the earlier ones haven't run yet (look for `missingAccounts`).
 
+**Metaplex agents.** An agent registered in [Metaplex's Agent Registry](https://www.metaplex.com/docs/agents) is an MPL Core asset with a wallet of its own: the asset signer PDA, which holds the agent's USDC. It pays (an x402 payment, for example) through Core's `Execute` instruction: the asset's owner, or an executive the owner delegated to, signs an `Execute` that wraps the instruction the agent's wallet runs, while the facilitator pays the fee. Check it with `from` set to the owner who signs:
+
+```jsonc
+{ "type": "solana", "transaction": "AQAAAAAA…", "from": "<the asset's owner>" }
+```
+
+The wrapped instruction is unwrapped and judged as if the agent's wallet signed it, and for the owner's wallet too (the owner's signature carries into it). A USDC or SOL transfer from the agent's wallet is an info line, `METAPLEX_AGENT_PAYMENT` (subject: the token account paid; `details.amount`, `mint`, `agentAsset`, `agentWallet`, and `recipient` when the simulation shows whose account it is). Handing over the agent's token account (red `SOLANA_TOKEN_ACCOUNT_TAKEOVER`) or an unlimited approval from it (orange `SOLANA_UNLIMITED_DELEGATE`) is caught as for the owner's own, with `details.via: "metaplex-core-execute"`; any other program run as the agent's wallet is orange `METAPLEX_AGENT_EXECUTE`. The simulation follows the agent's wallet: its changes come with `agent: true`. Orange `METAPLEX_EXECUTION_DELEGATE`: a `DelegateExecution` (Metaplex's agent tools program) gives an executive a standing right to run `Execute` for the agent, as Metaplex's Mech uses for instant x402 payments, until `RevokeExecution` (info `METAPLEX_EXECUTION_REVOKED`). The answer's `subject.agents` lists each agent (asset, wallet, the program it runs).
+
 ### XRP Ledger transactions
 
 ```jsonc

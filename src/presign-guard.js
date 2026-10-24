@@ -42,7 +42,7 @@ import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { decodeMessage, parseSignIn, siteOf } from "./message.js";
 import { createHistory, poisoningReasons, transferRecipients } from "./poisoning.js";
-import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons } from "./solana-tx.js";
+import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons, addAgentPaymentRecipients } from "./solana-tx.js";
 import { parseAlgorandRequest, algorandReasons, simulateAlgorand, algorandSimulationReasons, describeAlgorandTxn, ALGORAND_NETWORKS } from "./algorand-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
@@ -830,6 +830,7 @@ async function analyzeSolana(req) {
   for (const r of solanaSimulationReasons(sim, req, shown)) add(r.code, r.severity, r.subject, r.details);
   if (req.usesLookupTables) add("SOLANA_LOOKUP_TABLES", "info", req.wallet, { note: "some accounts come from address lookup tables; the simulation covers them, the instruction decoding does not" });
   if (!sim) add("SIMULATION_UNAVAILABLE", "info", req.wallet);
+  await addAgentPaymentRecipients(reasons, sim?.tokenOwners);
   // Every account the transaction names, the new authorities and delegates, and the owners of the token accounts it
   // writes to (a token transfer names the recipient's token account, not the recipient), against the OFAC SDN list.
   const sanctions = partySanctionsReasons([
@@ -852,9 +853,10 @@ async function analyzeSolana(req) {
       wallet: req.wallet,
       ...(req.origin && { origin: req.origin }),
       programs: [...new Set(req.instructions.map((ix) => ix.program).filter(Boolean))],
+      ...(req.agentExecutes?.length && { agents: req.agentExecutes.map((e) => ({ asset: e.asset, wallet: e.assetSigner, program: e.inner.program })) }),
     },
     ...(sim && { simulation: sim }),
-    scope: "Solana transactions before signing: token accounts handed to another owner (SetAuthority), the wallet handed to a program (System Assign), token delegates (Approve), durable nonces, closing token accounts to someone else, all also when hidden inside other programs (simulateTransaction: SOL and token balances, owners and delegates after), every account involved (and the owners of the token accounts written to) against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what a program may do later with a delegate it was given.",
+    scope: "Solana transactions before signing: token accounts handed to another owner (SetAuthority), the wallet handed to a program (System Assign), token delegates (Approve), durable nonces, closing token accounts to someone else, all also when hidden inside other programs (simulateTransaction: SOL and token balances, owners and delegates after); Metaplex agents: what a Core Execute makes the agent's own wallet do (an x402 payment, an approval, another program) and execution delegates that let an executive pay for the agent; every account involved (and the owners of the token accounts written to) against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what a program may do later with a delegate it was given.",
     sources: ["solana-rpc", ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
     checkedAt: new Date().toISOString(),
   };

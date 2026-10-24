@@ -166,3 +166,135 @@ test("Project 0: a first deposit is two transactions sent in order; the deposit 
   ]);
   assert.ok(answer.reasons.some((r) => r.code === "SOLANA_LOOKUP_TABLES"));
 });
+
+// Metaplex agents: an MPL Core asset whose signer PDA is the agent's own wallet. x402 pays from it through Core's
+// Execute (the owner, or an execution delegate, authorises; the facilitator pays the fee), as Metaplex's
+// MetaplexSvmExactScheme builds it: [Execute(TransferChecked agent ATA -> seller ATA, authority = the PDA)].
+const MPL_CORE = "CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d";
+const AGENT_TOOLS = "TLREGni9ZEyGC3vnPZtqUh95xQ8oPqJSvNjvB7FGK8S";
+const ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const fake = (n) => k.getAddressDecoder().decode(new Uint8Array(32).fill(n));
+const ASSET = fake(11), FACILITATOR = fake(12), PROFILE = fake(13), RECORD = fake(14), IDENTITY = fake(15);
+const enc = k.getAddressEncoder();
+const pda = async (program, seeds) => (await k.getProgramDerivedAddress({ programAddress: k.address(program), seeds }))[0];
+const AGENT = await pda(MPL_CORE, [new TextEncoder().encode("mpl-core-execute"), enc.encode(k.address(ASSET))]);
+const ata = (owner) => pda(ATA_PROGRAM, [enc.encode(k.address(owner)), enc.encode(k.address(TOKEN)), enc.encode(k.address(USDC))]);
+const AGENT_ATA = await ata(AGENT), SELLER_ATA = await ata(OTHER);
+
+const coreExecute = (inner, { delegateRecord } = {}) => {
+  const d = new Uint8Array(5 + inner.data.length);
+  d[0] = 31;
+  new DataView(d.buffer).setUint32(1, inner.data.length, true);
+  d.set(inner.data, 5);
+  return { programAddress: k.address(MPL_CORE), data: d, accounts: [
+    A(ASSET, R.WRITABLE), A(MPL_CORE, R.READONLY), A(AGENT, R.READONLY), A(FACILITATOR, R.WRITABLE_SIGNER), A(W, R.READONLY_SIGNER),
+    A(SYSTEM, R.READONLY), A(inner.programAddress, R.READONLY), ...(delegateRecord ? [A(delegateRecord, R.READONLY)] : []), ...inner.accounts,
+  ] };
+};
+const transferChecked = (amount, to = SELLER_ATA) => {
+  const d = new Uint8Array(10); d[0] = 12; new DataView(d.buffer).setBigUint64(1, amount, true); d[9] = 6;
+  return { programAddress: k.address(TOKEN), data: d, accounts: [A(AGENT_ATA, R.WRITABLE), A(USDC, R.READONLY), A(to, R.WRITABLE), A(AGENT, R.READONLY)] };
+};
+const agentTx = (ixs) => parseSolanaRequest({ transaction: build(ixs, FACILITATOR), from: W });
+
+test("Metaplex agent: an x402 payment through Core Execute is unwrapped and reported as paid from the agent's wallet", () => {
+  const req = agentTx([coreExecute(transferChecked(20000n))]);
+  assert.equal(req.wallet, W);
+  assert.deepEqual(req.agentWallets, [AGENT]);
+  const [e] = req.agentExecutes;
+  assert.equal(e.asset, ASSET);
+  assert.equal(e.assetSigner, AGENT);
+  assert.equal(e.authority, W);
+  assert.equal(e.collection, null, "no collection: Core's own program id stands in");
+  assert.equal(e.inner.program, TOKEN);
+  assert.deepEqual(e.inner.accounts, [AGENT_ATA, USDC, SELLER_ATA, AGENT]);
+
+  const [pay, ...rest] = instructionReasons(req);
+  assert.deepEqual(rest, []);
+  assert.equal(pay.code, "METAPLEX_AGENT_PAYMENT");
+  assert.equal(pay.severity, "info");
+  assert.equal(pay.subject, SELLER_ATA);
+  assert.equal(pay.details.amount, "20000");
+  assert.equal(pay.details.mint, USDC);
+  assert.equal(pay.details.decimals, 6);
+  assert.equal(pay.details.agentAsset, ASSET);
+  assert.equal(pay.details.agentWallet, AGENT);
+  assert.equal(pay.details.tokenAccount, AGENT_ATA);
+
+  // Delegated mode (Metaplex's Mech): the remaining accounts start with the execution-delegate record.
+  const delegated = agentTx([coreExecute(transferChecked(20000n), { delegateRecord: RECORD })]);
+  assert.deepEqual(delegated.agentExecutes[0].inner.accounts, [AGENT_ATA, USDC, SELLER_ATA, AGENT]);
+  assert.equal(instructionReasons(delegated)[0].subject, SELLER_ATA);
+});
+
+test("Metaplex agent: handing over the agent's token account, an unlimited approval or another program inside Execute are red / orange", () => {
+  const tokenIx = (data, accounts) => ({ programAddress: k.address(TOKEN), data, accounts });
+  const r = (inner) => instructionReasons(agentTx([coreExecute(inner)]));
+
+  const setAuth = new Uint8Array(35); setAuth[0] = 6; setAuth[1] = 2; setAuth[2] = 1; setAuth.set(enc.encode(k.address(OTHER)), 3);
+  const [takeover] = r(tokenIx(setAuth, [A(AGENT_ATA, R.WRITABLE), A(AGENT, R.READONLY)]));
+  assert.equal(takeover.code, "SOLANA_TOKEN_ACCOUNT_TAKEOVER");
+  assert.equal(takeover.severity, "red");
+  assert.equal(takeover.subject, OTHER);
+  assert.equal(takeover.details.agentWallet, AGENT);
+  assert.equal(takeover.details.via, "metaplex-core-execute");
+
+  const approveAll = new Uint8Array(9); approveAll[0] = 4; new DataView(approveAll.buffer).setBigUint64(1, (1n << 64n) - 1n, true);
+  const [unlimited] = r(tokenIx(approveAll, [A(AGENT_ATA, R.WRITABLE), A(OTHER, R.READONLY), A(AGENT, R.READONLY)]));
+  assert.equal(unlimited.code, "SOLANA_UNLIMITED_DELEGATE");
+  assert.equal(unlimited.details.agentAsset, ASSET);
+
+  const [other] = r({ programAddress: k.address(MARGINFI), data: new Uint8Array([1, 2, 3]), accounts: [A(AGENT, R.READONLY), A(AGENT_ATA, R.WRITABLE)] });
+  assert.equal(other.code, "METAPLEX_AGENT_EXECUTE");
+  assert.equal(other.severity, "orange");
+  assert.equal(other.subject, MARGINFI);
+
+  // The owner's signature carries into the wrapped instruction: handing over the owner's own token account is red too.
+  const [ownerAuth] = r(tokenIx(setAuth, [A(TA, R.WRITABLE), A(W, R.READONLY)]));
+  assert.equal(ownerAuth.code, "SOLANA_TOKEN_ACCOUNT_TAKEOVER");
+  assert.equal(ownerAuth.details.tokenAccount, TA);
+  assert.equal(ownerAuth.details.agentWallet, undefined);
+});
+
+test("Metaplex agent: DelegateExecution (a standing right to pay for the agent) is orange, RevokeExecution an info line", () => {
+  const tools = (op, accounts) => ({ programAddress: k.address(AGENT_TOOLS), data: new Uint8Array([op, 0, 0, 0, 0, 0, 0, 0]), accounts });
+  const delegate = tools(1, [A(PROFILE, R.READONLY), A(ASSET, R.READONLY), A(IDENTITY, R.READONLY), A(RECORD, R.WRITABLE), A(W, R.WRITABLE_SIGNER), A(W, R.READONLY_SIGNER), A(SYSTEM, R.READONLY)]);
+  const [d] = instructionReasons(parseSolanaRequest({ transaction: build([delegate]) }));
+  assert.equal(d.code, "METAPLEX_EXECUTION_DELEGATE");
+  assert.equal(d.severity, "orange");
+  assert.equal(d.subject, PROFILE);
+  assert.equal(d.details.agentAsset, ASSET);
+  assert.equal(d.details.delegateRecord, RECORD);
+  assert.match(d.details.note, /until it is revoked/);
+
+  const revoke = tools(2, [A(RECORD, R.WRITABLE), A(ASSET, R.READONLY), A(W, R.WRITABLE), A(W, R.WRITABLE_SIGNER), A(W, R.READONLY_SIGNER), A(SYSTEM, R.READONLY)]);
+  const [rv] = instructionReasons(parseSolanaRequest({ transaction: build([revoke]) }));
+  assert.equal(rv.code, "METAPLEX_EXECUTION_REVOKED");
+  assert.equal(rv.severity, "info");
+});
+
+test("Metaplex agent: the simulation follows the agent's wallet; the full check names the seller and stays green", async () => {
+  const tx = build([coreExecute(transferChecked(20000n))], FACILITATOR);
+  const req = parseSolanaRequest({ transaction: tx, from: W });
+  const addresses = [...new Set([req.wallet, AGENT, ...req.writable])];
+  const at = (m) => addresses.map((a) => m[a] ?? null);
+  const stub = rpcStub({
+    before: at({ [W]: wallet(1e9), [AGENT_ATA]: tokenAccount(5, { owner: AGENT }), [SELLER_ATA]: tokenAccount(0, { owner: OTHER }) }),
+    after: at({ [W]: wallet(1e9), [AGENT_ATA]: tokenAccount(4.98, { owner: AGENT }), [SELLER_ATA]: tokenAccount(0.02, { owner: OTHER }) }),
+  });
+  const sim = await simulateSolana(req, { fetchImpl: stub });
+  assert.equal(sim.changes.length, 1);
+  const [c] = sim.changes;
+  assert.deepEqual({ ...c, change: Math.round(c.change * 1e6) / 1e6 }, { type: "token", account: AGENT_ATA, mint: USDC, change: -0.02, raw: "-20000", decimals: 6, agent: true, agentWallet: AGENT });
+  assert.deepEqual(sim.tokenOwners, [OTHER], "the agent's wallet is not counted as a recipient");
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = stub;
+  let answer;
+  try { answer = await analyze(parseRequest({ type: "solana", transaction: tx, from: W })); } finally { globalThis.fetch = realFetch; }
+  assert.equal(answer.verdict, "green");
+  const pay = answer.reasons.find((r) => r.code === "METAPLEX_AGENT_PAYMENT");
+  assert.equal(pay.details.recipient, OTHER);
+  assert.deepEqual(answer.subject.agents, [{ asset: ASSET, wallet: AGENT, program: TOKEN }]);
+  assert.match(answer.scope, /Metaplex agents/);
+});
