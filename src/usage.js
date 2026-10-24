@@ -167,6 +167,8 @@ export function describePresignCall(req, _res, body) {
       selector: typeof input.data === "string" && input.data.length >= 10 ? input.data.slice(0, 10) : undefined,
       origin: typeof input.origin === "string" ? input.origin.slice(0, 120) : undefined,
       lang: input.lang,
+      // An OWS policy's call: the chain and the operation, never the payload.
+      ...(typeof input.chain_id === "string" && typeof input.request_type === "string" ? { ows: `${input.chain_id.slice(0, 64)} ${input.request_type.slice(0, 20)}` } : {}),
     },
     result: {
       verdict: b.verdict === null ? "none" : b.verdict,
