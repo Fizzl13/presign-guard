@@ -90,11 +90,12 @@ Tested with OWS 1.4.3: a USDC transfer is signed, an unlimited approval is refus
 | Chain (`chain_id`) | `sign_transaction` (`transaction.raw_hex`) | Other requests |
 | :-- | :-- | :-- |
 | EVM (`eip155:*`, the chains above) | The unsigned envelope, legacy or typed; an EIP-7702 transaction is judged by its delegation | `sign_typed_data` (permits, Permit2, x402 authorizations), `sign_message`, `sign_hash` |
-| Solana (`solana:5eykt…`) | The wire transaction | not checked |
-| XRP Ledger (`xrpl:mainnet`, `xrpl:testnet`) | The binary-encoded transaction, decoded and judged like `type: "xrpl"` | not checked |
+| Solana (`solana:5eykt…`) | The wire transaction | `sign_message`, judged as a message (below) |
+| XRP Ledger (`xrpl:mainnet`, `xrpl:testnet`) | The binary-encoded transaction, decoded and judged like `type: "xrpl"` | `sign_message`, judged as a message (below) |
 
 - `green` allows; `red` denies; `orange` (a person should look) denies, unless the policy's `config` sets `"allow_orange": true`.
-- What presign-guard doesn't check (another chain, a request type above marked "not checked", a payload it can't decode) is denied with the reason, unless `"allow_unchecked": true`. Either way the status is an error, so no credit is spent.
+- A message on Solana or the XRP Ledger (a dApp sign-in, say) is judged like `personal_sign`: readable text is green, binary data orange (`UNREADABLE_MESSAGE`). Bytes that decode as a whole transaction of that chain are red, `MESSAGE_IS_TRANSACTION`: signing them signs that transaction, a drainer's way around a wallet that shows transactions. (OWS 1.4.3 signs no XRPL messages yet; the check is ready for when it does.)
+- What presign-guard doesn't check (another chain, a request type not in the table, a payload it can't decode) is denied with the reason, unless `"allow_unchecked": true`. Either way the status is an error, so no credit is spent.
 - `config.address` (the wallet's address) lets EVM transactions be simulated.
 - OWS denies a policy that hasn't answered within 5 s. presign-guard answers an OWS request within 4.2 s: when a lookup is slower, it denies with the reason (status 504, no credit spent) rather than letting OWS cut it off.
 - No key, a wrong key or no credits left: the answer is the 402 with `"allow": false` and a reason that says how to get credits, so OWS denies and shows it. Fail closed.
@@ -316,7 +317,7 @@ Supported chains: 1, 10, 56, 137, 8453, 42161.
 { "type": "message", "method": "personal_sign", "message": "app.example wants you to sign in with your Ethereum account:\n0x…", "origin": "https://app.example", "from": "0x…" }
 ```
 
-A message moves no tokens by itself, but two kinds are traps. Red: `ETH_SIGN` (`eth_sign` signs a raw 32-byte hash, so nobody can see what is agreed to; it can be a transaction or permit in disguise), `SIGN_IN_DOMAIN_MISMATCH` (a Sign-In with Ethereum message, EIP-4361, for another site than the `origin` asking: a phishing site relaying a real site's login). Orange: `UNREADABLE_MESSAGE` (the bytes aren't readable text; `details.looksLike: "a 32-byte hash"` when it is exactly 32 bytes), `SIGN_IN_URI_MISMATCH` (the message's URI is on another site than its domain), `SIGN_IN_ADDRESS_MISMATCH` (it signs in another account than `from`), `SIGN_IN_CHAIN_MISMATCH` (its Chain ID differs from `chainId`). Info: `SIGN_IN_REQUEST` (the site, account, URI and expiry of a sign-in message), `PLAIN_MESSAGE`. The `origin` gets the same phishing-list and domain-age checks as any request, and `intent` works too. The answer's `subject` carries `kind: "message"`, the method and the first 200 characters of the text (`preview`).
+A message moves no tokens by itself, but two kinds are traps. Red: `ETH_SIGN` (`eth_sign` signs a raw 32-byte hash, so nobody can see what is agreed to; it can be a transaction or permit in disguise), `SIGN_IN_DOMAIN_MISMATCH` (a Sign-In with Ethereum message, EIP-4361, for another site than the `origin` asking: a phishing site relaying a real site's login), and for an [OWS policy](#open-wallet-standard-ows-policy) `MESSAGE_IS_TRANSACTION` (a Solana or XRPL message whose bytes are a whole transaction of that chain). Orange: `UNREADABLE_MESSAGE` (the bytes aren't readable text; `details.looksLike: "a 32-byte hash"` when it is exactly 32 bytes), `SIGN_IN_URI_MISMATCH` (the message's URI is on another site than its domain), `SIGN_IN_ADDRESS_MISMATCH` (it signs in another account than `from`), `SIGN_IN_CHAIN_MISMATCH` (its Chain ID differs from `chainId`). Info: `SIGN_IN_REQUEST` (the site, account, URI and expiry of a sign-in message), `PLAIN_MESSAGE`. The `origin` gets the same phishing-list and domain-age checks as any request, and `intent` works too. The answer's `subject` carries `kind: "message"`, the method and the first 200 characters of the text (`preview`).
 
 ### EIP-7702 authorizations
 

@@ -8,12 +8,17 @@
 // typed or legacy), Solana the full wire transaction with its signature slots, XRPL the binary-encoded unsigned
 // transaction (no STX\0 prefix). sign_typed_data brings typed_data.raw_json; sign_message and sign_hash bring the
 // bytes. Chains presign-guard doesn't check (Bitcoin, Cosmos, Sui, …) are denied unless the policy's config says
-// allow_unchecked; so are request types it can't judge (a Solana or XRPL message).
+// allow_unchecked; so are request types it can't judge (a Solana or XRPL hash or typed data).
+//
+// A Solana or XRPL message (a dApp sign-in, say) is judged like a personal_sign message: readable text is green, binary
+// orange. Bytes that decode as a whole transaction are red (MESSAGE_IS_TRANSACTION): the signature over them is a
+// signature over that transaction, the drainer's way around a wallet that shows transactions.
 //
 // policy_config (the policy file's "config"): allow_orange (default false: "orange" means a person should look, and
 // an agent token has no person, so it is denied), allow_unchecked (default false), address (the wallet's address,
 // for simulating EVM transactions and as the Solana signer).
 
+import { getCompiledTransactionMessageDecoder } from "@solana/kit";
 import { decode as decodeXrplBinary } from "ripple-binary-codec";
 import { parseTransaction } from "viem";
 
@@ -39,6 +44,20 @@ const hexOf = (raw) => {
   if (!h || h.length % 2 || !/^[0-9a-fA-F]+$/.test(h)) throw new OwsUnchecked("transaction.raw_hex must be the hex payload OWS is about to sign");
   return h.toLowerCase();
 };
+
+// Whether message bytes are a transaction: a Solana transaction message (legacy or v0) using all of them, with a
+// signer and an instruction; or a binary-encoded XRPL transaction with its type and account.
+function solanaTransactionIn(hex) {
+  const bytes = Buffer.from(hex, "hex");
+  try {
+    const [m, end] = getCompiledTransactionMessageDecoder().read(bytes, 0);
+    return end === bytes.length && m.header.numSignerAccounts > 0 && m.staticAccounts.length > 0 && m.instructions.length > 0;
+  } catch { return false; }
+}
+function xrplTransactionIn(hex) {
+  try { const tx = decodeXrplBinary(hex.toUpperCase()); return typeof tx.TransactionType === "string" && typeof tx.Account === "string"; } catch { return false; }
+}
+const messageBody = (hex, chain, isTransaction) => ({ type: "message", method: "personal_sign", message: `0x${hex}`, ...(isTransaction(hex) && { disguisedTransaction: chain }) });
 
 // The /v1/check body for an OWS PolicyContext, and the policy's options.
 export function owsToCheck(ctx) {
@@ -72,12 +91,14 @@ export function owsToCheck(ctx) {
   }
 
   if (chain === SOLANA_MAINNET || chain === "solana:mainnet") {
-    if (type !== "sign_transaction") throw new OwsUnchecked(`${type} on Solana isn't checked, only transactions`);
+    if (type === "sign_message") return { body: messageBody(raw(), "solana", solanaTransactionIn), options };
+    if (type !== "sign_transaction") throw new OwsUnchecked(`${type} on Solana isn't checked, only transactions and messages`);
     return { body: { type: "solana", transaction: Buffer.from(raw(), "hex").toString("base64"), ...(address && { from: address }) }, options };
   }
 
   if (XRPL_IDS[chain]) {
-    if (type !== "sign_transaction") throw new OwsUnchecked(`${type} on the XRP Ledger isn't checked, only transactions`);
+    if (type === "sign_message") return { body: messageBody(raw(), "xrpl", xrplTransactionIn), options };
+    if (type !== "sign_transaction") throw new OwsUnchecked(`${type} on the XRP Ledger isn't checked, only transactions and messages`);
     const binary = raw().toUpperCase();
     let tx;
     try { tx = decodeXrplBinary(binary); } catch { throw new OwsUnchecked("transaction.raw_hex is not a binary-encoded XRPL transaction"); }
