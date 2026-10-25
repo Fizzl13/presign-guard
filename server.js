@@ -93,13 +93,15 @@ function onlyNetworks(client, keep) {
 // Testnet: public x402.org facilitator. Mainnet: Coinbase CDP facilitator for
 // Base, PayAI for Solana (when PAY_TO_SOLANA is set), GoPlausible for Algorand, OpenZeppelin for Stellar.
 const cdp = new HTTPFacilitatorClient(cdpFacilitator);
+// One XRPL facilitator for x402 and MPP, so a signed Payment settles once whichever way it comes in.
+const xrplFacilitator = XRPL ? createXrplFacilitator({ wsUrl: process.env.XRPL_WS_URL || "wss://xrplcluster.com" }) : null;
 const facilitators = MAINNET
   ? [
     ...(SOLANA ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.SOLANA_FACILITATOR_URL ?? "https://facilitator.payai.network" }), (n) => n.startsWith("solana:"))] : []),
     ...(ALGORAND ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.ALGORAND_FACILITATOR_URL || ALGORAND_FACILITATOR }), (n) => n.startsWith("algorand:"))] : []),
     ...(STELLAR ? [onlyNetworks(stellarFacilitator(), (n) => n.startsWith("stellar:"))] : []),
     cdp,
-    ...(XRPL ? [createXrplFacilitator({ wsUrl: process.env.XRPL_WS_URL || "wss://xrplcluster.com" })] : []),
+    ...(xrplFacilitator ? [xrplFacilitator] : []),
   ]
   : [new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL ?? "https://x402.org/facilitator" })];
 
@@ -132,6 +134,8 @@ const MPP = MAINNET && process.env.MPP_SECRET
     facilitator: cdp,
     // MPP_TEMPO_RECIPIENT adds the tempo method (USDC.e on Tempo, push mode; MPP_TEMPO_CHAIN 42431 = testnet).
     tempo: process.env.MPP_TEMPO_RECIPIENT ? { recipient: process.env.MPP_TEMPO_RECIPIENT, chainId: Number(process.env.MPP_TEMPO_CHAIN || 4217), rpc: process.env.MPP_TEMPO_RPC || undefined } : null,
+    // The xrpl method of Ripple's xrpl-mpp-sdk (RLUSD, pull mode) to the same account as x402's xrpl:0; MPP_XRPL=off turns it off.
+    xrpl: xrplFacilitator && process.env.MPP_XRPL !== "off" ? { recipient: XRPL.payTo, facilitator: xrplFacilitator } : null,
   })
   : null;
 // MPP sessions (src/mpp-session.js): pay-as-you-go over a Tempo payment channel, one voucher per call, paid out to
@@ -210,7 +214,7 @@ app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=30
 app.get("/openapi.json", (_req, res) => {
   const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : [])], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
-  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: CONTACT, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION ? { currency: MPP_SESSION.currency } : null });
+  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: CONTACT, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION ? { currency: MPP_SESSION.currency } : null, xrpl: MPP.xrpl });
   res.json(spec);
 });
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL, { credits: Boolean(creditStore) })));

@@ -16,6 +16,12 @@
 // the realm and challenge id) and answers with the transaction hash. We read the receipt from
 // a Tempo RPC, so no facilitator. The payment is final before the answer; a failed answer
 // frees the hash, so the same credential can be sent again while the challenge lasts.
+//
+// And, with `xrpl`, the `xrpl` charge method of Ripple's xrpl-mpp-sdk in "pull" mode: RLUSD on the XRP Ledger. The
+// agent signs a Payment and sends the blob; it is verified and submitted by the same in-process XRPL facilitator as
+// x402's xrpl:0 payments (src/xrpl-facilitator.js), after a 2xx answer like evm. The challenge names the InvoiceID
+// the Payment must carry (sha256 of realm, "mpp" and the challenge's reference), so one signed Payment pays one
+// challenge only.
 const crypto = require('crypto');
 const { keccak256, stringToHex, getAddress } = require('viem');
 
@@ -32,6 +38,14 @@ const TEMPO_CHAINS = {
   42431: { name: 'Tempo Moderato', currency: getAddress('0x20c0000000000000000000000000000000000000'), rpc: 'https://rpc.moderato.tempo.xyz' },
 };
 const TRANSFER_WITH_MEMO = keccak256(stringToHex('TransferWithMemo(address,address,uint256,bytes32)'));
+const XRPL = 'xrpl';
+// RLUSD: its 5-letter code as a 40-hex currency code, and Ripple's issuer per network (the x402 network id with it).
+const RLUSD_HEX = '524C555344000000000000000000000000000000';
+const XRPL_NETWORKS = {
+  mainnet: { x402: 'xrpl:0', issuer: 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De', label: 'xrpl:0' },
+  testnet: { x402: 'xrpl:1', issuer: 'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV', label: 'xrpl:1' },
+};
+const sha256Upper = (s) => crypto.createHash('sha256').update(String(s), 'utf8').digest('hex').toUpperCase();
 
 // The 32-byte MPP memo (mppx Attribution): keccak256("mpp")[0:4], version 1,
 // keccak256(realm)[0:10], client fingerprint [10 bytes], keccak256(challenge id)[0:7].
@@ -67,6 +81,13 @@ function canonical(v) {
   return JSON.stringify(v);
 }
 
+// "10000" (USDC units) -> "0.01": RLUSD is an issued currency, so its amount is a decimal string.
+function decimalUsd(atomic) {
+  const s = String(atomic).padStart(7, '0');
+  const frac = s.slice(-6).replace(/0+$/, '');
+  return `${s.slice(0, -6).replace(/^0+(?=\d)/, '')}${frac ? `.${frac}` : ''}`;
+}
+
 // "$0.01" -> "10000" (USDC has 6 decimals).
 function atomicUsdc(price) {
   const m = /^\$?(\d+)(?:\.(\d{1,6}))?$/.exec(String(price).trim());
@@ -80,8 +101,9 @@ class PaymentError extends Error {}
 
 // facilitator: { verify(paymentPayload, requirements), settle(paymentPayload, requirements) } (x402 v2),
 // for the evm method. tempo: { recipient, chainId = 4217, currency, rpc, getReceipt(hash) } turns
-// on the tempo method (getReceipt replaces the RPC call, for tests).
-function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = null, now = () => Date.now(), log = console }) {
+// on the tempo method (getReceipt replaces the RPC call, for tests). xrpl: { recipient, facilitator, network =
+// "mainnet", issuer } turns on the xrpl method (RLUSD; the facilitator is an x402 XRPL one, src/xrpl-facilitator.js).
+function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = null, xrpl = null, now = () => Date.now(), log = console }) {
   if (!secret) throw new Error('MPP needs a secret');
   const payTo = recipient ? getAddress(recipient) : null;
   if (facilitator && !payTo) throw new Error('MPP evm needs a recipient');
@@ -98,6 +120,10 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
       getReceipt: tempo.getReceipt || ((hash) => rpcReceipt(rpc, hash)),
     };
   }
+  // xrpl.issuer overrides Ripple's RLUSD issuer (a test issuer on testnet).
+  const xrplCfg = xrpl ? { ...XRPL_NETWORKS[xrpl.network || 'mainnet'], ...(xrpl.issuer && { issuer: xrpl.issuer }), network: xrpl.network || 'mainnet', recipient: xrpl.recipient, facilitator: xrpl.facilitator } : null;
+  if (xrplCfg && !(xrplCfg.x402 && /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(String(xrplCfg.recipient)) && xrplCfg.facilitator)) throw new Error('MPP xrpl needs a known network, an r-address recipient and a facilitator');
+  const xrplBinding = (reference) => `${realm} mpp ${reference}`;
   // "GET /signal/:pair" -> the route key and its price; a request matches by method and path.
   const prices = new Map(Object.entries(routes).map(([route, price]) => [route, atomicUsdc(price)]));
   const patterns = [...prices.keys()].map((route) => {
@@ -126,6 +152,14 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
       currency: tempoCfg.currency,
       methodDetails: { chainId: tempoCfg.chainId, supportedModes: ['push'] },
       recipient: tempoCfg.recipient,
+    }) : null,
+    // reference: a fresh nonce per challenge (the id is an HMAC over the challenge, so it covers it), and the InvoiceID
+    // the signed Payment must carry. Pull only: we submit the blob after the answer.
+    [XRPL]: xrplCfg ? (amount, reference = crypto.randomUUID()) => ({
+      amount: decimalUsd(amount),
+      currency: JSON.stringify({ currency: RLUSD_HEX, issuer: xrplCfg.issuer }),
+      methodDetails: { invoiceId: sha256Upper(xrplBinding(reference)), network: xrplCfg.network, reference },
+      recipient: xrplCfg.recipient,
     }) : null,
   };
   const methods = Object.keys(requestFor).filter((m) => requestFor[m]);
@@ -182,7 +216,7 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
     try { bound = JSON.parse(fromB64u(c.opaque)).route; } catch { bound = null; }
     if (bound !== route) throw new PaymentError('That challenge is for another route.');
     if (!methods.includes(c.method) || c.intent !== INTENT) throw new PaymentError(`Only intent "charge" with method ${methods.map((m) => `"${m}"`).join(' or ')} is accepted here.`);
-    if (canonical(request) !== canonical(requestFor[c.method](prices.get(route)))) throw new PaymentError('The price changed. Ask again for a fresh 402.');
+    if (canonical(request) !== canonical(requestFor[c.method](prices.get(route), request && request.methodDetails && request.methodDetails.reference))) throw new PaymentError('The price changed. Ask again for a fresh 402.');
     if (!(Date.parse(c.expires) > now())) throw new PaymentError('That challenge has expired. Ask again for a fresh 402.');
     if (c.method === TEMPO) {
       if (p.type !== 'hash') throw new PaymentError('Only a "hash" credential (push mode) is accepted for tempo: send the transfer yourself, then the transaction hash.');
@@ -194,6 +228,24 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
         source = getAddress(s[2]);
       }
       return { method: TEMPO, hash: p.hash.toLowerCase(), source, amount: request.amount, challengeId: c.id, until: Date.parse(c.expires) + 60000 };
+    }
+    if (c.method === XRPL) {
+      if (p.type !== 'transaction') throw new PaymentError('Only a "transaction" credential (pull mode) is accepted for xrpl: send the signed Payment blob, we submit it.');
+      if (!/^[0-9A-Fa-f]+$/.test(String(p.blob || '')) || p.blob.length > 8192) throw new PaymentError('blob must be the signed Payment, hex.');
+      let source = null;
+      if (cred.source !== undefined) {
+        const s = /^did:pkh:xrpl:([a-z]+):(r[1-9A-HJ-NP-Za-km-z]{24,34})$/.exec(String(cred.source));
+        if (!s || s[1] !== xrplCfg.network) throw new PaymentError(`source must be did:pkh:xrpl:${xrplCfg.network}:<your r-address>.`);
+        source = s[2];
+      }
+      // The x402 XRPL facilitator checks the signature, destination, amount (RLUSD, no partial payment), InvoiceID,
+      // sequence and expiry, and simulates it.
+      const requirements = {
+        scheme: 'exact', network: xrplCfg.x402, amount: request.amount, asset: RLUSD_HEX, payTo: xrplCfg.recipient, maxTimeoutSeconds: EXPIRES_SECONDS,
+        extra: { issuer: xrplCfg.issuer, invoiceId: xrplBinding(request.methodDetails.reference), areFeesSponsored: false },
+      };
+      const paymentPayload = { x402Version: 2, accepted: requirements, payload: { signedTxBlob: p.blob.toUpperCase() } };
+      return { method: XRPL, paymentPayload, requirements, facilitator: xrplCfg.facilitator, from: source, nonce: `xrpl ${request.methodDetails.reference}`, amount: request.amount, usd: Number(request.amount), network: xrplCfg.label };
     }
     if (p.type !== 'authorization') throw new PaymentError('Only an "authorization" (EIP-3009) credential is accepted.');
     let from, to;
@@ -208,7 +260,7 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
       accepted: requirementsFor(request),
       payload: { authorization: { from, to, value: String(p.value), validAfter: String(p.validAfter), validBefore: String(p.validBefore), nonce: p.nonce }, signature: p.signature },
     };
-    return { method: METHOD, paymentPayload, requirements: paymentPayload.accepted, from, nonce: p.nonce, amount: request.amount };
+    return { method: METHOD, paymentPayload, requirements: paymentPayload.accepted, facilitator, from, nonce: p.nonce, amount: request.amount, usd: Number(request.amount) / 1e6, network: 'Base' };
   }
 
   // The Tempo transaction must hold a TransferWithMemo of the asked currency and amount, to our
@@ -296,9 +348,11 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
     if (inFlight.has(paid.nonce)) return refuse(req, res, route, 'This authorization is already being used.');
     inFlight.add(paid.nonce);
     const done = () => inFlight.delete(paid.nonce);
-    Promise.resolve(facilitator.verify(paid.paymentPayload, paid.requirements)).then((v) => {
+    Promise.resolve(paid.facilitator.verify(paid.paymentPayload, paid.requirements)).then((v) => {
       if (!v || !v.isValid) { done(); return refuse(req, res, route, `Payment not accepted: ${(v && (v.invalidMessage || v.invalidReason)) || 'invalid'}.`); }
-      req.mppPaid = { payer: paid.from, amount: paid.amount };
+      // xrpl: the payer is the Payment's account; a credential that names another source is someone else's Payment.
+      if (paid.method === XRPL && paid.from && v.payer && v.payer !== paid.from) { done(); return refuse(req, res, route, 'The Payment is signed by another account than the credential\'s source.'); }
+      req.mppPaid = { payer: paid.from || v.payer, amount: paid.amount };
       // Settle only after a 2xx answer, before it is sent. res.json and res.render end in
       // res.send; anything that bypasses it (res.end, streams) is refused, never served unpaid.
       const send = res.send, end = res.end;
@@ -312,12 +366,12 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
       res.send = function (body) {
         restore();
         if (res.statusCode < 200 || res.statusCode >= 300) { done(); return send.call(this, body); }
-        Promise.resolve(facilitator.settle(paid.paymentPayload, paid.requirements)).then((s) => {
+        Promise.resolve(paid.facilitator.settle(paid.paymentPayload, paid.requirements)).then((s) => {
           done();
           if (!s || !s.success) return refuse(req, res, route, `Settlement failed: ${(s && (s.errorMessage || s.errorReason)) || 'unknown'}.`);
           const timestamp = new Date(now()).toISOString();
-          res.set('Payment-Receipt', b64u(JSON.stringify({ method: METHOD, reference: s.transaction, status: 'success', timestamp })));
-          res.locals.mppPayment = { usd: Number(paid.amount) / 1e6, network: 'Base', payer: s.payer || paid.from, tx: s.transaction || null, protocol: 'mpp' };
+          res.set('Payment-Receipt', b64u(JSON.stringify({ method: paid.method, reference: s.transaction, status: 'success', timestamp })));
+          res.locals.mppPayment = { usd: paid.usd, network: paid.network, payer: s.payer || paid.from, tx: s.transaction || null, protocol: 'mpp' };
           send.call(res, body);
         }, (err) => { done(); log.warn(`MPP settle failed on ${route}: ${err.message}`); refuse(req, res, route, 'Settlement failed. Nothing was charged.'); });
         return res;
@@ -326,7 +380,7 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
     }, (err) => { done(); log.warn(`MPP verify failed on ${route}: ${err.message}`); refuse(req, res, route, 'The payment could not be checked right now. Try again.'); });
   }
 
-  return { middleware, challengeFor, header, readCredential, methods, tempo: tempoCfg && { chainId: tempoCfg.chainId, network: tempoCfg.name, currency: tempoCfg.currency, recipient: tempoCfg.recipient } };
+  return { middleware, challengeFor, header, readCredential, methods, tempo: tempoCfg && { chainId: tempoCfg.chainId, network: tempoCfg.name, currency: tempoCfg.currency, recipient: tempoCfg.recipient }, xrpl: xrplCfg && { network: xrplCfg.network, currency: JSON.stringify({ currency: RLUSD_HEX, issuer: xrplCfg.issuer }), recipient: xrplCfg.recipient } };
 }
 
 // MPP discovery (paymentauth.org draft-payment-discovery, read by MPPScan): adds the evm offer to
@@ -335,8 +389,9 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
 // include(path, method) limits it to the operations MPP really sells. protocols is written as
 // objects ([{x402:{}}, {mpp:{…}}]) as @agentcash/discovery (MPPScan, x402scan) reads it: next to a
 // price object, plain strings make it drop the payment info.
-// tempo: { currency } adds the tempo offer too; evm: false leaves the evm offer out; session: { currency } adds a tempo session offer.
-function addMppOffers(spec, { categories = [], docs = {}, contact = null, include = () => true, evm = true, tempo = null, session = null } = {}) {
+// tempo: { currency } adds the tempo offer too; evm: false leaves the evm offer out; session: { currency } adds a tempo session offer;
+// xrpl: { currency } (the RLUSD currency JSON) adds the xrpl offer, priced in RLUSD as a decimal.
+function addMppOffers(spec, { categories = [], docs = {}, contact = null, include = () => true, evm = true, tempo = null, session = null, xrpl = null } = {}) {
   spec['x-service-info'] = { categories, docs };
   if (contact && spec.info && !spec.info.contact) spec.info.contact = contact;
   for (const [path, methods] of Object.entries(spec.paths || {})) {
@@ -352,6 +407,10 @@ function addMppOffers(spec, { categories = [], docs = {}, contact = null, includ
         info.offers.push({ amount: atomicUsdc(info.price.amount), currency: session.currency, description: op.summary || op.description || '', intent: 'session', method: TEMPO, unitType: 'request' });
         info.protocols.push({ mpp: { method: TEMPO, intent: 'session', currency: session.currency } });
       }
+      if (xrpl) {
+        info.offers.push({ amount: decimalUsd(atomicUsdc(info.price.amount)), currency: xrpl.currency, description: op.summary || op.description || '', intent: INTENT, method: XRPL });
+        info.protocols.push({ mpp: { method: XRPL, intent: INTENT, currency: xrpl.currency } });
+      }
     }
   }
   return spec;
@@ -360,4 +419,4 @@ function addMppOffers(spec, { categories = [], docs = {}, contact = null, includ
 // Skips the x402 paywall for a request already paid over MPP.
 const unlessMppPaid = (paywall) => (req, res, next) => (req.mppPaid ? next() : paywall(req, res, next));
 
-module.exports = { createMppPay, unlessMppPaid, addMppOffers, atomicUsdc, canonical, memoBinds, BASE_USDC, TEMPO_CHAINS };
+module.exports = { createMppPay, unlessMppPaid, addMppOffers, atomicUsdc, decimalUsd, canonical, memoBinds, BASE_USDC, TEMPO_CHAINS, RLUSD_HEX, XRPL_NETWORKS };

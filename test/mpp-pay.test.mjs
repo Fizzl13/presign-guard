@@ -102,3 +102,77 @@ test("openapi.json gets a tempo session offer when sessions are on", async () =>
   assert.equal(info.offers[2].amount, info.offers[0].amount);
   assert.deepEqual(info.protocols.at(-1), { mpp: { method: "tempo", intent: "session", currency: USDCE } });
 });
+
+// The xrpl method (Ripple's xrpl-mpp-sdk, pull mode): RLUSD, verified and settled by an x402 XRPL facilitator.
+// Tested end to end on testnet with the SDK's own client (25 Oct 2026); here with a stand-in facilitator.
+const XRPL_TO = "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw";
+const PAYER = "rUVHd9p3uKPqJGshyfcLtE195MhDmwSwMZ";
+async function serveXrpl({ status = 200 } = {}) {
+  const calls = { verify: [], settle: [] };
+  const facilitator = {
+    async verify(payload, req) { calls.verify.push({ payload, req }); return { isValid: true, payer: PAYER }; },
+    async settle(payload, req) { calls.settle.push({ payload, req }); return { success: true, transaction: "57CF68FC", payer: PAYER }; },
+  };
+  const mpp = createMppPay({ secret: "s", realm: "presign.test", routes: { "POST /v1/check": "$0.005" }, xrpl: { recipient: XRPL_TO, facilitator }, log: { warn() {} } });
+  const app = express();
+  app.use(express.json());
+  app.use(mpp.middleware);
+  app.use(unlessMppPaid((req, res, next) => (req.path === "/v1/check" ? res.status(402).json({}) : next())));
+  app.post("/v1/check", (req, res) => res.status(status).json({ verdict: "green", paidBy: req.mppPaid }));
+  const server = await new Promise((r) => { const s = http.createServer(app).listen(0, () => r(s)); });
+  return { base: `http://127.0.0.1:${server.address().port}`, calls, mpp, close: () => server.close() };
+}
+const xrplCredential = ({ c }, payload, extra = {}) => `Payment ${Buffer.from(JSON.stringify({ challenge: c, payload, ...extra })).toString("base64url")}`;
+
+test("xrpl: an RLUSD challenge bound to an InvoiceID; a signed Payment is verified, served, then settled", async (t) => {
+  const { createHash } = await import("node:crypto");
+  const { RLUSD_HEX } = require("../src/mpp-pay.cjs");
+  const s = await serveXrpl(); t.after(s.close);
+  const ch = challengeOf(await post(s.base));
+  assert.equal(ch.c.method, "xrpl");
+  const { amount, currency, recipient, methodDetails } = ch.request;
+  assert.deepEqual([amount, JSON.parse(currency), recipient, methodDetails.network], ["0.005", { currency: RLUSD_HEX, issuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" }, XRPL_TO, "mainnet"]);
+  assert.match(methodDetails.reference, /^[0-9a-f-]{36}$/);
+  // The Payment must carry this InvoiceID: x402's facilitator expects sha256(extra.invoiceId).
+  assert.equal(methodDetails.invoiceId, createHash("sha256").update(`presign.test mpp ${methodDetails.reference}`).digest("hex").toUpperCase());
+  assert.notEqual(challengeOf(await post(s.base)).request.methodDetails.reference, methodDetails.reference); // one per challenge
+
+  const res = await post(s.base, { authorization: xrplCredential(ch, { type: "transaction", blob: "12000022" }, { source: `did:pkh:xrpl:mainnet:${PAYER}` }) });
+  assert.equal(res.status, 200);
+  assert.deepEqual((await res.json()).paidBy, { payer: PAYER, amount: "0.005" });
+  const { payload, req } = s.calls.verify[0];
+  assert.deepEqual(req, { scheme: "exact", network: "xrpl:0", amount: "0.005", asset: RLUSD_HEX, payTo: XRPL_TO, maxTimeoutSeconds: 300, extra: { issuer: "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De", invoiceId: `presign.test mpp ${methodDetails.reference}`, areFeesSponsored: false } });
+  assert.deepEqual(payload, { x402Version: 2, accepted: req, payload: { signedTxBlob: "12000022" } });
+  assert.equal(s.calls.settle.length, 1);
+  assert.deepEqual(JSON.parse(Buffer.from(res.headers.get("payment-receipt"), "base64url").toString()).method, "xrpl");
+});
+
+test("xrpl: push mode, a tampered challenge, another signer and a failed answer are refused or never settled", async (t) => {
+  const s = await serveXrpl({ status: 500 }); t.after(s.close);
+  const ch = challengeOf(await post(s.base));
+  let res = await post(s.base, { authorization: xrplCredential(ch, { type: "hash", hash: "A".repeat(64) }) });
+  assert.equal(res.status, 402);
+  assert.match((await res.json()).detail, /pull mode/);
+  const tampered = { c: { ...ch.c, request: Buffer.from(JSON.stringify({ ...ch.request, methodDetails: { ...ch.request.methodDetails, reference: "00000000-0000-4000-8000-000000000000" } })).toString("base64url") } };
+  res = await post(s.base, { authorization: xrplCredential(tampered, { type: "transaction", blob: "12" }) });
+  assert.match((await res.json()).detail, /wasn't issued here/);
+  res = await post(s.base, { authorization: xrplCredential(ch, { type: "transaction", blob: "12" }, { source: "did:pkh:xrpl:mainnet:rMqtK5JB73Ks4nTtc58oJpK6LqgHHPXmoY" }) });
+  assert.match((await res.json()).detail, /another account/);
+  assert.equal(s.calls.verify.length, 1);
+  res = await post(s.base, { authorization: xrplCredential(ch, { type: "transaction", blob: "12" }) });
+  assert.equal(res.status, 500);
+  assert.equal(s.calls.settle.length, 0);
+});
+
+test("openapi.json gets an xrpl offer priced in RLUSD when the xrpl method is on", async () => {
+  const { openApi } = await import("../src/discovery.js");
+  const { x402Routes } = await import("../src/presign-guard.js");
+  const { addMppOffers } = require("../src/mpp-pay.cjs");
+  const ROUTES = x402Routes(PAY_TO, "eip155:8453", null);
+  const s = await serveXrpl(); s.close();
+  const spec = addMppOffers(openApi("https://p.test", "eip155:8453", ["eip155:8453"], {}), { include: (p, m) => `${m} ${p}` in ROUTES, xrpl: s.mpp.xrpl });
+  const info = spec.paths["/v1/check"].post["x-payment-info"];
+  const offer = info.offers.find((o) => o.method === "xrpl");
+  assert.equal(offer.amount, info.price.amount.replace(/^\$/, "").replace(/0+$/, ""));
+  assert.deepEqual(info.protocols.at(-1), { mpp: { method: "xrpl", intent: "charge", currency: s.mpp.xrpl.currency } });
+});
