@@ -5,6 +5,7 @@ import { nohumansClaim } from "./src/nohumans-claim.js";
 import { fileURLToPath } from "node:url";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { onPublicHost } from "./src/public-host.js";
+import { canonicalHost } from "./src/canonical-host.js";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -159,6 +160,8 @@ const SIGNER = createSigner();
 
 const app = express();
 app.set("trust proxy", trustProxyHops());
+// The Render address sends every request to presign-guard.fizzl.eu (src/canonical-host.js), the health check aside.
+app.use(canonicalHost(PUBLIC_URL));
 app.disable("x-powered-by");
 app.use(securityHeaders);
 // Every HEAD is handled as a GET, so paid routes give their 402 instead of running for free (src/head-guard.js).
