@@ -7,7 +7,7 @@
   "main": "server.js",
   "private": true,
   "engines": {
-    "node": ">=20.6"
+    "node": "24.x"
   },
   "scripts": {
     "start": "node server.js",
