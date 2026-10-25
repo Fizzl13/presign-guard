@@ -1,5 +1,10 @@
 // Usage log: one JSON line per call, appended to a private GitHub repo
-// (events/<service>/<YYYY-MM-DD>.jsonl), read back by /admin/usage.
+// (events/<service>/<YYYY-MM-DD>/<HH>.jsonl, one file per UTC hour), read back by /admin/usage.
+// Until 25 Oct 2026 it was one file per day (events/<service>/<YYYY-MM-DD>.jsonl), which every
+// write sent again whole: 3 MB a day for presign-guard by then, re-sent every 10 minutes. Readers
+// take both. A bot's unpaid 402s (a quote, no payment offered) are counted per hour, route and
+// agent instead of one line each: one line with count and visitors (how many different callers);
+// on 23 Oct 2026 those were over half of all lines (crawlers asking every paid route).
 //
 // The same file is copied into each Fizzl service. It needs two settings:
 //   USAGE_LOG_TOKEN  fine-grained GitHub token, Contents read/write on the log repo only
@@ -19,6 +24,10 @@ const MAX_QUEUE = 200;
 const fetchFnGiven = (fn) => fn !== globalThis.fetch;
 
 const DEFAULT_REPO = 'Fizzl13/usage-log';
+// A bot by its agent name (agentOf keeps the bot's own token): crawlers, scanners, monitors, probes.
+const BOT_AGENT = /bot\b|bot\/|crawl|spider|scan|monitor|probe|uptime|pingdom|health-?check|verifier/i;
+// The file an event goes to: its service, UTC day and hour.
+const pathOf = (service, t) => `events/${service}/${t.slice(0, 10)}/${t.slice(11, 13)}.jsonl`;
 const API = 'https://api.github.com';
 const MAX_TEXT = 300;
 
@@ -155,6 +164,8 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
   const repo = env.USAGE_LOG_REPO || DEFAULT_REPO;
   const visitorSecret = env.USAGE_LOG_SALT || token;
   const queue = [];
+  // Bots' unpaid 402s counted per hour, route and agent until the next flush: key -> line, with a Set of visitors.
+  const tallies = new Map();
   let flushing = null;
   let timer = null;
   // Every write re-sends the whole day file to GitHub, so writes are batched: at most one per flushMs
@@ -216,15 +227,22 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
     throw new Error(`write ${path}: gave up after retries`);
   }
 
+  // The counted 402s as lines (one per hour, route and agent since the last flush), into the queue.
+  function untally() {
+    for (const { visitors, ...line } of tallies.values()) queue.push({ ...line, visitors: visitors.size });
+    tallies.clear();
+  }
+
   async function flush() {
     if (timer) { clearTimeout(timer); timer = null; }
     if (flushing) return flushing;
     flushing = (async () => {
+      untally();
       while (queue.length) {
         const batch = queue.splice(0, queue.length);
         const byFile = new Map();
         for (const event of batch) {
-          const path = `events/${service}/${event.t.slice(0, 10)}.jsonl`;
+          const path = pathOf(service, event.t);
           if (!byFile.has(path)) byFile.set(path, []);
           byFile.get(path).push(JSON.stringify(event));
         }
@@ -248,7 +266,15 @@ function createUsageLog({ service, env = process.env, fetchFn = globalThis.fetch
       warned = true;
       return;
     }
-    queue.push({ t: now().toISOString(), service, ...event, input: clipAll(event.input), result: clipAll(event.result) });
+    const t = now().toISOString();
+    if (event.quote && !event.payment_failed && !event.paid && BOT_AGENT.test(String(event.agent || ''))) {
+      const hour = `${t.slice(0, 13)}:00:00.000Z`;
+      const key = [hour, event.route, event.agent, event.via, event.status].join('\u0000');
+      if (!tallies.has(key)) tallies.set(key, { t: hour, service, route: event.route, via: event.via, status: event.status, quote: true, agent: event.agent, count: 0, visitors: new Set() });
+      const tally = tallies.get(key);
+      tally.count++;
+      if (event.visitor) tally.visitors.add(event.visitor);
+    } else queue.push({ t, service, ...event, input: clipAll(event.input), result: clipAll(event.result) });
     if (queue.length >= MAX_QUEUE) flush();
     else if (!timer) {
       timer = setTimeout(() => { timer = null; flush(); }, flushMs);
@@ -355,4 +381,4 @@ function mcpPayment(requestBody, responseBody) {
   };
 }
 
-module.exports = { createUsageLog, paymentOf, attemptedNetwork, usdOf, mcpToolCall, mcpPayment, clip, agentOf, visitorOf };
+module.exports = { createUsageLog, paymentOf, attemptedNetwork, usdOf, mcpToolCall, mcpPayment, clip, agentOf, visitorOf, pathOf, BOT_AGENT };
