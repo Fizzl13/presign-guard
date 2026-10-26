@@ -40,7 +40,7 @@ import {
   INJECTION_ROUTE, INJECTION_INPUT_SCHEMA, INJECTION_INPUT_EXAMPLE, injectionServiceMetadata,
 } from "./discovery.js";
 
-export const VERSION = "1.8.0";
+export const VERSION = "1.9.0";
 export const FREE_CALLS_PER_HOUR = 10;
 // Claude calls remote MCP servers from Anthropic's outbound range (platform.claude.com/docs/en/api/ip-addresses), so
 // every Claude user of a connector arrives from the same few addresses. A per-IP limit would hold all of them to one
