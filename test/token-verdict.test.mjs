@@ -660,3 +660,9 @@ test("Robinhood Chain (4663): a token chain for /v1/token, not for /v1/approvals
   assert.equal(APPROVAL_CHAINS.robinhood, undefined);
   assert.throws(() => parseApprovalsRequest({ chain: "robinhood", address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" }), /chain must be one of/);
 });
+
+test("Robinhood Chain: Paxos' USDG is the official dollar there; the token that calls itself USDC is not", async () => {
+  const { isOfficialToken } = await import("../src/jev.js");
+  assert.ok(isOfficialToken(4663, "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"));
+  assert.ok(!isOfficialToken(4663, "0x11D04a2491AB485a54dA3817C10C2A9178c7991e"));
+});

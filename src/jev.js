@@ -22,7 +22,9 @@ const OFFICIAL = {
   10: { USDC: "0x0b2c639c533813f4aa9d7837caf62653d097ff85", USDT: "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", WETH: "0x4200000000000000000000000000000000000006" },
   137: { USDC: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", USDT: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", WETH: "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619" },
   56: { USDC: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", USDT: "0x55d398326f99059ff775485246999027b3197955" },
-  4663: { WETH: "0x0bd7d308f8e1639fab988df18a8011f41eacad73" },
+  // Robinhood Chain: no Circle USDC; its dollar is Paxos' USDG (Global Dollar). A token there called "USDC"
+  // (0x11d0…991e, name UpSideDownCat) is a copy.
+  4663: { USDG: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", WETH: "0x0bd7d308f8e1639fab988df18a8011f41eacad73" },
   solana: { USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", wSOL: "So11111111111111111111111111111111111111112" },
   // XRP Ledger tokens are "<currency>.<issuer>" (the currency as text, e.g. "RLUSD.r…"). XRP itself is no token.
   xrpl: { RLUSD: "RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
