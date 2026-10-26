@@ -316,12 +316,13 @@ async function withoutLaunchEscrows(holders) {
 
 function evmReasons({ sec, market, controls, controllers, official = false }, add) {
   // The same GoPlus rules as the token part of /v1/check, without a subject. On a
-  // trust-list token (USDT, USDC) the issuer's powers are context, as on Solana.
-  const trusted = flag(sec?.trust_list);
+  // trust-list token (USDT, USDC) the issuer's powers are context, as on Solana. The known official contracts
+  // (src/jev.js) count too: Circle's EURC, and the stablecoin of a chain GoPlus has no trust list for (USDG on
+  // Robinhood Chain), are set up like USDC.
+  const trusted = flag(sec?.trust_list) || official;
   tokenReasons(null, sec, (code, severity, _subject, details) => add(code, trusted && severity === "orange" ? "info" : severity, details));
   controlReasons(controls, add);
-  // Circle's EURC isn't on the GoPlus trust list but is set up like its USDC: the known official contracts count too.
-  controllerReasons(controllers, add, { trusted: trusted || official });
+  controllerReasons(controllers, add, { trusted });
   if (flag(sec?.cannot_buy)) add("TOKEN_CANNOT_BUY", "orange");
   const lp = Array.isArray(sec?.lp_holders) ? sec.lp_holders : [];
   const lpLockedPct = lp.length
