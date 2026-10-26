@@ -59,7 +59,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 5000;
 const RECENT_DEPLOY_SECONDS = 30 * 86400;
 const LONG_LIVED_SECONDS = 31 * 86400; // Permit2 UIs commonly default to 30 days
-const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 8453, 42161]);
+const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 8453, 42161, 4663]);
 // Public RPCs for eth_getCode; override per chain with RPC_URL_<chainId>.
 const RPC_URLS = {
   1: "https://ethereum-rpc.publicnode.com",
@@ -68,6 +68,7 @@ const RPC_URLS = {
   137: "https://polygon-bor-rpc.publicnode.com",
   8453: "https://base-rpc.publicnode.com",
   42161: "https://arb1.arbitrum.io/rpc",
+  4663: "https://rpc.mainnet.chain.robinhood.com", // Robinhood Chain
 };
 // EIP-7702: a plain wallet with delegated code. Its private key still controls it.
 const DELEGATION_CODE = /^0xef0100[0-9a-f]{40}$/i;

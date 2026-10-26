@@ -33,7 +33,7 @@ curl -s "https://presign-guard.fizzl.eu/v1/token/quick?chain=base&address=<token
 
 **$0.01, with the reasons:** `GET https://presign-guard.fizzl.eu/v1/token?chain=<chain>&address=<token>`. It adds the reasons, a grade, a one-line summary and market data.
 
-- **`chain`:** `solana`, `base`, `ethereum`, `arbitrum`, `optimism`, `polygon`, `bsc`, `xrpl` or `algorand`.
+- **`chain`:** `solana`, `base`, `ethereum`, `arbitrum`, `optimism`, `polygon`, `bsc`, `robinhood`, `xrpl` or `algorand`.
 - **`address`:** for Algorand, the asset id.
 
 ## 2. Before signing anything

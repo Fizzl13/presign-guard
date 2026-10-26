@@ -27,9 +27,9 @@ import { ofacStatus } from "./ofac.js";
 import { TOKEN_CHAINS, gradeOf } from "./token-verdict.js";
 import { isSolanaWallet, readSolanaDelegations, assessDelegation } from "./solana-approvals.js";
 
-// The EVM chains of the token verdict: name → GoPlus chain id.
+// The EVM chains of the token verdict that GoPlus has approval data for: name → GoPlus chain id.
 export const APPROVAL_CHAINS = Object.fromEntries(
-  Object.entries(TOKEN_CHAINS).filter(([, c]) => c.chainId).map(([name, c]) => [name, c.chainId]),
+  Object.entries(TOKEN_CHAINS).filter(([, c]) => c.chainId && c.approvals !== false).map(([name, c]) => [name, c.chainId]),
 );
 
 export const STALE_APPROVAL_SECONDS = 365 * 86400;

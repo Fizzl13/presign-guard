@@ -1296,16 +1296,16 @@ test("simulation self-test (GET /health): which source answered per chain, the r
   const { simulationSelfTest, simulationStatus } = await import("../src/simulate.js");
   assert.equal((await simulationSelfTest({ env: { SIMULATION: "off" } })).selfTest, "off (SIMULATION=off)");
   const ok = async () => Response.json({ jsonrpc: "2.0", id: 1, result: [{ calls: [SIM_OK] }] });
-  assert.equal((await simulationSelfTest({ env: {}, fetch: ok })).selfTest, "ok (public rpc: 1, 10, 56, 137, 8453, 42161)");
+  assert.equal((await simulationSelfTest({ env: {}, fetch: ok })).selfTest, "ok (public rpc: 1, 10, 56, 137, 4663, 8453, 42161)");
   const part = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async (u) => {
     if (u.includes("base-mainnet")) return Response.json({ jsonrpc: "2.0", id: 1, error: { message: "BASE_MAINNET is not enabled for this app (secretkey)" } });
     if (u.includes("base-rpc") || u.includes("mainnet.base.org")) return new Response("down", { status: 502 });
     return u.includes("opt-mainnet") ? new Response("no", { status: 403 }) : ok();
   } });
-  assert.equal(part.selfTest, "failed on 8453 (rpc chain 8453: Error: HTTP 502) (ok on alchemy: 1, 56, 137, 42161; public rpc: 10)");
+  assert.equal(part.selfTest, "failed on 8453 (rpc chain 8453: Error: HTTP 502) (ok on alchemy: 1, 56, 137, 4663, 42161; public rpc: 10)");
   // One public node down: the second public RPC of that chain answers.
   const second = await simulationSelfTest({ env: {}, fetch: async (u) => (u.includes("bsc-rpc.publicnode") ? Response.json({ jsonrpc: "2.0", id: 1, error: { message: "global signer not initialized for mining mode" } }) : ok()) });
-  assert.equal(second.selfTest, "ok (public rpc: 1, 10, 56, 137, 8453, 42161)");
+  assert.equal(second.selfTest, "ok (public rpc: 1, 10, 56, 137, 4663, 8453, 42161)");
   assert.ok(!JSON.stringify(part).includes("secretkey"));
   assert.equal(simulationStatus({}).on, true);
   assert.equal(simulationStatus({ SIMULATION: "off" }).on, false);
@@ -1440,4 +1440,11 @@ test("OWS: what isn't checked is denied with a reason (an error status, so nothi
   assert.match(allowed.body.reason, /didn't check this \(allow_unchecked\)/);
   const broken = await check(owsContext("0102"));
   assert.deepEqual([broken.status, broken.body.allow], [400, false]);
+});
+
+test("Robinhood Chain (4663) is a supported EVM chain for /v1/check; an unknown chain id is refused with the list", async () => {
+  const { parseRequest } = await import("../src/presign-guard.js");
+  const tx = { type: "transaction", chainId: 4663, to: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", data: "0x", value: "0" };
+  assert.equal(parseRequest(tx).chainId, 4663);
+  assert.throws(() => parseRequest({ ...tx, chainId: 999 }), /Unsupported chainId\. Supported: .*42161, 4663/);
 });

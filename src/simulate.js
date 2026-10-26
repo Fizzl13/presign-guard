@@ -6,7 +6,7 @@
 // on 30 Sep 2026), else, or when Alchemy fails, from the chain's public RPC (RPC_URL_<chainId> overrides).
 // Needs the sender (`from`); a failure or timeout leaves the check as it was (never a guessed green).
 
-export const ALCHEMY = { 1: "eth-mainnet", 10: "opt-mainnet", 56: "bnb-mainnet", 137: "polygon-mainnet", 8453: "base-mainnet", 42161: "arb-mainnet" };
+export const ALCHEMY = { 1: "eth-mainnet", 10: "opt-mainnet", 56: "bnb-mainnet", 137: "polygon-mainnet", 8453: "base-mainnet", 42161: "arb-mainnet", 4663: "robinhood-mainnet" };
 // Two public RPCs per chain from different providers, so one node that falters doesn't stop the simulation.
 const PUBLIC = {
   1: ["https://ethereum-rpc.publicnode.com", "https://eth.drpc.org"],
@@ -15,9 +15,10 @@ const PUBLIC = {
   137: ["https://polygon-bor-rpc.publicnode.com", "https://polygon.drpc.org"],
   8453: ["https://base-rpc.publicnode.com", "https://mainnet.base.org"],
   42161: ["https://arbitrum-one-rpc.publicnode.com", "https://arb1.arbitrum.io/rpc"],
+  4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood.drpc.org"],
 };
 export const SIMULATED_CHAINS = Object.keys(PUBLIC).map(Number);
-const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 8453: "ETH", 42161: "ETH" };
+const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 8453: "ETH", 42161: "ETH", 4663: "ETH" };
 
 const T_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const T_APPROVAL = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";

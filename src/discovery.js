@@ -31,7 +31,7 @@ export const TOKEN_INPUT_EXAMPLE = { chain: "solana", address: "DezXAZ8z7PnrnRJj
 export const TOKEN_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "xrpl", "algorand"], description: "Chain the token lives on" },
+    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "xrpl", "algorand"], description: "Chain the token lives on" },
     address: { type: "string", description: "Solana mint address (base58), EVM token contract (0x...), an XRPL token as CURRENCY.rIssuer (e.g. RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De), or an Algorand asset id (e.g. 31566704)" },
   },
   required: ["chain", "address"],
@@ -322,7 +322,7 @@ export const INPUT_SCHEMA = {
     transactions: { type: "array", maxItems: 16, items: { type: "string" }, description: "algorand: an atomic group, each base64 msgpack; send the whole group" },
     method: { type: "string", enum: ["personal_sign", "eth_sign"], description: "message: how it is signed (default personal_sign); eth_sign is always red" },
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
-    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161], description: "EVM chain; required for approval, transaction, signature and authorization" },
+    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161, 4663], description: "EVM chain; required for approval, transaction, signature and authorization" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1"], description: "xrpl: the ledger (default xrpl:0, mainnet)" },
     tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD, a DelegateSet that lets another account send payments, checks or escrows for you; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows, NFT giveaways, credentials issued to another account or that can't be accepted, other delegated permissions, a Batch of several accounts that isn't all-or-nothing, MPTs whose issuer can claw back or has locked them, MPT payments that would fail, vault deposits into lending vaults, fixed-term funds or vaults with a paper loss, vault withdrawals to another account, loans costing the borrower more than 36% a year with fees (the terms are always shown), and vault, loan or loan-payment transactions that would fail. Every transaction inside a Batch is judged the same way" },
     token: { type: "string", description: "approval: token contract" },
@@ -331,7 +331,7 @@ export const INPUT_SCHEMA = {
     to: { type: "string", description: "transaction: target contract" },
     data: { type: "string", description: "transaction: 0x-prefixed calldata" },
     value: { type: "string", description: "transaction: native value in wei" },
-    from: { type: "string", description: "transaction, optional: the wallet that would send it. With it the transaction is simulated (eth_simulateV1 on all six chains): the answer gets a simulation field with every asset that leaves or arrives, orange HIDDEN_APPROVAL (an approval the call does not show, e.g. inside a router or batch), SIMULATION_NFT_OUT or SIMULATION_FAILS, and the intent check compares your intent with the real balance changes. algorand: the wallet, if not the first transaction's sender. A recipient that looks like an address this wallet paid before but isn't it is red ADDRESS_POISONING" },
+    from: { type: "string", description: "transaction, optional: the wallet that would send it. With it the transaction is simulated (eth_simulateV1 on every supported chain): the answer gets a simulation field with every asset that leaves or arrives, orange HIDDEN_APPROVAL (an approval the call does not show, e.g. inside a router or batch), SIMULATION_NFT_OUT or SIMULATION_FAILS, and the intent check compares your intent with the real balance changes. algorand: the wallet, if not the first transaction's sender. A recipient that looks like an address this wallet paid before but isn't it is red ADDRESS_POISONING" },
     typedData: { type: ["object", "string"], description: "signature: the eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)" },
     origin: { type: "string", description: "optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange" },
     intent: { type: "string", maxLength: 500, description: "optional: what the agent is trying to do, in one sentence (e.g. \"swap 10 USDC for ETH on Uniswap\"); orange INTENT_MISMATCH when signing would do more or something else (TypeSafe Jev)" },
