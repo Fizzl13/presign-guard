@@ -12,6 +12,7 @@
 //   { type: "authorization", chainId, address, authorizationChainId?, nonce?, from? } // an EIP-7702 delegation
 //   { type: "xrpl",        network?, tx }          // an unsigned XRP Ledger transaction (src/xrpl.js)
 //   { type: "algorand",    transaction | transactions, from? } // base64 msgpack Algorand transaction(s) (src/algorand-tx.js)
+//   { type: "stellar",     transaction, network?, from? }    // base64 XDR Stellar transaction envelope (src/stellar-tx.js)
 //   { chain_id, request_type, transaction | typed_data, policy_config? } // an OWS PolicyContext (src/ows.js): the
 //                                                    answer also carries the OWS PolicyResult, { allow, reason }
 //   Add lang: "nl" | "en" on /v1/check/explain.
@@ -49,6 +50,7 @@ import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulatio
 import { parseAlgorandRequest, algorandReasons, simulateAlgorand, algorandSimulationReasons, describeAlgorandTxn, ALGORAND_NETWORKS } from "./algorand-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
+import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, describeStellarOp, STELLAR_NETWORKS } from "./stellar-tx.js";
 import { stellarAccept } from "./stellar.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
@@ -728,6 +730,7 @@ function parseSubject(body) {
   if (body.type === "message") return parseMessage(body);
   if (body.type === "solana") return { kind: "solana", offchain: false, value: 0n, grants: [], target: null, ...parseSolanaRequest(body) };
   if (body.type === "algorand") return { kind: "algorand", offchain: false, value: 0n, grants: [], target: null, ...parseAlgorandRequest(body) };
+  if (body.type === "stellar") return { kind: "stellar", offchain: false, value: 0n, grants: [], target: null, ...parseStellarRequest(body) };
 
   const chainId = Number(body.chainId);
   if (!SUPPORTED_CHAINS.has(chainId)) {
@@ -761,7 +764,7 @@ function parseSubject(body) {
 
   if (body.type === "authorization") return parseAuthorization(body, chainId);
 
-  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "solana", "xrpl" or "algorand"');
+  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand" or "stellar"');
 }
 
 // ---------- analysis ----------
@@ -920,6 +923,71 @@ async function analyzeAlgorand(req) {
     },
     scope: "Algorand transactions before signing: rekeying the account to another key, closing the account or an asset holding to someone else, clawback transfers, fake USDC/USDt (and assets named ALGO), opting in to assets with a clawback or frozen by default, app updates, deletes and clear-state, asset control addresses handed over or cleared, giving up consensus participation, fees far above normal, transactions from a group that wasn't sent whole, and whether the group would fail (algod simulate, with the amounts a close would send), every receiver, close-to, rekey and other sender against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what an app's program does with the state it keeps for you.",
     sources: [...(rules.nodeUsed || sim ? ["algod"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    checkedAt: new Date().toISOString(),
+  };
+}
+
+// Stellar transactions (src/stellar-tx.js): every operation the wallet is the source of judged by its fields
+// (account merge, signers, master key, fake USDC/EURC, memo-required destinations), every Soroban call the wallet
+// authorizes (approvals, also in sub-calls), then the call simulated on a public Soroban RPC; the site and intent as
+// for any request.
+async function analyzeStellar(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject)) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  const net = STELLAR_NETWORKS[req.network];
+  const operations = req.tx.operations.map((op) => describeStellarOp(op, req.tx.source));
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const simulation = simulateStellar(req);
+  const intent = req.intent
+    ? simulation.then((sim) => intentCheck({ intent: req.intent, effects: {
+        chain: net.name,
+        wallet: req.wallet,
+        operations,
+        ...(sim && { simulated: sim.ok ? { changes: sim.changes } : { would_fail: sim.error } }),
+      } })).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+
+  const rules = await stellarReasons(req);
+  for (const r of rules.reasons) add(r.code, r.severity, r.subject, r.details);
+  const sim = await simulation;
+  for (const r of stellarSimulationReasons(sim, req, reasons)) add(r.code, r.severity, r.subject, r.details);
+  // Everyone the transaction pays, merges into, adds as signer or approves, the contract's arguments that are
+  // accounts, and the simulated transfers' parties, against the OFAC SDN list.
+  const accountsIn = (v) => (typeof v === "string" && /^[GC][A-Z2-7]{55}$/.test(v) ? [v] : Array.isArray(v) ? v.flatMap(accountsIn) : []);
+  const parties = [
+    req.tx.source, req.feeSource,
+    ...operations.flatMap((o) => [o.source, o.destination, o.signer, ...accountsIn(o.args)]),
+    ...((sim && sim.ok && sim.changes) || []).flatMap((c) => [c.from, c.to, c.spender]),
+  ].filter((a) => typeof a === "string" && a.startsWith("G"));
+  const sanctions = partySanctionsReasons(parties, { exclude: [req.wallet] });
+  for (const r of sanctions.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: {
+      kind: "stellar_transaction",
+      network: net.caip2,
+      wallet: req.wallet,
+      ...(req.feeSource && { feeSource: req.feeSource }),
+      ...(req.origin && { origin: req.origin }),
+      operations,
+    },
+    ...(sim && sim.ok && { simulation: { ok: true, changes: sim.changes } }),
+    scope: "Stellar transactions before signing: merging the account into another, adding a signer or switching off the master key, changed thresholds, payments, trustlines and DEX offers in a fake USDC or EURC, payments without a memo to accounts that require one (SEP-29), to accounts that don't exist, path payments without a minimum, fees far above normal, and Soroban calls (x402 payments among them): token approvals the wallet authorizes, also in sub-calls, and the call simulated on a public Soroban RPC for the transfers and approvals it makes, every party against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what a contract does beyond the token events it emits.",
+    sources: [...(rules.nodeUsed ? ["horizon"] : []), ...(sim ? ["soroban-rpc"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
     checkedAt: new Date().toISOString(),
   };
 }
@@ -1094,6 +1162,7 @@ export async function analyze(req) {
   if (req.kind === "authorization") return analyzeAuthorization(req);
   if (req.kind === "solana") return analyzeSolana(req);
   if (req.kind === "algorand") return analyzeAlgorand(req);
+  if (req.kind === "stellar") return analyzeStellar(req);
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";
