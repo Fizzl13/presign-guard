@@ -651,3 +651,12 @@ test("Jev second opinion on the token name: orange CAUTION when Jev is sure; the
     assert.equal((await tokenVerdict({ chain: "solana", address: BONK }, NOW)).verdict, "green");
   } finally { delete process.env.TYPESAFE_API_KEY; jevP = 0.02; }
 });
+
+test("Robinhood Chain (4663): a token chain for /v1/token, not for /v1/approvals (GoPlus has no wallet approvals there)", async () => {
+  const { APPROVAL_CHAINS, parseApprovalsRequest } = await import("../src/approvals.js");
+  const { TOKEN_CHAINS } = await import("../src/token-verdict.js");
+  assert.equal(TOKEN_CHAINS.robinhood.chainId, 4663);
+  assert.equal(parseTokenRequest({ chain: "robinhood", address: "0x45C83b37C5BAF4dad26f3845C28295e2DE010962" }).chain, "robinhood");
+  assert.equal(APPROVAL_CHAINS.robinhood, undefined);
+  assert.throws(() => parseApprovalsRequest({ chain: "robinhood", address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" }), /chain must be one of/);
+});
