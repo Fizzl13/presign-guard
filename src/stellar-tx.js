@@ -10,7 +10,10 @@
 // it is. Soroban calls (invokeHostFunction) are read from the call and from every authorization the wallet signs,
 // sub-calls included, which is how an x402 payment on Stellar is made: an approve to someone else is orange (hidden
 // in a sub-call too). The call is then simulated on a public Soroban RPC with the authorizations left out, so the
-// token transfers it would make show, also of a fake USDC. Fail-closed as in presign-guard.js: errors are non-2xx,
+// token transfers it would make show, also of a fake USDC. Address poisoning: right after an account's first
+// transactions, a look-alike address (same first and last four characters as a counterparty) sends it dust, hoping
+// the next payment goes there; a recipient that looks like an account the wallet dealt with before, but isn't it,
+// is red. Fail-closed as in presign-guard.js: errors are non-2xx,
 // never "green"; when Horizon or the RPC can't be reached the check says so (info) and the field rules still apply.
 import { TransactionBuilder, FeeBumpTransaction, Networks, StrKey, Address, Account, Operation, xdr, scValToNative, extractBaseAddress } from "@stellar/stellar-sdk";
 
@@ -34,6 +37,7 @@ const HIGH_FEE = 50_000_000n; // stroops (5 XLM): a classic operation costs 0.00
 const UNLIMITED = 2n ** 100n; // an allowance this large is meant as "everything"
 const NODE_TIMEOUT_MS = 5000;
 const STROOPS = 10_000_000; // XLM and Stellar assets have 7 decimals
+const DUST = 0.01; // poisoning payments are 0.0001 XLM; less than a cent of anything isn't a counterparty
 
 export class StellarValidationError extends Error {
   constructor(message) { super(message); this.status = 400; }
@@ -144,7 +148,34 @@ function horizon(net, fetchImpl) {
       if (!res.ok) throw new Error(`horizon HTTP ${res.status}`);
       return res.json();
     },
+    // The accounts this one has dealt with (its latest 200 payments, account creations and merges, Soroban token
+    // transfers included): who it paid, who funded it, and who sent it more than dust. Dust is left out, because
+    // dust from a look-alike address is the poisoning itself. An account that doesn't exist yet has dealt with nobody.
+    counterparties: async (id) => {
+      const res = await fetchImpl(`${net.horizon}/accounts/${id}/payments?order=desc&limit=200`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(NODE_TIMEOUT_MS) });
+      if (res.status === 404) return new Set();
+      if (!res.ok) throw new Error(`horizon HTTP ${res.status}`);
+      const known = new Set();
+      const add = (a) => { if (typeof a === "string" && a !== id) known.add(a); };
+      for (const r of (await res.json())?._embedded?.records ?? []) {
+        if (r.type === "create_account") { add(r.funder === id ? r.account : r.funder); continue; }
+        if (r.type === "account_merge") { add(r.account === id ? r.into : r.account); continue; }
+        if (r.type === "invoke_host_function") {
+          for (const c of r.asset_balance_changes ?? []) if (c.type === "transfer") add(c.from === id ? c.to : c.to === id && Number(c.amount) >= DUST ? c.from : null);
+          continue;
+        }
+        if (r.from === id) add(r.to);
+        else if (r.to === id && Number(r.amount) >= DUST) add(r.from);
+      }
+      return known;
+    },
   };
+}
+
+// Same first four and last four characters (the "G" included), another account: how look-alike addresses are made.
+export function stellarLookalike(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a === b || a.length !== 56 || b.length !== 56 || a[0] !== b[0]) return false;
+  return a.slice(0, 4) === b.slice(0, 4) && a.slice(-4) === b.slice(-4);
 }
 
 // A token named like Circle's that isn't Circle's: { code, issuer } or null.
@@ -191,6 +222,7 @@ export async function stellarReasons(req, { fetchImpl = globalThis.fetch } = {})
   const own = await account(req.wallet);
   if (own && Array.isArray(own.signers) && own.signers.filter((s) => s.weight > 0).length > 1) add("STELLAR_MULTISIG", "info", req.wallet, { signers: own.signers.length });
 
+  const recipients = new Set(); // whom the wallet sends money to, for the address-poisoning check
   for (const [i, op] of tx.operations.entries()) {
     const source = base(op.source) || txSource;
     const mine = source === req.wallet;
@@ -211,7 +243,10 @@ export async function stellarReasons(req, { fetchImpl = globalThis.fetch } = {})
             const amt = amountOf(c.args[2]);
             add(c.depth ? "STELLAR_HIDDEN_APPROVE" : "STELLAR_TOKEN_APPROVE", "orange", c.args[1], { op: i, token: c.contract, amount: amt !== null && amt >= UNLIMITED ? "unlimited" : String(c.args[2]), expirationLedger: c.args[3], effect: c.depth ? "an allowance to this spender inside another call, which the outer call doesn't show" : "lets this spender take the token from the wallet up to the amount, until the expiration ledger" });
           }
-          if (c.fn === "transfer" && c.args[0] === req.wallet) add("STELLAR_TOKEN_TRANSFER", "info", c.args[1], { op: i, token: c.contract, amount: String(c.args[2]) });
+          if (c.fn === "transfer" && c.args[0] === req.wallet) {
+            add("STELLAR_TOKEN_TRANSFER", "info", c.args[1], { op: i, token: c.contract, amount: String(c.args[2]) });
+            if (typeof c.args[1] === "string" && c.args[1] !== req.wallet) recipients.add(c.args[1]);
+          }
         }
       }
       continue;
@@ -221,7 +256,10 @@ export async function stellarReasons(req, { fetchImpl = globalThis.fetch } = {})
     switch (op.type) {
       case "accountMerge": {
         const to = base(op.destination);
-        if (to !== req.wallet) add("STELLAR_ACCOUNT_MERGE", "red", to, { op: i, effect: "closes the account: all its XLM goes to this address and the account is gone" });
+        if (to !== req.wallet) {
+          add("STELLAR_ACCOUNT_MERGE", "red", to, { op: i, effect: "closes the account: all its XLM goes to this address and the account is gone" });
+          recipients.add(to);
+        }
         break;
       }
       case "setOptions": {
@@ -240,13 +278,14 @@ export async function stellarReasons(req, { fetchImpl = globalThis.fetch } = {})
         const to = base(op.destination);
         fake(assetName(op.asset || op.destAsset), i);
         if (op.sendAsset) fake(assetName(op.sendAsset), i);
+        if (to && to !== req.wallet) recipients.add(to);
         const dest = to && to !== req.wallet ? await account(to) : undefined;
         if (dest === null) add("STELLAR_DESTINATION_MISSING", "orange", to, { op: i, effect: "this account doesn't exist, so the payment fails (send XLM with createAccount to open it)" });
         if (dest && !memo && dest.data?.["config.memo_required"] === "MQ==") add("STELLAR_MEMO_REQUIRED", "orange", to, { op: i, effect: "this account asks for a memo (SEP-29, usually an exchange): without one the money arrives but can't be credited to anyone" });
         if (op.type === "pathPaymentStrictSend" && op.destMin !== undefined && Number(op.destMin) <= 0.0000001) add("STELLAR_PATH_NO_MINIMUM", "orange", to, { op: i, effect: "the path payment accepts any amount at the other end, so a bad rate can take almost all of it" });
         break;
       }
-      case "createAccount": break;
+      case "createAccount": recipients.add(base(op.destination)); break;
       case "changeTrust": {
         if (op.line?.code) fake(assetName(op.line), i);
         if (op.limit !== undefined && Number(op.limit) === 0) add("STELLAR_TRUSTLINE_REMOVED", "info", op.line?.code ? assetName(op.line) : "liquidity pool", { op: i });
@@ -267,6 +306,17 @@ export async function stellarReasons(req, { fetchImpl = globalThis.fetch } = {})
         add("STELLAR_ISSUER_ACTION", "info", req.wallet, { op: i, type: op.type });
         break;
       default: add("STELLAR_OP_NOT_ANALYZED", "orange", req.wallet, { op: i, type: op.type });
+    }
+  }
+  // Address poisoning: each recipient against the accounts the wallet dealt with before.
+  if (recipients.size) {
+    const known = await lookup(() => ask.counterparties(req.wallet));
+    for (const to of recipients) {
+      if (!known) break;
+      if (known.has(to)) { add("KNOWN_RECIPIENT", "info", to); continue; }
+      const real = [...known].find((k) => stellarLookalike(k, to));
+      if (real) add("ADDRESS_POISONING", "red", to, { lookalikeOf: real, note: "starts and ends like an account this wallet dealt with before, but it is another account: the address was probably copied from a look-alike payment in the history" });
+      else add("NEW_RECIPIENT", "info", to, { pastCounterparties: known.size });
     }
   }
   return { reasons, nodeUsed };

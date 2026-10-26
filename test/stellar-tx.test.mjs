@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { Keypair, Account, TransactionBuilder, Networks, Operation, Asset, Memo, Address, StrKey, xdr, nativeToScVal } from "@stellar/stellar-sdk";
-import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, StellarValidationError } from "../src/stellar-tx.js";
+import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, stellarLookalike, StellarValidationError } from "../src/stellar-tx.js";
 import { analyze, parseRequest } from "../src/presign-guard.js";
 
 const W = Keypair.random().publicKey();
@@ -67,13 +67,14 @@ const transferEvent = (token, from, to, amount, asset) => event(token, [nativeTo
 const approveEvent = (token, from, spender, amount, asset) => event(token, [nativeToScVal("approve", { type: "symbol" }), addr(from), addr(spender), ...(asset ? [nativeToScVal(asset)] : [])], nativeToScVal([i128(amount), nativeToScVal(5000, { type: "u32" })]));
 
 // A stand-in Horizon and Soroban RPC. accounts: id → Horizon account (missing ones are 404). sim: the RPC's result.
-function fakeNode({ accounts = {}, sim = { events: [] }, down = false } = {}) {
+function fakeNode({ accounts = {}, sim = { events: [] }, down = false, history = [] } = {}) {
   const calls = [];
   const fetchImpl = async (url, opts = {}) => {
     calls.push({ url, body: opts.body });
     if (down) throw new Error("connect ECONNREFUSED");
     const u = new URL(url);
     let m;
+    if (u.pathname === `/accounts/${W}/payments`) return Response.json({ _embedded: { records: history } });
     if ((m = u.pathname.match(/^\/accounts\/(G[A-Z2-7]{55})$/))) {
       if (m[1] === W) return Response.json({ id: W, signers: [{ key: W, weight: 1 }], data: {} });
       return accounts[m[1]] ? Response.json(accounts[m[1]]) : new Response("{}", { status: 404 });
@@ -218,4 +219,37 @@ test("POST /v1/check type stellar: parsed, analyzed, subject lists the operation
     globalThis.fetch = realFetch;
   }
   assert.throws(() => parseRequest({ type: "stellar" }), (e) => e.status === 400);
+});
+
+test("address poisoning: a recipient that starts and ends like an account the wallet dealt with is red", async () => {
+  // A real pair seen on Stellar mainnet: the account that funded a wallet, and the look-alike that sent it 0.0001 XLM
+  // ten seconds later (same first four and last four characters; a valid address takes brute force to make).
+  const REAL = "GBQXHYYFJYOHHADTYVFAA4DV4V5BKYZDBUM756FAPPJ3XA2UZWHZIS4C";
+  const look = "GBQXOYCZPHYZAFFXRPLCQT3IONKH2MIWXQEK4GZZ6IR7VM7D7Z2ZIS4C";
+  assert.ok(stellarLookalike(REAL, look));
+  assert.ok(!stellarLookalike(REAL, REAL));
+  assert.ok(!stellarLookalike(REAL, EXCHANGE));
+  // The history: REAL funded the wallet; the look-alike sent it dust (the poisoning), which doesn't count.
+  const history = [
+    { type: "create_account", funder: REAL, account: W, starting_balance: "5.0000000" },
+    { type: "payment", from: look, to: W, amount: "0.0001000", asset_type: "native" },
+    { type: "invoke_host_function", asset_balance_changes: [{ type: "transfer", from: W, to: EXCHANGE, amount: "1.0000000" }] },
+  ];
+  const node = () => fakeNode({ accounts: { ...live, [look]: { id: look, data: {} }, [REAL]: { id: REAL, data: {} } }, history });
+  const pay = (to) => b64([Operation.payment({ destination: to, asset: Asset.native(), amount: "10" })]);
+  const poisoned = await check({ transaction: pay(look) }, node());
+  assert.equal(sev(poisoned, "ADDRESS_POISONING"), "red");
+  assert.equal(poisoned.find((r) => r.code === "ADDRESS_POISONING").details.lookalikeOf, REAL);
+  assert.equal(sev(await check({ transaction: pay(REAL) }, node()), "KNOWN_RECIPIENT"), "info");
+  assert.equal(sev(await check({ transaction: b64([Operation.payment({ destination: EXCHANGE, asset: Asset.native(), amount: "10" })], { memo: Memo.id("1") }) }, node()), "KNOWN_RECIPIENT"), "info", "paid before through a Soroban transfer");
+  const fresh = Keypair.random().publicKey();
+  assert.equal(sev(await check({ transaction: pay(fresh) }, fakeNode({ accounts: { [fresh]: { id: fresh, data: {} } }, history })), "NEW_RECIPIENT"), "info");
+  // The same for an x402 payment: the transfer's recipient is checked too.
+  const args = [addr(W), addr(look), i128(100000)];
+  const x402 = build([call(USDC_SAC, "transfer", args, [authBy(W, invocation(USDC_SAC, "transfer", args))])], { source: FACILITATOR }).toXDR();
+  assert.equal(sev(await check({ transaction: x402 }, node()), "ADDRESS_POISONING"), "red");
+  // Horizon down: no poisoning verdict either way, and the check says Horizon was unavailable.
+  const down = await check({ transaction: pay(look) }, fakeNode({ down: true }));
+  assert.ok(!codes(down).includes("ADDRESS_POISONING"));
+  assert.ok(codes(down).includes("STELLAR_NODE_UNAVAILABLE"));
 });
