@@ -26,7 +26,7 @@ USER_AGENT = "presign-guard-hf-space/1.0 (+https://huggingface.co/spaces/x402Fiz
 TIMEOUT = 60
 LIST_TTL = 3600
 TOKEN_CHAINS = ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "xrpl", "algorand"]
-SIGN_TYPES = ["approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand"]
+SIGN_TYPES = ["approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand", "stellar"]
 EXAMPLE_CHECK = {"type": "approval", "chainId": 8453, "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "spender": "0x1111111254EEB25477B68fb85Ed929f73A960582", "amount": "1000000"}
 LIMITED = (
     "presign-guard's free limit is reached for this Space (10 calls an hour, shared by everyone using it). "
@@ -143,7 +143,7 @@ def presign_quick_check(request: str) -> dict:
     ($0.01 over x402, POST https://presign-guard.fizzl.eu/v1/check), which also signs a receipt.
 
     Args:
-        request: What the agent is about to sign, as JSON with a "type" (approval, transaction, signature, authorization, message, solana, xrpl or algorand) and its fields, for example {"type":"approval","chainId":8453,"token":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","spender":"0x1111111254EEB25477B68fb85Ed929f73A960582","amount":"1000000"}, or {"type":"xrpl","tx":{"TransactionType":"Payment",…}}.
+        request: What the agent is about to sign, as JSON with a "type" (approval, transaction, signature, authorization, message, solana, xrpl, algorand or stellar) and its fields, for example {"type":"approval","chainId":8453,"token":"0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913","spender":"0x1111111254EEB25477B68fb85Ed929f73A960582","amount":"1000000"}, or {"type":"xrpl","tx":{"TransactionType":"Payment",…}}.
     """
     try:
         args = json.loads(request) if isinstance(request, str) else request

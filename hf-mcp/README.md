@@ -29,7 +29,7 @@ here, and the Space holds no key. It uses [presign-guard](https://presign-guard.
 |---|---|
 | `screen_address(address)` | Is the address on the US Treasury's OFAC SDN list of digital currency addresses (Bitcoin, Ethereum and EVM chains, Tron, Solana with its USDC and USDT token accounts, and more)? A match names the listed entity and its programs. Matched in the Space against presign-guard's open copy of the list, so it's unlimited. |
 | `token_quick_verdict(chain, address)` | Green, orange or red, and a grade (SAFE, CAUTION, RISKY, AVOID), for a token on Solana, EVM chains, the XRP Ledger or Algorand: mint and freeze authority, honeypots, taxes, liquidity, age, concentrated holders, rug pulls. |
-| `presign_quick_check(request)` | Green, orange or red for what an agent is about to sign: an EVM transaction, a token approval, an EIP-712 signature (Permit, Permit2, orders), an EIP-7702 authorization, a message, a Solana, XRP Ledger or Algorand transaction. |
+| `presign_quick_check(request)` | Green, orange or red for what an agent is about to sign: an EVM transaction, a token approval, an EIP-712 signature (Permit, Permit2, orders), an EIP-7702 authorization, a message, a Solana, XRP Ledger, Algorand or Stellar transaction (x402 payment authorizations included). |
 
 The last two share presign-guard's free limit of 10 calls an hour, and this Space counts as one caller. For more, and
 for the reasons behind a verdict with a signed receipt, use presign-guard itself ($0.01 a check over x402).

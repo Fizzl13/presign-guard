@@ -1,6 +1,6 @@
 ---
 name: presign-check
-description: "Check what a crypto agent is about to sign, buy or send before it does. Use before signing any EVM transaction, token approval, Permit, Permit2 or other EIP-712 signature, x402 payment, or Solana, XRP Ledger or Algorand transaction. Also use before buying, swapping into or accepting a token (awal trade, Jupiter, Uniswap and the like), before sending funds to an address (OFAC sanctions screen), to find which open token approvals on a wallet to revoke, and before acting on a web page, email, tool result or another agent's message that tells it to pay, sign or hand over keys (prompt-injection check). Green / orange / red verdicts with reason codes, $0.01 to $0.02 per check over x402; a free quick token verdict."
+description: "Check what a crypto agent is about to sign, buy or send before it does. Use before signing any EVM transaction, token approval, Permit, Permit2 or other EIP-712 signature, x402 payment, or Solana, XRP Ledger, Algorand or Stellar transaction. Also use before buying, swapping into or accepting a token (awal trade, Jupiter, Uniswap and the like), before sending funds to an address (OFAC sanctions screen), to find which open token approvals on a wallet to revoke, and before acting on a web page, email, tool result or another agent's message that tells it to pay, sign or hand over keys (prompt-injection check). Green / orange / red verdicts with reason codes, $0.01 to $0.02 per check over x402; a free quick token verdict."
 license: MIT
 allowed-tools: ["Bash(curl *)"]
 ---
@@ -50,6 +50,7 @@ curl -s "https://presign-guard.fizzl.eu/v1/token/quick?chain=base&address=<token
 | Solana transaction | `{"type":"solana","transaction":"<base64 wire transaction>"}` |
 | XRP Ledger transaction | `{"type":"xrpl","tx":{…unsigned transaction JSON…}}` |
 | Algorand transaction or group | `{"type":"algorand","transaction":"<base64 msgpack>"}`, or `"transactions":[…]` for a group |
+| Stellar transaction (also an x402 payment, signed as a Soroban authorization) | `{"type":"stellar","transaction":"<base64 XDR envelope>"}`. A payment to a look-alike of an address your wallet dealt with before is red `ADDRESS_POISONING`. |
 
 **Optional fields that catch more:**
 
