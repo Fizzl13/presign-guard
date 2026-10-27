@@ -189,7 +189,7 @@ before(async () => {
       if (mint === DOWN_SOL) return new Response("rate limited", { status: 429 });
       return FIXTURES.rugcheck[mint] ? Response.json(FIXTURES.rugcheck[mint]) : new Response("not found", { status: 404 });
     }
-    if (u.hostname === "base-rpc.publicnode.com") {
+    if (u.hostname === "base-rpc.publicnode.com" || u.hostname === "rpc.xlayer.tech") {
       if (down.has("rpc")) throw new TypeError("fetch failed");
       // One JSON-RPC batch per token (or per role holder): storage slots, code and eth_call.
       return Response.json(JSON.parse(init.body).map(({ id, method, params }) => {
@@ -671,6 +671,21 @@ test("Avalanche C-Chain (43114): a token chain for /v1/token, not for /v1/approv
   assert.throws(() => parseApprovalsRequest({ chain: "avalanche", address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" }), /chain must be one of/);
   assert.ok(isOfficialToken(43114, "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"));
   assert.ok(isOfficialToken(43114, "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"));
+});
+
+test("X Layer (196): a token chain for /v1/token without DexScreener (no market data, info), not for /v1/approvals; OKX's official tokens", async () => {
+  const { APPROVAL_CHAINS } = await import("../src/approvals.js");
+  const { TOKEN_CHAINS } = await import("../src/token-verdict.js");
+  const { isOfficialToken } = await import("../src/jev.js");
+  assert.deepEqual(TOKEN_CHAINS.xlayer, { chainId: 196, dexscreener: null, approvals: false });
+  assert.equal(APPROVAL_CHAINS.xlayer, undefined);
+  for (const t of ["0x74b7f16337b8972027f6196a17a631ac6de26d22", "0x1e4a5963abfd975d8c9021ce480b42188849d41d", "0x779ded0c9e1022225f8e0630b35a9b54be713736", "0xe538905cf8410324e03a5a23c1c177a474d59b2b"]) assert.ok(isOfficialToken(196, t), t);
+  calls.length = 0;
+  const r = await tokenVerdict({ chain: "xlayer", address: DEGEN }, NOW);
+  assert.ok(!calls.includes("api.dexscreener.com"), "DexScreener has no X Layer pairs: not asked");
+  assert.ok(r.reasons.some((x) => x.code === "NO_MARKET_DATA" && x.severity === "info"));
+  assert.ok(!r.reasons.some((x) => x.code === "NO_DEX_MARKET"));
+  assert.ok(!r.sources.includes("dexscreener"));
 });
 
 test("Robinhood Chain: Paxos' USDG is the official dollar there; the token that calls itself USDC is not", async () => {

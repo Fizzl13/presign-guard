@@ -52,6 +52,7 @@ import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, describeStellarOp, STELLAR_NETWORKS } from "./stellar-tx.js";
 import { stellarAccept } from "./stellar.js";
+import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -61,7 +62,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 5000;
 const RECENT_DEPLOY_SECONDS = 30 * 86400;
 const LONG_LIVED_SECONDS = 31 * 86400; // Permit2 UIs commonly default to 30 days
-const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 8453, 42161, 4663, 43114]);
+const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 196, 8453, 42161, 4663, 43114]);
 // Public RPCs for eth_getCode; override per chain with RPC_URL_<chainId>.
 const RPC_URLS = {
   1: "https://ethereum-rpc.publicnode.com",
@@ -72,6 +73,7 @@ const RPC_URLS = {
   42161: "https://arb1.arbitrum.io/rpc",
   4663: "https://rpc.mainnet.chain.robinhood.com", // Robinhood Chain
   43114: "https://avalanche-c-chain-rpc.publicnode.com", // Avalanche C-Chain
+  196: "https://rpc.xlayer.tech", // X Layer (OKX)
 };
 // EIP-7702: a plain wallet with delegated code. Its private key still controls it.
 const DELEGATION_CODE = /^0xef0100[0-9a-f]{40}$/i;
@@ -756,7 +758,7 @@ function parseSubject(body) {
     const value = toUint(body.value ?? "0", "value");
     // Optional: the wallet that would send it. With it the transaction is simulated (src/simulate.js).
     const from = body.from !== undefined && body.from !== null && body.from !== "" ? toAddress(body.from, "from") : undefined;
-    return { chainId, offchain: false, value, ...(from && { from, data: data.toLowerCase() }), ...decodeTransaction(to, data.toLowerCase()) };
+    return { chainId, offchain: false, value, calldata: data.toLowerCase(), ...(from && { from, data: data.toLowerCase() }), ...decodeTransaction(to, data.toLowerCase()) };
   }
 
   if (body.type === "signature") {
@@ -1176,6 +1178,11 @@ export async function analyze(req) {
   const simulation = req.from ? createSimulator().simulate({ chainId: req.chainId, from: req.from, to: req.target, data: req.data, value: req.value }) : Promise.resolve(null);
   // Who this wallet has paid before (src/poisoning.js), to catch a look-alike recipient (address poisoning).
   const history = req.from ? createHistory().recipientsOf(req.chainId, req.from) : Promise.resolve(null);
+  // TapeOut circuits, containers and on-chain websites (src/tapeout.js): what a circuit transfer hands over with its
+  // container, a circuit locked in its own container, calls through a container, site operators and name payments.
+  const tapeout = TAPEOUT[req.chainId] && req.calldata !== undefined
+    ? tapeoutReasons({ chainId: req.chainId, to: req.target, data: req.calldata, value: req.value, from: req.from })
+    : Promise.resolve([]);
 
   // Revoked spenders are not looked up: revoking a bad address is safe.
   const subjects = new Set([req.target, ...req.grants.map((g) => g.spender)].filter(Boolean));
@@ -1396,6 +1403,7 @@ export async function analyze(req) {
   // A recipient that starts and ends like an address this wallet has paid before, but isn't it, is red.
   const pastRecipients = await history;
   for (const r of poisoningReasons(pastRecipients, transferRecipients(req, sim))) add(r.code, r.severity, r.subject, r.details);
+  for (const r of await tapeout) add(r.code, r.severity, r.subject, r.details);
 
   // Not what the seller asked (x402 requirements): paying more, someone else, another token or chain is red.
   if (req.x402) {
@@ -1449,7 +1457,7 @@ export async function analyze(req) {
       ...(req.origin && { origin: req.origin }),
       value: req.value.toString(),
     },
-    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, with GoPlus token security for the tokens involved, OFAC SDN sanctions screening (the US Treasury list, PG1 as fallback) and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
+    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, TapeOut circuits, containers and on-chain websites (X Layer, Base, BNB Smart Chain), with GoPlus token security for the tokens involved, OFAC SDN sanctions screening (the US Treasury list, PG1 as fallback) and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
     ...(mandate && { mandate }),
     ...(sim && { simulation: sim }),
     sources: [...new Set(["goplus", "chain-rpc", ...(ofacUsed ? ["ofac-sdn"] : []), ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" || pastRecipients ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],

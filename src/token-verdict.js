@@ -45,6 +45,9 @@ export const TOKEN_CHAINS = {
   robinhood: { chainId: 4663, dexscreener: "robinhood", approvals: false },
   // Avalanche C-Chain: GoPlus has its token data but no wallet approvals either.
   avalanche: { chainId: 43114, dexscreener: "avalanche", approvals: false },
+  // X Layer (OKX): GoPlus has its token data but no wallet approvals, and DexScreener lists no X Layer pairs (27 Oct
+  // 2026), so its tokens are judged without market data (NO_MARKET_DATA, info) rather than as having no market.
+  xlayer: { chainId: 196, dexscreener: null, approvals: false },
   // XRP Ledger: address is "CURRENCY.rIssuer" (a 3-letter code or its 40-hex form, e.g. RLUSD.rMxCK…).
   xrpl: { dexscreener: "xrpl" },
   // Algorand: address is the asset id (ASA), e.g. 31566704 for USDC.
@@ -316,7 +319,7 @@ async function withoutLaunchEscrows(holders) {
   return { holders: holders.map((h) => (escrows.has(h.owner) ? { ...h, excluded: true } : h)), escrowPct };
 }
 
-function evmReasons({ sec, market, controls, controllers, official = false }, add) {
+function evmReasons({ sec, market, controls, controllers, official = false, marketData = true }, add) {
   // The same GoPlus rules as the token part of /v1/check, without a subject. On a
   // trust-list token (USDT, USDC) the issuer's powers are context, as on Solana. The known official contracts
   // (src/jev.js) count too: Circle's EURC, and the stablecoin of a chain GoPlus has no trust list for (USDG on
@@ -330,7 +333,8 @@ function evmReasons({ sec, market, controls, controllers, official = false }, ad
   const lpLockedPct = lp.length
     ? lp.filter((h) => flag(h.is_locked) || BURN.has(String(h.address).toLowerCase())).reduce((s, h) => s + (num(h.percent) ?? 0) * 100, 0)
     : null;
-  marketReasons(market, add, { lpLockedPct, trusted, established: num(sec?.holder_count) >= ESTABLISHED_HOLDERS });
+  if (marketData) marketReasons(market, add, { lpLockedPct, trusted, established: num(sec?.holder_count) >= ESTABLISHED_HOLDERS });
+  else add("NO_MARKET_DATA", "info");
   // Wallets only: the big contract holders of an EVM token are pools, lockers,
   // staking, vesting and bridges (veAERO holds half of AERO).
   if (Array.isArray(sec?.holders)) {
@@ -606,7 +610,9 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     solanaReasons({ sec: sec.data, rug, market, permissioned, holders, escrowPct }, add);
   } else {
     const { chainId } = TOKEN_CHAINS[chain];
-    const [sec, pairs] = await Promise.all([getTokenSecurity(chainId, address), getMarket(chain, address)]);
+    const marketData = Boolean(TOKEN_CHAINS[chain].dexscreener);
+    if (!marketData) sources.splice(sources.indexOf("dexscreener"), 1);
+    const [sec, pairs] = await Promise.all([getTokenSecurity(chainId, address), marketData ? getMarket(chain, address) : []]);
     market = summarizeMarket(pairs, chain, address, now);
     partial = sec.partial;
     const owner = ownerOf(sec.data);
@@ -616,7 +622,7 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     ]);
     if (controls || controllers) sources.push("chain");
     if (controllers?.holders.length) controllersInfo = controllers;
-    evmReasons({ sec: sec.data, market, controls, controllers, official: isOfficialToken(chainId, address) }, add);
+    evmReasons({ sec: sec.data, market, controls, controllers, official: isOfficialToken(chainId, address), marketData }, add);
   }
 
   // Jev's second opinion on the name (src/jev.js): only when the token isn't already flagged as a copy.

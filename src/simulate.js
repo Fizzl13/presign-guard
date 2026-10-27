@@ -18,9 +18,12 @@ const PUBLIC = {
   8453: ["https://base-rpc.publicnode.com", "https://mainnet.base.org"],
   42161: ["https://arbitrum-one-rpc.publicnode.com", "https://arb1.arbitrum.io/rpc"],
   4663: ["https://rpc.mainnet.chain.robinhood.com", "https://robinhood.drpc.org"],
+  // X Layer: only dRPC runs eth_simulateV1 there (OKX's own nodes answered "rpc method is not whitelisted" on
+  // 27 Oct 2026).
+  196: ["https://xlayer.drpc.org"],
 };
 export const SIMULATED_CHAINS = Object.keys(PUBLIC).map(Number);
-const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 8453: "ETH", 42161: "ETH", 4663: "ETH" };
+const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 196: "OKB", 8453: "ETH", 42161: "ETH", 4663: "ETH" };
 
 const T_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const T_APPROVAL = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
