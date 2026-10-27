@@ -31,7 +31,7 @@ export const TOKEN_INPUT_EXAMPLE = { chain: "solana", address: "DezXAZ8z7PnrnRJj
 export const TOKEN_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "avalanche", "xrpl", "algorand"], description: "Chain the token lives on" },
+    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "avalanche", "xlayer", "xrpl", "algorand"], description: "Chain the token lives on" },
     address: { type: "string", description: "Solana mint address (base58), EVM token contract (0x...), an XRPL token as CURRENCY.rIssuer (e.g. RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De), or an Algorand asset id (e.g. 31566704)" },
   },
   required: ["chain", "address"],
@@ -322,7 +322,7 @@ export const INPUT_SCHEMA = {
     transactions: { type: "array", maxItems: 16, items: { type: "string" }, description: "algorand: an atomic group, each base64 msgpack; send the whole group" },
     method: { type: "string", enum: ["personal_sign", "eth_sign"], description: "message: how it is signed (default personal_sign); eth_sign is always red" },
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
-    chainId: { type: "integer", enum: [1, 10, 56, 137, 8453, 42161, 4663, 43114], description: "EVM chain; required for approval, transaction, signature and authorization" },
+    chainId: { type: "integer", enum: [1, 10, 56, 137, 196, 8453, 42161, 4663, 43114], description: "EVM chain; required for approval, transaction, signature and authorization" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1", "stellar:pubnet", "stellar:testnet"], description: "xrpl: the ledger (default xrpl:0, mainnet); stellar: stellar:pubnet (default) or stellar:testnet" },
     tx: { type: "object", description: "xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD, a DelegateSet that lets another account send payments, checks or escrows for you; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows, NFT giveaways, credentials issued to another account or that can't be accepted, other delegated permissions, a Batch of several accounts that isn't all-or-nothing, MPTs whose issuer can claw back or has locked them, MPT payments that would fail, vault deposits into lending vaults, fixed-term funds or vaults with a paper loss, vault withdrawals to another account, loans costing the borrower more than 36% a year with fees (the terms are always shown), and vault, loan or loan-payment transactions that would fail. Every transaction inside a Batch is judged the same way" },
     token: { type: "string", description: "approval: token contract" },
