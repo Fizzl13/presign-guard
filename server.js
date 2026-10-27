@@ -15,6 +15,7 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { algorandConfig, ALGORAND_NETWORK, ALGORAND_FACILITATOR } from "./src/algorand.js";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { stellarConfig, stellarFacilitator, STELLAR_NETWORK } from "./src/stellar.js";
+import { xlayerConfig, xlayerFacilitator, XLAYER_NETWORK } from "./src/xlayer.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { owsPaymentRequired } from "./src/ows.js";
@@ -73,6 +74,8 @@ const XRPL = MAINNET && XRPL_PAY_TO ? { network: XRPL_NETWORK, payTo: XRPL_PAY_T
 const ALGORAND = MAINNET ? algorandConfig() : null;
 // Optional: USDC on Stellar (src/stellar.js), mainnet only, when a Stellar facilitator is configured (STELLAR_FACILITATOR_KEY).
 const STELLAR = MAINNET ? stellarConfig() : null;
+// USD₮0 on X Layer (src/xlayer.js), mainnet only, to PAY_TO unless XLAYER_PAY_TO says otherwise; PayAI settles it.
+const XLAYER = MAINNET ? xlayerConfig(process.env, PAY_TO) : null;
 
 if (MAINNET && !(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET)) {
   throw new Error("Mainnet needs CDP_API_KEY_ID and CDP_API_KEY_SECRET for the CDP facilitator");
@@ -101,6 +104,7 @@ const facilitators = MAINNET
     ...(SOLANA ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.SOLANA_FACILITATOR_URL ?? "https://facilitator.payai.network" }), (n) => n.startsWith("solana:"))] : []),
     ...(ALGORAND ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.ALGORAND_FACILITATOR_URL || ALGORAND_FACILITATOR }), (n) => n.startsWith("algorand:"))] : []),
     ...(STELLAR ? [onlyNetworks(stellarFacilitator(), (n) => n.startsWith("stellar:"))] : []),
+    ...(XLAYER ? [onlyNetworks(xlayerFacilitator(), (n) => n === XLAYER_NETWORK)] : []),
     cdp,
     ...(xrplFacilitator ? [xrplFacilitator] : []),
   ]
@@ -113,8 +117,9 @@ if (SOLANA) resourceServer.register(SOLANA_NETWORK, new ExactSvmScheme());
 if (XRPL) resourceServer.register(XRPL_NETWORK, new ExactXrplScheme());
 if (ALGORAND) resourceServer.register(ALGORAND_NETWORK, new ExactAvmScheme());
 if (STELLAR) resourceServer.register(STELLAR_NETWORK, new ExactStellarScheme());
-facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : [])]);
-const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR);
+if (XLAYER) resourceServer.register(XLAYER_NETWORK, new ExactEvmScheme());
+facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : [])]);
+const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR, XLAYER);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
@@ -122,7 +127,7 @@ if (process.env.CREDITS_REDIS_URL) {
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
-const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR) } : ROUTES;
+const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER) } : ROUTES;
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
@@ -215,7 +220,7 @@ app.use("/media", express.static(MEDIA_DIR, { maxAge: "1d" }));
 app.get("/favicon.ico", (_req, res) => res.set("cache-control", "public, max-age=86400").sendFile(fileURLToPath(new URL("./public/favicon.ico", import.meta.url))));
 app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
 app.get("/openapi.json", (_req, res) => {
-  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : [])], { credits: Boolean(creditStore) });
+  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : [])], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
   if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: CONTACT, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION ? { currency: MPP_SESSION.currency } : null, xrpl: MPP.xrpl });
   res.json(spec);

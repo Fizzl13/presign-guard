@@ -713,7 +713,7 @@ export function agentRegistration(origin) {
   return {
     type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     name: "presign-guard",
-    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana, Algorand and Stellar transactions (decoded and simulated), XRP Ledger transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Signed answers, paid per call over x402 (USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger) or MPP (USDC on Base).",
+    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana, Algorand and Stellar transactions (decoded and simulated), XRP Ledger transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Signed answers, paid per call over x402 (USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer) or MPP (USDC on Base).",
     image: `${origin}/media/og.jpg`,
     services: [
       { name: "web", endpoint: `${origin}/` },

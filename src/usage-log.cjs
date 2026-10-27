@@ -65,6 +65,7 @@ const NETWORK_NAMES = {
   'algorand:SGO1GKSzyE7IEPItTxCByw9x8FmnrCDexi9/cOUJOiI=': 'algorand-testnet',
   'stellar:pubnet': 'stellar',
   'stellar:testnet': 'stellar-testnet',
+  'eip155:196': 'xlayer',
 };
 const RLUSD_HEX = '524C555344000000000000000000000000000000';
 
