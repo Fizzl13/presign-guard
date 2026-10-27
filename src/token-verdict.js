@@ -43,6 +43,8 @@ export const TOKEN_CHAINS = {
   bsc: { chainId: 56, dexscreener: "bsc" },
   // Robinhood Chain: GoPlus has its token data but no wallet approvals (token_approval_security), so no /v1/approvals.
   robinhood: { chainId: 4663, dexscreener: "robinhood", approvals: false },
+  // Avalanche C-Chain: GoPlus has its token data but no wallet approvals either.
+  avalanche: { chainId: 43114, dexscreener: "avalanche", approvals: false },
   // XRP Ledger: address is "CURRENCY.rIssuer" (a 3-letter code or its 40-hex form, e.g. RLUSD.rMxCK…).
   xrpl: { dexscreener: "xrpl" },
   // Algorand: address is the asset id (ASA), e.g. 31566704 for USDC.

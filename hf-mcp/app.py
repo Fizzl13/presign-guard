@@ -25,7 +25,7 @@ GUARD = os.environ.get("PRESIGN_GUARD_URL", "https://presign-guard.fizzl.eu").rs
 USER_AGENT = "presign-guard-hf-space/1.0 (+https://huggingface.co/spaces/x402Fizzl/presign-guard)"
 TIMEOUT = 60
 LIST_TTL = 3600
-TOKEN_CHAINS = ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "xrpl", "algorand"]
+TOKEN_CHAINS = ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "avalanche", "xrpl", "algorand"]
 SIGN_TYPES = ["approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand", "stellar"]
 EXAMPLE_CHECK = {"type": "approval", "chainId": 8453, "token": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", "spender": "0x1111111254EEB25477B68fb85Ed929f73A960582", "amount": "1000000"}
 LIMITED = (
@@ -119,7 +119,7 @@ def token_quick_verdict(chain: str, address: str) -> dict:
     summary and market data are in presign-guard's paid GET /v1/token ($0.01 over x402).
 
     Args:
-        chain: The chain the token lives on: solana, base, ethereum, arbitrum, optimism, polygon, bsc, robinhood, xrpl or algorand.
+        chain: The chain the token lives on: solana, base, ethereum, arbitrum, optimism, polygon, bsc, robinhood, avalanche, xrpl or algorand.
         address: A Solana mint (base58), an EVM token contract (0x…), an XRPL token as CURRENCY.rIssuer, or an Algorand asset id.
     """
     chain = (chain or "").strip().lower()

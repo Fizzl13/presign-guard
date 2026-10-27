@@ -661,6 +661,18 @@ test("Robinhood Chain (4663): a token chain for /v1/token, not for /v1/approvals
   assert.throws(() => parseApprovalsRequest({ chain: "robinhood", address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" }), /chain must be one of/);
 });
 
+test("Avalanche C-Chain (43114): a token chain for /v1/token, not for /v1/approvals; Circle's USDC and WAVAX are official", async () => {
+  const { APPROVAL_CHAINS, parseApprovalsRequest } = await import("../src/approvals.js");
+  const { TOKEN_CHAINS } = await import("../src/token-verdict.js");
+  const { isOfficialToken } = await import("../src/jev.js");
+  assert.deepEqual(TOKEN_CHAINS.avalanche, { chainId: 43114, dexscreener: "avalanche", approvals: false });
+  assert.equal(parseTokenRequest({ chain: "avalanche", address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E" }).chain, "avalanche");
+  assert.equal(APPROVAL_CHAINS.avalanche, undefined);
+  assert.throws(() => parseApprovalsRequest({ chain: "avalanche", address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" }), /chain must be one of/);
+  assert.ok(isOfficialToken(43114, "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"));
+  assert.ok(isOfficialToken(43114, "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7"));
+});
+
 test("Robinhood Chain: Paxos' USDG is the official dollar there; the token that calls itself USDC is not", async () => {
   const { isOfficialToken } = await import("../src/jev.js");
   assert.ok(isOfficialToken(4663, "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168"));
