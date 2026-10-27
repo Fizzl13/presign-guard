@@ -430,7 +430,7 @@ const OUTPUT_EXAMPLE = {
   reasons: [{ code: "UNLIMITED_APPROVAL", severity: "orange", subject: EXAMPLE_SPENDER.toLowerCase(), details: { token: EXAMPLE_TOKEN.toLowerCase() } }],
 };
 
-// The bazaar extension rides in the 402's PAYMENT-REQUIRED header, next to the accepts for four networks; Node
+// The bazaar extension rides in the 402's PAYMENT-REQUIRED header, next to the accepts for every network; Node
 // clients refuse headers over 16 KB. So the header carries the same fields, types and enums with short
 // descriptions; openapi.json has the full ones (reason codes, simulation, what each type needs).
 const SHORT = {
