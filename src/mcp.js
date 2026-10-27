@@ -277,7 +277,7 @@ const PAID_TOOLS = [
     solana: true,
     summary: "Is this token safe to buy, hold or accept? Verdict, grade, reason codes, one-line summary and market data for a Solana or EVM token; for EVM also who can upgrade, mint, pause or blacklist it (one key, a multisig or a timelock).",
     description: (price) =>
-      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc, robinhood, xrpl, algorand) and the token address, mint, CURRENCY.rIssuer or Algorand asset id; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Algorand or Stellar, or in RLUSD on the XRP Ledger): call this before your agent buys, holds or accepts a token. Send the chain (solana, base, ethereum, arbitrum, optimism, polygon, bsc, robinhood, avalanche, xrpl, algorand) and the token address, mint, CURRENCY.rIssuer or Algorand asset id; get back green/orange/red, a grade (SAFE, CAUTION, RISKY, AVOID), reason codes (mint or freeze authority still active, honeypot, tax or transfer fee, LP not locked, low liquidity, new token, concentrated holders, rugged), a one-line summary, and market data (price, liquidity, market cap, 24h volume, age). Same as GET /v1/token.`,
     run: (request) => tokenVerdict(request),
   },
   {

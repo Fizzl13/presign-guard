@@ -3,7 +3,9 @@
 // the synthetic 0xEeee… Transfer, ERC-20, ERC-721, ERC-1155) and every approval it sets. Decoding the calldata
 // (presign-guard.js) shows what the call says; simulation shows what it does, also inside multicalls, routers and
 // EIP-7702 batches. Asked from Alchemy when ALCHEMY_API_KEY is set (its alchemy_simulateAssetChanges was retired
-// on 30 Sep 2026), else, or when Alchemy fails, from the chain's public RPC (RPC_URL_<chainId> overrides).
+// on 30 Sep 2026), else, or when Alchemy fails, from the chain's public RPC (RPC_URL_<chainId> overrides). Avalanche
+// C-Chain (43114) is checked without simulation: its nodes don't run eth_simulateV1 (the public ones answered "method
+// does not exist" on 27 Oct 2026).
 // Needs the sender (`from`); a failure or timeout leaves the check as it was (never a guessed green).
 
 export const ALCHEMY = { 1: "eth-mainnet", 10: "opt-mainnet", 56: "bnb-mainnet", 137: "polygon-mainnet", 8453: "base-mainnet", 42161: "arb-mainnet", 4663: "robinhood-mainnet" };

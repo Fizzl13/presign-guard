@@ -1442,6 +1442,18 @@ test("OWS: what isn't checked is denied with a reason (an error status, so nothi
   assert.deepEqual([broken.status, broken.body.allow], [400, false]);
 });
 
+test("Avalanche C-Chain (43114) is a supported EVM chain for /v1/check, checked without simulation", async () => {
+  const { parseRequest } = await import("../src/presign-guard.js");
+  const { SIMULATED_CHAINS, createSimulator } = await import("../src/simulate.js");
+  const tx = { type: "transaction", chainId: 43114, to: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E", data: "0x", value: "0", from: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" };
+  assert.equal(parseRequest(tx).chainId, 43114);
+  assert.ok(!SIMULATED_CHAINS.includes(43114), "its nodes don't run eth_simulateV1");
+  let asked = 0;
+  const sim = createSimulator({ env: {}, fetch: async () => { asked++; return { ok: true, json: async () => ({}) }; } });
+  assert.equal(await sim.simulate({ chainId: 43114, from: tx.from, to: tx.to }), null);
+  assert.equal(asked, 0, "no RPC is asked");
+});
+
 test("Robinhood Chain (4663) is a supported EVM chain for /v1/check; an unknown chain id is refused with the list", async () => {
   const { parseRequest } = await import("../src/presign-guard.js");
   const tx = { type: "transaction", chainId: 4663, to: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", data: "0x", value: "0" };

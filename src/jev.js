@@ -25,6 +25,7 @@ const OFFICIAL = {
   // Robinhood Chain: no Circle USDC; its dollar is Paxos' USDG (Global Dollar). A token there called "USDC"
   // (0x11d0…991e, name UpSideDownCat) is a copy.
   4663: { USDG: "0x5fc5360d0400a0fd4f2af552add042d716f1d168", WETH: "0x0bd7d308f8e1639fab988df18a8011f41eacad73" },
+  43114: { USDC: "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", USDT: "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7", WAVAX: "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7", "WETH.e": "0x49d5c2bdffac6ce2bfdb6640f4f80f226bc10bab" },
   solana: { USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", USDT: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", wSOL: "So11111111111111111111111111111111111111112" },
   // XRP Ledger tokens are "<currency>.<issuer>" (the currency as text, e.g. "RLUSD.r…"). XRP itself is no token.
   xrpl: { RLUSD: "RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De" },
