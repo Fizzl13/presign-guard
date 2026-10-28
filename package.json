@@ -18,27 +18,27 @@
   "dependencies": {
     "@coinbase/x402": "^2.1.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "@solana/kit": "^5.5.1",
+    "@solana/kit": "^8.6.0",
     "@stellar/stellar-sdk": "^16.4.1",
-    "@x402/avm": "^2.28.0",
-    "@x402/core": "^2.27.0",
-    "@x402/evm": "^2.27.0",
-    "@x402/express": "^2.27.0",
-    "@x402/extensions": "^2.27.0",
-    "@x402/mcp": "^2.27.0",
-    "@x402/stellar": "^2.28.0",
-    "@x402/svm": "^2.27.0",
-    "@x402/xrpl": "^2.28.0",
+    "@x402/avm": "^2.29.0",
+    "@x402/core": "^2.29.0",
+    "@x402/evm": "^2.29.0",
+    "@x402/express": "^2.29.0",
+    "@x402/extensions": "^2.29.0",
+    "@x402/mcp": "^2.29.0",
+    "@x402/stellar": "^2.29.0",
+    "@x402/svm": "^2.29.0",
+    "@x402/xrpl": "^2.29.0",
     "algosdk": "^3.8.0",
     "express": "^5.2.1",
     "mppx": "^0.13.4",
     "redis": "^5.12.1",
     "ripple-binary-codec": "^2.11.0",
     "viem": "^2.56.8",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@x402/fetch": "^2.27.0"
+    "@x402/fetch": "^2.29.0"
   },
   "overrides": {
     "@stellar/stellar-sdk": {
