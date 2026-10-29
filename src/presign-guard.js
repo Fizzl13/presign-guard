@@ -1567,7 +1567,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
   const injectionPrice = `$${INJECTION_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
-      "Is this transaction, approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
+      "Is this transaction, token approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
     "POST /v1/check/explain": route("/v1/check/explain",
       "Is this transaction, approval or signature safe to sign, explained for a person? The same pre-sign verdict as /v1/check (green/orange/red + reason codes) plus a short plain-language explanation in English or Dutch, for an agent to show its user before asking for approval"),
     [`GET ${TOKEN_ROUTE.path}`]: {
@@ -1579,7 +1579,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...stellarAccept(stellar, tokenPrice),
         ...xlayerAccept(xlayer, tokenPrice),
       ],
-      description: "Is this token safe to buy, or a honeypot or rug pull? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
+      description: "Honeypot and rug pull check for a token: is it safe to buy? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
       ...tokenServiceMetadata,
       extensions: { ...tokenBazaarExtension(), ...sellerExtensions },
@@ -1607,7 +1607,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...stellarAccept(stellar, screenPrice),
         ...xlayerAccept(xlayer, screenPrice),
       ],
-      description: "Is this wallet sanctioned? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
+      description: "Sanctions screen for a wallet address: is it on the OFAC list? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
       mimeType: "application/json",
       ...screenServiceMetadata,
       extensions: { ...screenBazaarExtension(), ...sellerExtensions },
@@ -1621,7 +1621,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...stellarAccept(stellar, injectionPrice),
         ...xlayerAccept(xlayer, injectionPrice),
       ],
-      description: "Is this text a prompt-injection trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to make the agent ignore its instructions, pay or send money, hand over keys or private data, or obey a fake user, admin or support message? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
+      description: "Prompt injection detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to make the agent ignore its instructions, pay or send money, hand over keys or private data, or obey a fake user, admin or support message? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
       mimeType: "application/json",
       ...injectionServiceMetadata,
       extensions: { ...injectionBazaarExtension(), ...sellerExtensions },
