@@ -74,7 +74,7 @@ const CHECK_INPUT = {
   method: z.enum(["personal_sign", "eth_sign"]).optional().describe("message: how it is signed (default personal_sign); eth_sign is always red"),
   message: z.string().max(16384).optional().describe("message: the text or 0x-hex about to be signed; a Sign-In with Ethereum message for another site than origin is red, unreadable bytes are orange"),
   network: z.enum([...Object.keys(XRPL_NETWORKS), "stellar:pubnet", "stellar:testnet"]).optional().describe("xrpl: xrpl:0 (mainnet, default) or xrpl:1 (testnet); stellar: stellar:pubnet (default) or stellar:testnet"),
-  tx: z.record(z.any()).optional().describe("xrpl: the unsigned transaction JSON (TransactionType, Account, Destination, Amount, …), including CredentialCreate, CredentialAccept, DelegateSet, Batch (every inner transaction is judged), vault deposits and withdrawals (VaultDeposit, VaultWithdraw) and loans (LoanSet, LoanPay)"),
+  tx: z.record(z.string(), z.any()).optional().describe("xrpl: the unsigned transaction JSON (TransactionType, Account, Destination, Amount, …), including CredentialCreate, CredentialAccept, DelegateSet, Batch (every inner transaction is judged), vault deposits and withdrawals (VaultDeposit, VaultWithdraw) and loans (LoanSet, LoanPay)"),
   token: z.string().optional().describe("approval: the token contract"),
   spender: z.string().optional().describe("approval: who gets the allowance"),
   amount: z.string().optional().describe("approval: amount in base units (0 = revoke)"),
@@ -82,10 +82,10 @@ const CHECK_INPUT = {
   data: z.string().optional().describe("transaction: 0x-prefixed calldata"),
   value: z.string().optional().describe("transaction: native value in wei"),
   from: z.string().optional().describe("transaction, message or authorization, optional: your wallet address (authorization: its current delegation is shown); the transaction is then simulated (what really leaves and arrives; orange HIDDEN_APPROVAL, SIMULATION_NFT_OUT, SIMULATION_FAILS) and its recipients are compared with who this wallet paid before (red ADDRESS_POISONING for a look-alike)"),
-  typedData: z.union([z.record(z.any()), z.string()]).optional().describe("signature: the exact eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)"),
+  typedData: z.union([z.record(z.string(), z.any()), z.string()]).optional().describe("signature: the exact eth_signTypedData_v4 payload (Permit, Permit2, EIP-3009 x402 payment, Seaport)"),
   origin: z.string().optional().describe("optional: the site asking for the signature or transaction (URL or hostname); a domain under 30 days old is orange"),
   intent: z.string().max(500).optional().describe("optional: what you are trying to do, in one sentence (e.g. \"swap 10 USDC for ETH on Uniswap\"); orange INTENT_MISMATCH when signing would do more or something else"),
-  x402: z.record(z.any()).optional().describe("optional, EIP-3009 payments only: the x402 payment requirements you are paying ({ accepted: { scheme, network, amount, asset, payTo, maxTimeoutSeconds, extra } }, one entry of the 402's accepts); red when the signature pays more, someone else, another token or chain"),
+  x402: z.record(z.string(), z.any()).optional().describe("optional, EIP-3009 payments only: the x402 payment requirements you are paying ({ accepted: { scheme, network, amount, asset, payTo, maxTimeoutSeconds, extra } }, one entry of the 402's accepts); red when the signature pays more, someone else, another token or chain"),
 };
 const EXPLAIN_INPUT = { ...CHECK_INPUT, lang: z.enum(["en", "nl"]).optional().describe("Language of the explanation (default en)") };
 
