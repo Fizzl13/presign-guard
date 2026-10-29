@@ -18,6 +18,7 @@ import { stellarConfig, stellarFacilitator, STELLAR_NETWORK } from "./src/stella
 import { xlayerConfig, xlayerFacilitator, XLAYER_NETWORK } from "./src/xlayer.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
+import { createPaymentRetry } from "./src/payment-retry.js";
 import { owsPaymentRequired } from "./src/ows.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
@@ -312,6 +313,12 @@ const isInternal = internalAccess();
 app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
 // A valid credit key with enough credits pays the call instead (src/credits.js).
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
+// A retry with an x402 payment id this service already answered (same route and input, same payer) gets that answer
+// again, without a second charge (src/payment-retry.js). /v1/check's body is parsed above; /v1/injection's here.
+const injectionJson = express.json({ limit: "160kb" });
+app.post("/v1/injection", (req, res, next) => injectionJson(req, res, () => next())); // a bad body still gets its 402 first, then 400 once paid
+const paymentRetry = createPaymentRetry();
+app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal ? next() : paymentRetry.middleware(req, res, next)));
 // Challenges (and so the Bazaar listing) name presign-guard.fizzl.eu, also when called on the Render address.
 const paywall = unlessInternal((req) => req.fizzlInternal === true, onPublicHost(PUBLIC_URL, paymentMiddleware(PAYWALL_ROUTES, resourceServer, undefined, undefined, false /* no start-up exit: src/facilitator-start.cjs fetches the kinds */)));
 if (MPP_SESSION) app.use((req, res, next) => (req.fizzlCredits || req.fizzlInternal ? next() : MPP_SESSION.middleware(req, res, next)));
