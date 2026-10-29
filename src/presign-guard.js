@@ -27,6 +27,7 @@ import {
   INJECTION_ROUTE, injectionBazaarExtension, injectionServiceMetadata,
 } from "./discovery.js";
 import { builderCodeExtension, merchantExtension } from "./merchant.js";
+import { paymentIdentifierExtension } from "./payment-retry.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
 import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, NEW_DOMAIN_DAYS } from "./pg1.js";
 import { screenOfacLoaded, partySanctionsReasons } from "./ofac.js";
@@ -1545,7 +1546,7 @@ export async function explain(result, lang) {
 // stellar: optional { network, payTo }; every route can then also be paid in USDC on Stellar.
 export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null, stellar = null, xlayer = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
-  const sellerExtensions = { ...merchantExtension, ...builderCodeExtension(builderCode) };
+  const sellerExtensions = { ...merchantExtension, ...builderCodeExtension(builderCode), ...paymentIdentifierExtension };
   const route = (path, description) => ({
     accepts: [
       { scheme: "exact", price: `$${ROUTES[path].price}`, network, payTo },
