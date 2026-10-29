@@ -37,6 +37,7 @@ import { createInjectionQuickRouter } from "./src/injection-quick.js";
 import { ofacStatus, startOfacSync, sanctionsList } from "./src/ofac.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
+import { postOnlyTerms } from "./src/post-only.js";
 import { internalAccess, unlessInternal } from "./src/internal.js";
 import { createSigner, signPaidResponses, verifyReceipt, ALGORITHM, AUTHORITY, SERVICE } from "./src/receipt.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -300,6 +301,8 @@ app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);
 app.use(validateScreenQuery);
 app.use(mirrorChallengeIntoBody);
+// An unpaid GET on a POST-only paid route gets the POST's 402 instead of a 404 (src/post-only.js).
+app.use(postOnlyTerms({ paths: Object.keys(ROUTES).filter((k) => k.startsWith("POST ")).map((k) => k.slice(5)), paywall: (req, res, next) => paywall(req, res, next), creditHeader: CREDIT_HEADER }));
 // An OWS policy without credits gets a 402 that says what to do (src/ows.js). The body is parsed here for that; one
 // that isn't valid JSON still gets the 402 first, and its 400 from the check router once paid, as before.
 const checkJson = express.json({ limit: "64kb" });
