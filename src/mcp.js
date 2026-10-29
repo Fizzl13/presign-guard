@@ -379,7 +379,7 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
 // free: only the free tools, for directories whose clients don't pay (POST /mcp/free, e.g. Claude's connectors
 // directory): no paid tool, no feedback tool, and descriptions and answers that don't point to paid tools.
 function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {}, free = false }) {
-  const server = new McpServer({ name: "presign-guard", version: VERSION });
+  const server = new McpServer({ name: "presign-guard", version: VERSION, title: "presign-guard", websiteUrl: "https://presign-guard.fizzl.eu", icons: [{ src: "https://presign-guard.fizzl.eu/media/icon.png", mimeType: "image/png", sizes: ["512x512"] }] });
   const limitReached = (paid) => toolError(free ? "Free limit reached for this hour. Try again later." : `Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use ${paid}.`);
 
   server.registerTool(
