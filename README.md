@@ -10,7 +10,7 @@ A pre-sign risk check for AI agents. Before an agent signs a transaction, approv
 
 **New: the token verdict in 45 seconds:** [presign-guard.fizzl.eu/media/token.mp4](https://presign-guard.fizzl.eu/media/token.mp4)
 
-Part of [Klaartaal](https://github.com/Fizzl13/SmartContractExplainer) by [FIZZL AI](https://fizzl.eu).
+Part of [Fizzl](https://fizzl.eu).
 
 ## Use it in a few lines: `presign-guard-wallet`
 
