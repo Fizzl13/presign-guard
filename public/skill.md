@@ -5,7 +5,7 @@ description: Check before an agent signs or buys: green, orange or red for signa
 
 # presign-guard
 
-**Before you sign anything or buy a token, check it here.** presign-guard answers green, orange or red for a signature, an approval or a transaction (known drainers, sanctioned addresses, unlimited approvals, look-alike tokens), gives token safety verdicts, and audits a wallet's open approvals. **You are never charged for an error.** On red: don't sign. On orange: tell your owner why before going on.
+**Before you sign anything or buy a token, check it here.** presign-guard answers green, orange or red for a signature, an approval or a transaction (known drainers, sanctioned addresses, approvals with no limit, look-alike tokens), gives token safety verdicts, and audits a wallet's open approvals. **You are never charged for an error.** On red: don't sign. On orange: tell your owner why before going on.
 
 Website: https://presign-guard.fizzl.eu · Prices and schemas: https://presign-guard.fizzl.eu/openapi.json
 
