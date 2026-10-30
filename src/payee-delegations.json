@@ -1,0 +1,82 @@
+[
+ {
+  "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+  "payTo": "ATWJ82T8nRdQwZnaysB68N5EpaSvLRsQP4h6eWmaJBH9",
+  "delegation": {
+   "message": {
+    "chainId": "8453",
+    "registry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    "agentId": "97520",
+    "agentWallet": "0x6b0f4651ed42893ab58139938175e4a69f175f25",
+    "network": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+    "payTo": "ATWJ82T8nRdQwZnaysB68N5EpaSvLRsQP4h6eWmaJBH9",
+    "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "origin": "https://presign-guard.fizzl.eu",
+    "validAfter": "1793395654",
+    "validUntil": "1824931594",
+    "nonce": "0x32080449e24fabfe7a6decbfcfb54d159c4a53a2e19e6c1bafae035a713bc47a"
+   },
+   "signature": "0xb33ce80c8479de0500b2d96e23ec2ee8c88d05c4a8ecfa4205d8c0ca040aef4d1a4021cd484153d729bd9f6d337f3bfe13d93821e9350bab2719fe346a15d0d11c"
+  }
+ },
+ {
+  "network": "xrpl:0",
+  "payTo": "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw",
+  "delegation": {
+   "message": {
+    "chainId": "8453",
+    "registry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    "agentId": "97520",
+    "agentWallet": "0x6b0f4651ed42893ab58139938175e4a69f175f25",
+    "network": "xrpl:0",
+    "payTo": "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw",
+    "asset": "524C555344000000000000000000000000000000",
+    "origin": "https://presign-guard.fizzl.eu",
+    "validAfter": "1793395654",
+    "validUntil": "1824931594",
+    "nonce": "0x35ca72e29cf315c3ca7513fb5d6b969dd53cf019945608e8cd5984b5b1d85377"
+   },
+   "signature": "0xf5b3beabe3daf1d698302c9765eebae9a565900b3edcab802a535ffc713d23c77b20e67fd8bcfb0269f1a7c8e2ebc37586185be0b4400f114e7aac9976d4adf31b"
+  }
+ },
+ {
+  "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+  "payTo": "LOYVFSQ6ZTS2YWUW4GQ5L6VPP2TPIOXWYDACK53CPOHQQHLDMEMKJDXAX4",
+  "delegation": {
+   "message": {
+    "chainId": "8453",
+    "registry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    "agentId": "97520",
+    "agentWallet": "0x6b0f4651ed42893ab58139938175e4a69f175f25",
+    "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
+    "payTo": "LOYVFSQ6ZTS2YWUW4GQ5L6VPP2TPIOXWYDACK53CPOHQQHLDMEMKJDXAX4",
+    "asset": "31566704",
+    "origin": "https://presign-guard.fizzl.eu",
+    "validAfter": "1793395654",
+    "validUntil": "1824931594",
+    "nonce": "0x4d134be38c52bc69d5f17437a18c4cd3c9be37a44b6618577811404282315ca3"
+   },
+   "signature": "0x41d17fdddca4777c7f17e6de476f623ececac4dd2efd9e16254ad3c3d64c44ec11456cb1b9cdff6da2a8745ac91adb8dea1936bffe2bddb0d9765c99d10b46501b"
+  }
+ },
+ {
+  "network": "stellar:pubnet",
+  "payTo": "GCH2J5UAY24YNKA65MPAATVKWRCZZRZNF3JZKYYS5MIBZPG6U7WJ6CDQ",
+  "delegation": {
+   "message": {
+    "chainId": "8453",
+    "registry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    "agentId": "97520",
+    "agentWallet": "0x6b0f4651ed42893ab58139938175e4a69f175f25",
+    "network": "stellar:pubnet",
+    "payTo": "GCH2J5UAY24YNKA65MPAATVKWRCZZRZNF3JZKYYS5MIBZPG6U7WJ6CDQ",
+    "asset": "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75",
+    "origin": "https://presign-guard.fizzl.eu",
+    "validAfter": "1793395654",
+    "validUntil": "1824931594",
+    "nonce": "0x822278808e1b1d1ad364144f37f3a4286edde9f505ce086743ae69fb7ade97c4"
+   },
+   "signature": "0x473a3e4ca41643cb3812ce0ff9b15d793fbfe3e42f7f4ce2a67d50c3e659340b6248f27edaa80a1b221fcc2a37a847916beba9d97af81360a3c768f43f303b251c"
+  }
+ }
+]
