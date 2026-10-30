@@ -18,7 +18,7 @@ import express from "express";
 import { isAddress } from "viem";
 import {
   ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
-  issuerControls, controlReasons, needsControlCheck,
+  issuerControls, controlReasons, needsControlCheck, getCode,
 } from "./presign-guard.js";
 import { permissionedToken } from "./token-acl.js";
 import { tokenControllers, controllerReasons } from "./controllers.js";
@@ -397,6 +397,7 @@ const PHRASES = {
   LP_NOT_LOCKED: (d) => `only ${d.lpLockedPct}% of LP locked`,
   LOW_LIQUIDITY: (d) => `${usd(d.liquidityUsd)} liquidity`,
   NO_DEX_MARKET: () => "no DEX market found",
+  NOT_A_TOKEN: () => "no token contract at this address",
   NEW_TOKEN: (d) => `${age(d.ageSeconds)} old`,
   TOP_HOLDERS_CONCENTRATED: (d) => `top holder ${d.top1Pct}%, top 10 ${d.top10Pct}%`,
 };
@@ -622,7 +623,11 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     ]);
     if (controls || controllers) sources.push("chain");
     if (controllers?.holders.length) controllersInfo = controllers;
-    evmReasons({ sec: sec.data, market, controls, controllers, official: isOfficialToken(chainId, address), marketData }, add);
+    // No contract at the address (the zero address, a plain wallet, a typo) is not a token at all: DexScreener
+    // still lists "pairs" for the zero address (native-coin pools), so the market data alone would look fine.
+    const noContract = /^0x0{40}$/.test(address) || (!sec.data && await getCode(chainId, address).then((c) => c === "0x", () => false));
+    if (noContract) { add("NOT_A_TOKEN", "red"); sources.push("chain"); }
+    else evmReasons({ sec: sec.data, market, controls, controllers, official: isOfficialToken(chainId, address), marketData }, add);
   }
 
   // Jev's second opinion on the name (src/jev.js): only when the token isn't already flagged as a copy.
