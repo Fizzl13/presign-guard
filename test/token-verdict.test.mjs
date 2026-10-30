@@ -192,7 +192,8 @@ before(async () => {
     if (u.hostname === "base-rpc.publicnode.com" || u.hostname === "rpc.xlayer.tech") {
       if (down.has("rpc")) throw new TypeError("fetch failed");
       // One JSON-RPC batch per token (or per role holder): storage slots, code and eth_call.
-      return Response.json(JSON.parse(init.body).map(({ id, method, params }) => {
+      const body = JSON.parse(init.body);
+      const answers = (Array.isArray(body) ? body : [body]).map(({ id, method, params }) => {
         if (method === "eth_getStorageAt") {
           rpcCalls.push("slot");
           return { jsonrpc: "2.0", id, result: FIXTURES.slots[params[0]]?.[params[1]] ?? word(0) };
@@ -205,7 +206,8 @@ before(async () => {
         rpcCalls.push(data.slice(0, 10));
         const result = FIXTURES.rpc[to]?.[data.slice(0, 10)];
         return result ? { jsonrpc: "2.0", id, result } : { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted" } };
-      }));
+      });
+      return Response.json(Array.isArray(body) ? answers : answers[0]);
     }
     if (u.hostname === "api.mainnet-beta.solana.com") {
       if (down.has("solana-rpc")) throw new TypeError("fetch failed");
@@ -567,6 +569,27 @@ test("Base, unverified token with no market: orange", async () => {
   const r = await tokenVerdict({ chain: "base", address: NOMARKET }, NOW);
   assert.deepEqual([r.verdict, r.grade], ["orange", "RISKY"]);
   assert.deepEqual(codes(r, "orange"), ["NO_DEX_MARKET", "TOKEN_UNVERIFIED"]);
+});
+
+test("Base, the zero address or an address without code is not a token: red NOT_A_TOKEN", async () => {
+  const zero = await tokenVerdict({ chain: "base", address: "0x" + "0".repeat(40) }, NOW);
+  assert.deepEqual([zero.verdict, zero.grade], ["red", "AVOID"]);
+  assert.deepEqual(codes(zero), ["NOT_A_TOKEN"]);
+  assert.match(zero.one_liner, /no token contract at this address/);
+  const wallet = await tokenVerdict({ chain: "base", address: "0x3434343434343434343434343434343434343434" }, NOW);
+  assert.deepEqual(codes(wallet, "red"), ["NOT_A_TOKEN"]);
+  assert.ok(rpcCalls.includes("code"));
+});
+
+test("Base, a contract GoPlus doesn't know is judged as usual; a failing RPC never makes it red", async () => {
+  const UNLISTED = "0x4545454545454545454545454545454545454545";
+  FIXTURES.code[UNLISTED] = "0x6080604052";
+  const r = await tokenVerdict({ chain: "base", address: UNLISTED }, NOW);
+  assert.ok(!codes(r).includes("NOT_A_TOKEN"));
+  assert.deepEqual(codes(r, "orange"), ["NO_DEX_MARKET"]);
+  down.add("rpc");
+  const blind = await tokenVerdict({ chain: "base", address: "0x5656565656565656565656565656565656565656" }, NOW);
+  assert.ok(!codes(blind).includes("NOT_A_TOKEN"));
 });
 
 test("market summary: liquidity summed, price from the pair where the token is the base", () => {

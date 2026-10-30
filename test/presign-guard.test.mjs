@@ -483,6 +483,15 @@ test("payment authorization valid for months is orange", async () => {
   assert.ok(codes(r).includes("LONG_LIVED_PERMISSION"));
 });
 
+test("payment authorization valid for 30 days is orange too; an hour is fine", async () => {
+  const days = (n) => String(Math.floor(Date.now() / 1000) + n * 86400);
+  const month = await check(payment(EOA, "20000", days(30)));
+  assert.equal(month.body.verdict, "orange");
+  assert.ok(codes(month).includes("LONG_LIVED_PERMISSION"));
+  const hour = await check(payment(EOA, "20000", String(Math.floor(Date.now() / 1000) + 3600)));
+  assert.equal(hour.body.verdict, "green");
+});
+
 test("unrecognized typed data is orange, not green", async () => {
   const r = await check(sig("SomethingNew", { foo: "bar" }, { verifyingContract: GOOD }));
   assert.equal(r.body.verdict, "orange");
@@ -1140,6 +1149,7 @@ test("x402: a signature valid far beyond the seller's timeout, or another EIP-71
   const long = await check({ ...payment(EOA, "20000", String(Math.floor(Date.now() / 1000) + 7 * 86400)), x402: accepted() });
   assert.equal(long.body.verdict, "orange");
   assert.ok(codes(long).includes("X402_VALIDITY_TOO_LONG"));
+  assert.ok(!codes(long).includes("LONG_LIVED_PERMISSION"), "judged once, against the seller's timeout");
   const dom = await check({ ...payment(EOA, "20000"), x402: accepted({ extra: { name: "USDC", version: "2" } }) });
   assert.ok(codes(dom).includes("X402_DOMAIN_MISMATCH"));
   const less = await check({ ...payment(EOA, "10000"), x402: accepted() });

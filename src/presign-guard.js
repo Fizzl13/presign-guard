@@ -64,6 +64,9 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 const CACHE_MAX_ENTRIES = 5000;
 const RECENT_DEPLOY_SECONDS = 30 * 86400;
 const LONG_LIVED_SECONDS = 31 * 86400; // Permit2 UIs commonly default to 30 days
+// An EIP-3009 payment is settled within minutes (x402 clients sign for the seller's timeout, often 60 to 300 s); one
+// that stays valid for more than a day works like a bearer cheque anyone holding it can cash.
+const LONG_LIVED_PAYMENT_SECONDS = 86400;
 const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 196, 8453, 42161, 4663, 43114]);
 // Public RPCs for eth_getCode; override per chain with RPC_URL_<chainId>.
 const RPC_URLS = {
@@ -443,7 +446,7 @@ const needsControlCheck = (sec) => sec && sec.transfer_pausable === undefined &&
 // Shared with the token verdict (token-verdict.js).
 export {
   ValidationError, UpstreamError, cached, goplus, flag, getTokenSecurity, tokenReasons,
-  issuerControls, controlReasons, needsControlCheck, rpcBatch,
+  issuerControls, controlReasons, needsControlCheck, rpcBatch, getCode,
 };
 
 // ---------- input helpers ----------
@@ -1343,7 +1346,8 @@ export async function analyze(req) {
     if (g.mode === "payment") {
       add("PAYMENT_AUTHORIZATION", "info", g.spender, { ...token, amount: g.amount.toString() });
       if (g.unlimited) add("UNLIMITED_TRANSFER", "orange", g.spender, token);
-      if (g.expiresAt !== null && g.expiresAt - now > LONG_LIVED_SECONDS) {
+      // With the x402 requirements, X402_VALIDITY_TOO_LONG judges the validity against the seller's own timeout.
+      if (!req.x402 && g.expiresAt !== null && g.expiresAt - now > LONG_LIVED_PAYMENT_SECONDS) {
         add("LONG_LIVED_PERMISSION", "orange", g.spender, { ...token, expiresAt: g.expiresAt });
       }
       continue;
