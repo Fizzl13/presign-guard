@@ -1,6 +1,7 @@
 // How agents find and understand the paid routes: Bazaar metadata on the 402,
 // the 402 challenge mirrored into the body, /openapi.json and /.well-known/x402.
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
+import { readFileSync } from "node:fs";
 
 const EXAMPLE_TOKEN = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC on Base
 const EXAMPLE_SPENDER = "0x000000000022D473030F116dDEE9F6B43aC78BA3"; // Permit2
@@ -706,6 +707,10 @@ export function wellKnown(origin, { credits = false } = {}) {
   };
 }
 
+// The payees that aren't the agent wallet, each with the payee delegation the agent wallet (0x6B0F…5F25) signed on
+// 30 Oct 2026 for a year (draft ERC "x402 Payee Verification for ERC-8004 Agents", ethereum/ERCs#2132).
+export const PAYEE_DELEGATIONS = JSON.parse(readFileSync(new URL("./payee-delegations.json", import.meta.url), "utf8"));
+
 // Agent registration (ERC-8004 format) for the Metaplex Agent Registry on Solana:
 // the document the registered agent points to. registrations gets the asset
 // address once the agent is minted.
@@ -718,6 +723,7 @@ export function agentRegistration(origin) {
     services: [
       { name: "web", endpoint: `${origin}/` },
       { name: "MCP", endpoint: `${origin}/mcp`, version: "2025-06-18" },
+      { name: "x402", endpoint: `${origin}/v1/check`, payees: PAYEE_DELEGATIONS },
     ],
     active: true,
     x402Support: true,

@@ -103,7 +103,7 @@ test("signed verdicts are advertised: receipt in every paid response schema, gui
 test("agent registration (ERC-8004, Metaplex Agent Registry): web and MCP on the given origin", () => {
   const a = agentRegistration("https://presign-guard.fizzl.eu");
   assert.equal(a.type, "https://eips.ethereum.org/EIPS/eip-8004#registration-v1");
-  assert.deepEqual(a.services.map((x) => [x.name, x.endpoint]), [["web", "https://presign-guard.fizzl.eu/"], ["MCP", "https://presign-guard.fizzl.eu/mcp"]]);
+  assert.deepEqual(a.services.map((x) => [x.name, x.endpoint]), [["web", "https://presign-guard.fizzl.eu/"], ["MCP", "https://presign-guard.fizzl.eu/mcp"], ["x402", "https://presign-guard.fizzl.eu/v1/check"]]);
   assert.equal(a.image, "https://presign-guard.fizzl.eu/media/og.jpg");
   assert.equal(a.active, true);
   assert.equal(a.x402Support, true);
@@ -201,4 +201,23 @@ test("the bazaar schema in the 402 header: every field, type and enum of the ful
   assert.deepEqual(BAZAAR_INPUT_SCHEMA.required, INPUT_SCHEMA.required);
   // The whole 402 header (base64) stays well under Node's 16 KB limit: the bazaar part was 8 KB of it.
   assert.ok(JSON.stringify(bazaarExtension()).length < 4500, `bazaar extension ${JSON.stringify(bazaarExtension()).length} characters`);
+});
+
+test("payee delegations in the registration file: signed by the agent wallet for agent #97520 on this origin, at most 365 days", async () => {
+  const { recoverTypedDataAddress } = await import("viem");
+  const payees = agentRegistration("https://presign-guard.fizzl.eu").services.find((x) => x.name === "x402").payees;
+  assert.deepEqual(payees.map((p) => p.network.split(":")[0]), ["solana", "xrpl", "algorand", "stellar"]);
+  const types = { PayeeDelegation: [["chainId", "uint256"], ["registry", "address"], ["agentId", "uint256"], ["agentWallet", "address"], ["network", "string"], ["payTo", "string"], ["asset", "string"], ["origin", "string"], ["validAfter", "uint64"], ["validUntil", "uint64"], ["nonce", "bytes32"]].map(([name, type]) => ({ name, type })) };
+  for (const p of payees) {
+    const m = p.delegation.message;
+    assert.deepEqual([m.network, m.payTo, m.agentId, m.origin], [p.network, p.payTo, "97520", "https://presign-guard.fizzl.eu"]);
+    assert.ok(BigInt(m.validUntil) - BigInt(m.validAfter) <= 31536000n);
+    const signer = await recoverTypedDataAddress({
+      domain: { name: "x402 Payee Delegation", version: "1", chainId: Number(m.chainId), verifyingContract: m.registry },
+      types, primaryType: "PayeeDelegation",
+      message: { ...m, chainId: BigInt(m.chainId), agentId: BigInt(m.agentId), validAfter: BigInt(m.validAfter), validUntil: BigInt(m.validUntil) },
+      signature: p.delegation.signature,
+    });
+    assert.equal(signer.toLowerCase(), m.agentWallet.toLowerCase(), p.network);
+  }
 });
