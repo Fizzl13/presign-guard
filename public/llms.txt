@@ -33,3 +33,5 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 
 ## Fizzl Pass
 A Fizzl Pass holder (Bronze comes with Agent Wallet Pro) sends its signed proof in the `X-Fizzl-Pass` header and gets 5 times the free limits, counted per pass instead of per IP. The proof comes from the Agent Wallet dashboard; anyone can check a wallet's pass at https://wallet.fizzl.eu/v1/pass/status?wallet=<address>.
+
+Credit back: after a paid check from a wallet a pass covers, 10% of the price (Silver 20%, Gold 30%) goes into the pass's vault, spendable at presign-guard, x402 Doctor, Ichimoku Signal and Fizzl Buy. A paid call with the `X-Fizzl-Pass` header and no payment is paid from the vault when it holds enough (response header `x-fizzl-vault: paid`); a failed call gives it back. Balance: GET https://presign-guard.fizzl.eu/v1/vault with the same header. Credit can only be spent at Fizzl and can't be paid out; Bronze and Silver credit ends 12 months after the last credit.

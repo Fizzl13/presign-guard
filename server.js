@@ -1,4 +1,5 @@
 import { createPassVerifier, limitKeyOf } from "./src/fizzl-pass.js";
+import { createVault, redisVault } from "./src/fizzl-vault.js";
 import express from "express";
 import { securityHeaders } from "./src/security-headers.js";
 import { headGuard } from "./src/head-guard.js";
@@ -270,6 +271,7 @@ const usageLog = createUsageLog({ service: "presign" });
 app.use(usageLog.middleware((req, res, body) => {
   const d = describePresignCall(req, res, body);
   if (d && req.fizzlInternal) return { ...d, via: "internal" };
+  if (d && req.fizzlCredits?.vault) return { ...d, via: "vault" };
   if (d && req.fizzlCredits) return { ...d, via: "credits", credits: req.fizzlCredits.cost };
   return d;
 }));
@@ -295,6 +297,11 @@ app.use(feedback.router(express));
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
 // Fizzl Pass holders get the tier's higher free limit, counted per pass (src/fizzl-pass.js).
 const passVerifier = createPassVerifier({ jwksUrl: process.env.PASS_JWKS_URL || undefined });
+// Fizzl Pass vault (src/fizzl-vault.js): credit back after a paid check by a pass wallet, and checks paid from the vault.
+// It shares the credits store's Redis connection; off without CREDITS_REDIS_URL.
+const vault = createVault({ store: creditStore?.client ? redisVault(null, { client: creditStore.client }) : null, pass: passVerifier, statusUrl: process.env.PASS_STATUS_URL || undefined });
+app.use(vault.creditBack());
+app.get("/v1/vault", vault.balanceHandler());
 const allowFreeQuick = async (ip, req) => { const { key, factor } = await limitKeyOf(passVerifier, req, ip); return freeLimiter(key, factor); };
 app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, signer: SIGNER, limiter: freeLimiter, feedback, pass: passVerifier }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
@@ -320,6 +327,8 @@ const isInternal = internalAccess();
 app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
 // A valid credit key with enough credits pays the call instead (src/credits.js).
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
+// A Fizzl Pass proof (X-Fizzl-Pass) with enough credit in its vault pays the call too (CREDIT_COSTS are cents).
+app.use(vault.payFromVault((req) => (CREDIT_COSTS[`${req.method} ${req.path}`] ? CREDIT_COSTS[`${req.method} ${req.path}`] / 100 : null)));
 // A retry with an x402 payment id this service already answered (same route and input, same payer) gets that answer
 // again, without a second charge (src/payment-retry.js). /v1/check's body is parsed above; /v1/injection's here.
 const injectionJson = express.json({ limit: "160kb" });
