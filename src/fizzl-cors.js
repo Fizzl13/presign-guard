@@ -4,7 +4,7 @@
 // free routes from the browser. Only the fizzl.eu origins, and only on the
 // routes it is mounted on; paid routes stay same-origin (agents don't need
 // CORS). Kept identical in ichimoku-signal, x402-doctor and presign-guard.
-export const FIZZL_ORIGINS = new Set(["https://fizzl.eu", "https://www.fizzl.eu"]);
+export const FIZZL_ORIGINS = new Set(["https://fizzl.eu", "https://www.fizzl.eu", "https://ai.fizzl.eu"]); // ai.fizzl.eu also shows "Watch an agent pay"
 
 export function fizzlCors(req, res, next) {
   res.vary("Origin");

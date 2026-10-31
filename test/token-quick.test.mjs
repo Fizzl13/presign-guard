@@ -45,6 +45,8 @@ test("invalid input is 400 and does not use the free limit", async () => {
 test("CORS for fizzl.eu only", async () => {
   const ok = await fetch(`${base}/v1/token/quick?chain=base&address=${USDC}`, { headers: { origin: "https://fizzl.eu" } });
   assert.equal(ok.headers.get("access-control-allow-origin"), "https://fizzl.eu");
+  const ai = await fetch(`${base}/v1/token/quick?chain=base&address=${USDC}`, { headers: { origin: "https://ai.fizzl.eu" } });
+  assert.equal(ai.headers.get("access-control-allow-origin"), "https://ai.fizzl.eu", "ai.fizzl.eu shows the agent demo too");
   const other = await fetch(`${base}/v1/token/quick?chain=base&address=${USDC}`, { headers: { origin: "https://evil.example" } });
   assert.equal(other.headers.get("access-control-allow-origin"), null);
 });
