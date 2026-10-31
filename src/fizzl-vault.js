@@ -127,6 +127,7 @@ export function redisVault(rawUrl, { log = console, connect = null, client: shar
     client = createClient({ url, socket: { reconnectStrategy: (tries) => Math.min(tries * 200, 5000) } });
     client.on('error', (err) => log.warn(`[vault] redis: ${err.message}`));
     await client.connect();
+    client.unref?.(); // the HTTP server keeps the process up; the vault alone doesn't
     await client.ping();
     store.ready = true;
     log.log('[vault] on');
