@@ -1,5 +1,6 @@
 // How agents find and understand the paid routes: Bazaar metadata on the 402,
 // the 402 challenge mirrored into the body, /openapi.json and /.well-known/x402.
+import { v1PaymentOf, v1Hint } from "./x402-v1.js";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { readFileSync } from "node:fs";
 
@@ -484,9 +485,11 @@ export const injectionServiceMetadata = { serviceName: "presign-guard", tags: ["
 
 // @x402/express puts the v2 challenge only in the PAYMENT-REQUIRED header and
 // sends an empty {} body; some clients read accepts[] from the body.
-export function mirrorChallengeIntoBody(_req, res, next) {
+export function mirrorChallengeIntoBody(req, res, next) {
   const json = res.json.bind(res);
+  const v1 = v1PaymentOf(req); // an x402 v1 payment: the 402 says why it isn't accepted (src/x402-v1.js)
   res.json = (body) => {
+    if (res.statusCode === 402 && v1) body = { ...(body || {}), ...v1Hint(v1) };
     if (res.statusCode === 402 && !(body && Array.isArray(body.accepts))) {
       const header = res.getHeader("PAYMENT-REQUIRED");
       if (header) {
@@ -494,7 +497,7 @@ export function mirrorChallengeIntoBody(_req, res, next) {
           const challenge = JSON.parse(Buffer.from(String(header), "base64").toString("utf8"));
           if (Array.isArray(challenge.accepts)) {
             // the whole challenge: x402 v2 carries resource next to accepts
-            body = { ...(body || {}), ...challenge };
+            body = { ...(body || {}), ...challenge, ...(v1 ? v1Hint(v1) : {}) };
           }
         } catch {
           // leave the body as is
