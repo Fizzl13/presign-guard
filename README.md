@@ -296,7 +296,7 @@ TypeSafe's Jev gives four probabilities (the highest part of the text counts): *
 
 | Severity | Codes |
 |---|---|
-| red | `AGENT_MANIPULATION` (manipulation ≥ 0.9), `CREDENTIAL_REQUEST` (secrets ≥ 0.95 with manipulation ≥ 0.5), `HIDDEN_TEXT` (text in Unicode tag characters), `ENCODED_INSTRUCTION` (text in Morse code, base64, hex or binary that, decoded, scores manipulation ≥ 0.5 or payment ≥ 0.85, or holds a known injection phrase), `SANCTIONED_ADDRESS` (an address in the text is on the OFAC SDN list) |
+| red | `AGENT_MANIPULATION` (manipulation ≥ 0.9), `CREDENTIAL_REQUEST` (secrets ≥ 0.95 with manipulation ≥ 0.5), `HIDDEN_TEXT` (text in Unicode tag characters), `ENCODED_INSTRUCTION` (text in Morse code, base64, hex or binary that, decoded, scores manipulation ≥ 0.5 or payment ≥ 0.85, or holds a known injection phrase), `TOOL_EXFILTRATION` (one sentence orders the reader to call a tool, or to send, email or include something to an outside address or in its reply, and names the conversation, its instructions or memory, private keys, a seed phrase or wallet details; not when the sentence says not to), `SANCTIONED_ADDRESS` (an address in the text is on the OFAC SDN list) |
 | orange | `POSSIBLE_MANIPULATION` (manipulation 0.5 to 0.9), `CREDENTIAL_REQUEST` (secrets ≥ 0.9), `HIDDEN_CHARACTERS` (direction-control characters) |
 | info | `PAYMENT_REQUEST` and `AUTHORITY_CLAIM` (≥ 0.85; an invoice or a payment hint alone stays green), `KNOWN_INJECTION_PHRASE` (a known phrase; quoted or discussed when Jev sees no manipulation), `ZERO_WIDTH_CHARACTERS`, `ENCODED_TEXT` (harmless encoded text, decoded), `SANCTIONS_SCREENED`, `NO_SIGNS` |
 
