@@ -10,7 +10,7 @@ export function createCheckQuickRouter({ allowFree, validate = validateCheckArgs
   router.post("/v1/check/quick", express.json({ limit: "64kb" }), async (req, res) => {
     const checked = await validate(req.body && typeof req.body === "object" ? req.body : {});
     if (checked.error) return res.status(400).json({ error: checked.error });
-    if (!allowFree(req.ip)) {
+    if (!(await allowFree(req.ip, req))) {
       return res.status(429).json({ error: `Free limit reached (${FREE_CALLS_PER_HOUR} per hour). The paid check is POST /v1/check ($0.01 via x402).` });
     }
     try {

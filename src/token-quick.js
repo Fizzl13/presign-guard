@@ -15,7 +15,7 @@ export function createTokenQuickRouter({ allowFree, verdict = tokenVerdict }) {
     } catch (err) {
       return res.status(400).json({ error: err.message || "invalid request" });
     }
-    if (!allowFree(req.ip)) {
+    if (!(await allowFree(req.ip, req))) {
       return res.status(429).json({ error: `Free limit reached (${FREE_CALLS_PER_HOUR} per hour). The paid check is GET /v1/token ($0.01 via x402).` });
     }
     try {
