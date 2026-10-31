@@ -193,6 +193,8 @@ async function validate(args) {
   }
 }
 const check = (request) => (request.xrpl ? analyzeXrpl(request.xrpl) : analyze(request));
+// The same validation and check for the free HTTP route POST /v1/check/quick (src/check-quick.js).
+export { validate as validateCheckArgs, check as runCheck };
 
 function validateToken(args) {
   try {
