@@ -35,6 +35,7 @@ import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.j
 import { createScreenRouter, validateScreenQuery } from "./src/screen.js";
 import { createInjectionRouter } from "./src/injection.js";
 import { createInjectionQuickRouter } from "./src/injection-quick.js";
+import { createCheckQuickRouter } from "./src/check-quick.js";
 import { ofacStatus, startOfacSync, sanctionsList } from "./src/ofac.js";
 import { pg1KeyStatusNow } from "./src/pg1.js";
 import { x402TrustTxtRoute } from "./src/x402-trust-txt.js";
@@ -289,7 +290,7 @@ app.use(feedback.router(express));
 
 // MCP (POST /mcp): the same checks as tools, paid inside the MCP call via x402. POST /mcp/free: only the free
 // checks, for directories whose clients do not pay (Claude's connectors directory).
-// One free limit per IP for the free MCP tools, GET /v1/token/quick and POST /v1/injection/quick together.
+// One free limit per IP for the free MCP tools, GET /v1/token/quick, POST /v1/injection/quick and POST /v1/check/quick together.
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
 app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, signer: SIGNER, limiter: freeLimiter, feedback }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
@@ -297,6 +298,8 @@ app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
 app.use("/v1/injection/quick", fizzlCors);
 app.use(createInjectionQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
+app.use("/v1/check/quick", fizzlCors);
+app.use(createCheckQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
 
 app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);

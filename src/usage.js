@@ -138,6 +138,12 @@ export function describePresignCall(req, _res, body) {
     const b = body || {};
     return { route: "token_quick", via: req.get && req.get("origin") ? "web" : "api", input: { chain: q.chain, address: typeof q.address === "string" ? q.address.slice(0, 64) : undefined }, result: { verdict: b.verdict, grade: b.grade, error: b.error } };
   }
+  // The free quick pre-sign verdict (the fizzl.eu demo): what kind of thing was checked, never its content.
+  if (req.method === "POST" && req.path === "/v1/check/quick") {
+    const input = req.body || {};
+    const b = body || {};
+    return { route: "check_quick", via: req.get && req.get("origin") ? "web" : "api", input: { type: typeof input.type === "string" ? input.type.slice(0, 16) : undefined, chainId: input.chainId }, result: { verdict: b.verdict, error: b.error } };
+  }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method === "GET" && req.path === "/v1/screen") return describeScreenCall(req, body);
   // The prompt-injection check (paid, or the free quick one): where the text came from and how long it was, never the text.

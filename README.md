@@ -36,6 +36,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `POST /v1/injection` | $0.01 USDC | Prompt-injection check: is a text your agent received (page, email, tool result, API answer, another agent's message) a trap? (see below) |
 | `POST /v1/injection/quick` | free, shares the 10 calls/hour | The prompt-injection verdict only, for texts up to 8,000 characters |
+| `POST /v1/check/quick` | free, shares the 10 calls/hour | The pre-sign verdict only, for the same body as `POST /v1/check` (as the MCP tool `presign_quick_check`) |
 | `GET /v1/sanctions` | free | Open data: every digital currency address on the OFAC SDN list with its entry (name, programs, currency), the list's publish date; refreshed every 6 hours. Solana addresses also carry their USDC and USDT token accounts, because a token transfer names that account and not the owner (ready for a denylist such as a Privy condition set). For screening locally, e.g. with [`presign-guard-payer-screen`](https://www.npmjs.com/package/presign-guard-payer-screen) |
 | `GET /v1/credits/100`, `/v1/credits/1000` | $0.80 / $7.00 USDC | A pack of prepaid credits (20% / 30% off): see [Credit packs](#credit-packs) |
 | `GET /v1/credits` | free | Pack prices, credit cost per call, and your balance (with the `x-credit-key` header) |

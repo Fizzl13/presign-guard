@@ -23,6 +23,7 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 ## Free
 - `GET /v1/sanctions`: the OFAC SDN digital-currency addresses as open data, synced from the US Treasury
 - `POST /v1/injection/quick`: the prompt-injection verdict only (green/orange/red), for texts up to 8,000 characters, 10 free calls an hour
+- `POST /v1/check/quick`: the pre-sign verdict only (green/orange/red), same body as `POST /v1/check`, within the same 10 free calls an hour
 - [Website](https://presign-guard.fizzl.eu/): what each check catches, with examples
 
 ## Optional
