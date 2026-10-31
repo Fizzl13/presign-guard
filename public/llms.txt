@@ -30,3 +30,6 @@ On red: don't sign. On orange: tell the owner why before going on. No account or
 - [Fizzl](https://fizzl.eu/llms.txt): the other Fizzl services (x402 Doctor, agent wallet, trading signals)
 - [Agent wallet with these checks built in](https://wallet.fizzl.eu/skill.md)
 - [Source code](https://github.com/Fizzl13/presign-guard)
+
+## Fizzl Pass
+A Fizzl Pass holder (Bronze comes with Agent Wallet Pro) sends its signed proof in the `X-Fizzl-Pass` header and gets 5 times the free limits, counted per pass instead of per IP. The proof comes from the Agent Wallet dashboard; anyone can check a wallet's pass at https://wallet.fizzl.eu/v1/pass/status?wallet=<address>.

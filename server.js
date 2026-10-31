@@ -1,3 +1,4 @@
+import { createPassVerifier, limitKeyOf } from "./src/fizzl-pass.js";
 import express from "express";
 import { securityHeaders } from "./src/security-headers.js";
 import { headGuard } from "./src/head-guard.js";
@@ -292,14 +293,17 @@ app.use(feedback.router(express));
 // checks, for directories whose clients do not pay (Claude's connectors directory).
 // One free limit per IP for the free MCP tools, GET /v1/token/quick, POST /v1/injection/quick and POST /v1/check/quick together.
 const freeLimiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000);
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, signer: SIGNER, limiter: freeLimiter, feedback }));
+// Fizzl Pass holders get the tier's higher free limit, counted per pass (src/fizzl-pass.js).
+const passVerifier = createPassVerifier({ jwksUrl: process.env.PASS_JWKS_URL || undefined });
+const allowFreeQuick = async (ip, req) => { const { key, factor } = await limitKeyOf(passVerifier, req, ip); return freeLimiter(key, factor); };
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, signer: SIGNER, limiter: freeLimiter, feedback, pass: passVerifier }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
-app.use(createTokenQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
+app.use(createTokenQuickRouter({ allowFree: allowFreeQuick }));
 app.use("/v1/injection/quick", fizzlCors);
-app.use(createInjectionQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
+app.use(createInjectionQuickRouter({ allowFree: allowFreeQuick }));
 app.use("/v1/check/quick", fizzlCors);
-app.use(createCheckQuickRouter({ allowFree: (ip) => freeLimiter(ip) }));
+app.use(createCheckQuickRouter({ allowFree: allowFreeQuick }));
 
 app.use(validateTokenQuery);
 app.use(validateApprovalsQuery);

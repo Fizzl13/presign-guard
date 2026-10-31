@@ -14,6 +14,7 @@
 //
 // Invalid input is refused before payment; a failed check is not charged.
 
+import { limitKeyOf } from "./fizzl-pass.js";
 import express from "express";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -168,10 +169,10 @@ const OUTPUT = {
 
 export function createRateLimiter(limit, windowMs) {
   const hits = new Map();
-  return (key) => {
+  return (key, factor = 1) => {
     const now = Date.now();
     const recent = (hits.get(key) || []).filter((t) => now - t < windowMs);
-    if (recent.length >= limit) {
+    if (recent.length >= limit * factor) {
       hits.set(key, recent);
       return false;
     }
@@ -537,14 +538,16 @@ export async function serverCard(server) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, tool })]));
   const allowFreeFor = (ip) => () => (isAnthropicIp(ip) ? shared("anthropic") : limiter(ip));
 
   // POST /mcp/free: the same server with only the free tools, for Claude's connectors directory.
   const handle = (free) => async (req, res) => {
-    const server = buildServer({ paidWrappers, allowFree: allowFreeFor(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] }, free });
+    // A Fizzl Pass (X-Fizzl-Pass) counts per pass, with the tier's higher limit (src/fizzl-pass.js).
+    const held = await limitKeyOf(pass, req);
+    const server = buildServer({ paidWrappers, allowFree: held.claims ? () => limiter(held.key, held.factor) : allowFreeFor(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] }, free });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();
