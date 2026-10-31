@@ -28,7 +28,7 @@ import {
 } from "./discovery.js";
 import { builderCodeExtension, merchantExtension } from "./merchant.js";
 import { paymentIdentifierExtension } from "./payment-retry.js";
-import { decodeFunctionData, encodeFunctionData, isAddress, isHex, maxUint256, parseAbi, zeroAddress } from "viem";
+import { decodeFunctionData, encodeFunctionData, isAddress, isHex, parseAbi, zeroAddress } from "viem";
 import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, NEW_DOMAIN_DAYS } from "./pg1.js";
 import { screenOfacLoaded, partySanctionsReasons } from "./ofac.js";
 
@@ -46,7 +46,7 @@ import { createSimulator, simulationReasons, simulationEffects, SIMULATED_CHAINS
 import { isXrplRequest, parseXrplRequest, analyzeXrpl } from "./xrpl.js";
 import { isOwsContext, owsToCheck, owsResult } from "./ows.js";
 import { decodeMessage, parseSignIn, siteOf } from "./message.js";
-import { createHistory, poisoningReasons, transferRecipients } from "./poisoning.js";
+import { createHistory, poisoningReasons, transferRecipients, knownLookalikeReasons } from "./poisoning.js";
 import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulationReasons, addAgentPaymentRecipients } from "./solana-tx.js";
 import { parseAlgorandRequest, algorandReasons, simulateAlgorand, algorandSimulationReasons, describeAlgorandTxn, ALGORAND_NETWORKS } from "./algorand-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
@@ -82,8 +82,11 @@ const RPC_URLS = {
 };
 // EIP-7702: a plain wallet with delegated code. Its private key still controls it.
 const DELEGATION_CODE = /^0xef0100[0-9a-f]{40}$/i;
-const UNLIMITED_THRESHOLD = maxUint256 / 2n; // dapps use 2^256-1, 2^255, or close to it
-const UINT160_UNLIMITED = 2n ** 159n;         // Permit2 allowance amounts are uint160
+// Effectively unlimited: from uint96's maximum up. Dapps use 2^256-1 or 2^255, Permit2 2^160-1, some tokens
+// uint96 or uint128 maxima; Grok's red-team run of 31 Oct 2026 approved 2^128-1 to an attacker and got orange
+// when only 2^255 and up counted. 2^96 is 79 billion tokens of 18 decimals.
+const UNLIMITED_THRESHOLD = 2n ** 96n - 1n;
+const UINT160_UNLIMITED = UNLIMITED_THRESHOLD; // Permit2 allowance amounts are uint160
 
 // Canonical Permit2 deployment (same address on all supported chains)
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
@@ -1408,7 +1411,14 @@ export async function analyze(req) {
   for (const r of simulationReasons(sim, { from: req.from, kind: req.kind })) add(r.code, r.severity, r.subject, r.details);
   // A recipient that starts and ends like an address this wallet has paid before, but isn't it, is red.
   const pastRecipients = await history;
-  for (const r of poisoningReasons(pastRecipients, transferRecipients(req, sim))) add(r.code, r.severity, r.subject, r.details);
+  const recipients = transferRecipients(req, sim);
+  const poisoning = poisoningReasons(pastRecipients, recipients);
+  for (const r of poisoning) add(r.code, r.severity, r.subject, r.details);
+  // Look-alikes of well-known contracts (and of the token itself), also for a wallet without history.
+  const flagged = new Set(poisoning.filter((r) => r.code === "ADDRESS_POISONING").map((r) => r.subject));
+  for (const r of knownLookalikeReasons([...recipients, ...req.grants.map((g) => g.spender)], { token: req.target })) {
+    if (!flagged.has(r.subject)) add(r.code, r.severity, r.subject, r.details);
+  }
   for (const r of await tapeout) add(r.code, r.severity, r.subject, r.details);
 
   // Not what the seller asked (x402 requirements): paying more, someone else, another token or chain is red.

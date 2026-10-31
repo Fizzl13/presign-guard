@@ -363,6 +363,16 @@ test("unlimited approval to a plain wallet is red", async () => {
   assert.ok(codes(r).includes("UNLIMITED_APPROVAL_TO_EOA"));
 });
 
+test("effectively unlimited: uint96 and uint128 maxima count as unlimited (Grok's red-team run of 31 Oct 2026)", async () => {
+  const uint128 = (2n ** 128n - 1n).toString();
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: EOA, amount: uint128 });
+  assert.equal(r.body.verdict, "red");
+  assert.ok(codes(r).includes("UNLIMITED_APPROVAL_TO_EOA"));
+  assert.ok(codes(await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: (2n ** 96n - 1n).toString() })).includes("UNLIMITED_APPROVAL"));
+  const big = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: (10n ** 27n).toString() });
+  assert.ok(!codes(big).includes("UNLIMITED_APPROVAL"), "a large exact amount below 2^96 stays exact");
+});
+
 test("approval to a flagged contract is red", async () => {
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: PHISH, amount: "1" });
   assert.equal(r.body.verdict, "red");
@@ -1401,6 +1411,24 @@ test("address poisoning: a transfer to a look-alike of an address the wallet pai
     const down = await withSim(SIM_OK, () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(FAKE) }));
     assert.ok(!codes(down).some((c) => /RECIPIENT|POISONING/.test(c)));
   } finally { historyAnswer = []; }
+});
+
+test("address poisoning: a look-alike of a well-known contract is red, also for a wallet without history", async () => {
+  const { knownLookalikeReasons } = await import("../src/poisoning.js");
+  // Grok's red-team run of 31 Oct 2026: USDC to a vanity look-alike of the Uniswap Universal Router on Base.
+  const FAKE_ROUTER = "0x6ff5693b" + "0".repeat(28) + "9b43";
+  const transferTo = (to) => "0xa9059cbb" + to.slice(2).padStart(64, "0") + (5000000n).toString(16).padStart(64, "0");
+  const r = await withSim("down", () => check({ type: "transaction", chainId: 8453, from: SENDER, to: TOKEN, data: transferTo(FAKE_ROUTER) }));
+  assert.equal(r.body.verdict, "red");
+  const p = r.body.reasons.find((x) => x.code === "ADDRESS_POISONING");
+  assert.equal(p.details.lookalikeOf, "0x6ff5693b99212da76ad316178a184ab56d299b43");
+  assert.equal(p.details.name, "Uniswap Universal Router (Base)");
+  // The token itself, and spenders too.
+  assert.deepEqual(knownLookalikeReasons(["0x833589fc11111111111111111111111111110913"]), [], "needs 4 matching characters at the end");
+  assert.equal(knownLookalikeReasons(["0x833589fc11111111111111111111111111112913"])[0].details.name, "USDC (Base)");
+  assert.equal(knownLookalikeReasons(["0xabcd000000000000000000000000000000001234"], { token: "0xabcd111111111111111111111111111111111234" })[0].details.name, "the token contract itself");
+  // The real ones, other zero-prefixed contracts and ordinary addresses are not look-alikes.
+  assert.deepEqual(knownLookalikeReasons(["0x6ff5693b99212da76ad316178a184ab56d299b43", "0x0000000000000068f116a894984e2db1123eb395", "0x00000000000000000000000000000000000ab395", "0x3333333333333333333333333333333333333333"]), []);
 });
 
 test("address history self-test (GET /health): off without a key, ok when Alchemy answers, the reason without the key when it fails", async () => {
