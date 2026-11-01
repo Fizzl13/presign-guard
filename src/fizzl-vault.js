@@ -172,14 +172,34 @@ export function createVault({ store, pass, statusUrl = STATUS_URL, fetchImpl = g
   async function creditPaid(req, res) {
     if (!enabled() || req.fizzlCredits || req.fizzlInternal || res.locals?.noVaultCredit) return 0;
     const paid = paidOf(req, res);
-    if (!paid) return 0;
-    const wallet = walletKey(paid.payer);
+    return paid ? creditSettled({ payer: paid.payer, usd: paid.usd, req }) : 0;
+  }
+
+  // Credit back for a payment that settled outside an HTTP route's headers (a paid MCP tool call: @x402/mcp puts the
+  // settlement in the result's _meta). req: the HTTP request it came on, for its X-Fizzl-Pass proof.
+  async function creditSettled({ payer, usd, req = null } = {}) {
+    if (!enabled() || !(usd > 0)) return 0;
+    const wallet = walletKey(payer);
     if (!isWallet(wallet)) return 0;
     const tier = await tierOf(wallet, req);
-    const micro = tier ? Math.floor(paid.usd * MICRO * VAULT_SHARE[tier]) : 0;
+    const micro = tier ? Math.floor(usd * MICRO * VAULT_SHARE[tier]) : 0;
     if (micro <= 0) return 0;
     await store.credit(wallet, micro, ttlFor(tier));
     return micro;
+  }
+
+  // A paid MCP tool call with the pass proof on its HTTP request and no payment: take the price from the pass's
+  // vault. Null when it can't (no or a bad proof, too little credit, the vault off); otherwise { usd, balance_usd,
+  // refund() } and the caller runs the tool, calling refund() when it fails.
+  async function take(req, usd) {
+    if (!enabled() || !(usd > 0) || !req?.headers?.['x-fizzl-pass']) return null;
+    const claims = pass ? await pass.fromRequest(req).catch(() => null) : null;
+    const wallets = [...new Set((claims?.wallets || []).map(walletKey).filter(isWallet))].slice(0, MAX_WALLETS);
+    if (!claims || !wallets.length) return null;
+    const micro = Math.round(usd * MICRO);
+    const taken = await store.take(wallets, micro).catch(() => null);
+    if (!taken?.ok) return null;
+    return { usd, balance_usd: usdText(taken.balance), refund: () => store.refund(wallets[0], micro, ttlFor(claims.tier)).catch(() => {}) };
   }
 
   // Middleware for every request (before the paywall): after a paid call finishes, credit back.
@@ -235,6 +255,5 @@ export function createVault({ store, pass, statusUrl = STATUS_URL, fetchImpl = g
     };
   }
 
-  return { creditBack, creditPaid, payFromVault, balanceHandler, tierOf, enabled };
+  return { creditBack, creditPaid, creditSettled, take, payFromVault, balanceHandler, tierOf, enabled };
 }
-
