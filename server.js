@@ -300,6 +300,8 @@ const passVerifier = createPassVerifier({ jwksUrl: process.env.PASS_JWKS_URL || 
 // Fizzl Pass vault (src/fizzl-vault.js): credit back after a paid check by a pass wallet, and checks paid from the vault.
 // It shares the credits store's Redis connection; off without CREDITS_REDIS_URL.
 const vault = createVault({ store: creditStore?.client ? redisVault(null, { client: creditStore.client }) : null, pass: passVerifier, statusUrl: process.env.PASS_STATUS_URL || undefined });
+// Buying a credit pack earns no credit back.
+app.use((req, res, next) => { if (req.path.startsWith("/v1/credits/")) res.locals.noVaultCredit = true; next(); });
 app.use(vault.creditBack());
 app.get("/v1/vault", vault.balanceHandler());
 const allowFreeQuick = async (ip, req) => { const { key, factor } = await limitKeyOf(passVerifier, req, ip); return freeLimiter(key, factor); };

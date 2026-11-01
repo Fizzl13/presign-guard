@@ -1,6 +1,6 @@
 // Fizzl Pass (phase 3): credit back into a vault, spendable at all four Fizzl services.
 //
-// Credit back: after a paid x402 (or MPP) call that settled, the service looks at who paid. When that wallet is
+// Credit back: after a paid x402 (or MPP) call that settled (not a purchase of credit or a pass: res.locals.noVaultCredit), the service looks at who paid. When that wallet is
 // covered by a Fizzl Pass, part of what was paid goes into the vault: 10% for Bronze, 20% for Silver, 30% for Gold.
 // The wallet's pass is known from the X-Fizzl-Pass proof on the call (when it lists the paying wallet) or from the
 // Agent Wallet's free check (GET wallet.fizzl.eu/v1/pass/status?wallet=…, kept 10 minutes). No client change needed.
@@ -170,7 +170,7 @@ export function createVault({ store, pass, statusUrl = STATUS_URL, fetchImpl = g
 
   // Credit back for one paid call. Returns the credit in millionths of a dollar (0 when none).
   async function creditPaid(req, res) {
-    if (!enabled() || req.fizzlCredits || req.fizzlInternal) return 0;
+    if (!enabled() || req.fizzlCredits || req.fizzlInternal || res.locals?.noVaultCredit) return 0;
     const paid = paidOf(req, res);
     if (!paid) return 0;
     const wallet = walletKey(paid.payer);
