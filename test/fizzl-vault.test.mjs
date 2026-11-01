@@ -111,3 +111,12 @@ test("the vault shares the credits store's Redis connection (atomic take over th
     assert.equal(v.ready, false);
   } finally { proc.kill(); }
 });
+
+test("a purchase marked noVaultCredit (a credit pack) earns nothing back", async () => {
+  const store = memoryVault();
+  const vault = createVault({ store, fetchImpl: async () => ({ ok: true, json: async () => ({ pass: { tier: "bronze", until: Date.now() + 1e6 } }) }) });
+  const req = { headers: { "payment-signature": b64({ accepted: { network: "eip155:8453", amount: "800000" } }) } };
+  const res = (locals) => ({ statusCode: 200, locals, getHeader: (h) => (h === "PAYMENT-RESPONSE" ? b64({ success: true, payer: OWNER }) : undefined) });
+  assert.equal(await vault.creditPaid(req, res({ noVaultCredit: true })), 0);
+  assert.equal(await vault.creditPaid(req, res({})), 80000);
+});
