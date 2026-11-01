@@ -8,13 +8,15 @@
 // spaces), so the seller knows which terms were refused without the buyer sending them back.
 //
 // A report is untrusted input. Unsigned it is a hint; with signature { type: "eip191", signer, value } over
-// signingMessage(report) it shows a real wallet sent it. Nothing about the buyer is required.
+// signingMessage(report) it shows a real wallet sent it. Nothing about the buyer is required, and "by" is best left out
+// unless the buyer wants to be identified. A screening_hit must be signed: unsigned, anyone could flag a seller with
+// made-up sanctions hits, so the endpoint refuses it. Even signed it only shows that one wallet says so.
 //
 // Buyers only send to a url on the same site as the resource (same host, or the same last two host labels, except on
 // shared hosting domains), so a 402 can't turn buyers into a flood against someone else's server.
 import crypto from 'node:crypto';
 
-const VERSION = '0.1-draft';
+const VERSION = '0.2-draft';
 const PATH = '/.well-known/x402-refusal';
 const ISSUE = 'https://github.com/x402-foundation/x402/issues/4087';
 const REASONS = {
@@ -28,10 +30,13 @@ const REASONS = {
   terms_mismatch: 'two forms of the challenge disagree on terms',
   timeout_too_short: 'maxTimeoutSeconds was too short for the buyer to settle',
   screening_hit: 'the payTo or asset matched a sanctions or risk list',
+  trust_low: 'the buyer\'s trust or reputation check said no; detail "unknown" (no history yet) or "score" (scored too low)',
   policy_blocked: 'another wallet or owner policy blocked it',
   other: 'none of the above; see detail',
 };
 const DETAIL_MAX = 200;
+// Reasons a report must be signed for (unsigned they are refused).
+const SIGNED_ONLY = new Set(['screening_hit']);
 
 // x402 Doctor preflight reason codes, as a refusal reason (null: no 402 to refuse, or not a reason to refuse).
 const FROM_PREFLIGHT = {
@@ -51,8 +56,8 @@ const FROM_PREFLIGHT = {
   price_very_high: 'policy_blocked',
   suspicious_amount: 'policy_blocked',
   not_https: 'policy_blocked',
-  unreliable_history: 'policy_blocked',
-  charged_without_answer: 'policy_blocked',
+  unreliable_history: 'trust_low',
+  charged_without_answer: 'trust_low',
 };
 
 function canonical(value) {
@@ -74,10 +79,11 @@ const REPORT_SCHEMA = {
     reason: { type: 'string', enum: Object.keys(REASONS) },
     detail: { type: 'string', maxLength: DETAIL_MAX },
     checkedAt: { type: 'string', format: 'date-time' },
-    by: { type: 'string', maxLength: 100 },
-    signature: { type: 'object', properties: { type: { const: 'eip191' }, signer: { type: 'string' }, value: { type: 'string' } }, required: ['type', 'signer', 'value'] },
+    by: { type: 'string', maxLength: 100, description: 'Optional: the buyer\'s client or checker. Leave it out unless the buyer wants to be identified.' },
+    signature: { type: 'object', description: 'EIP-191 signature over the signing message (lines "x402 refusal", "resource: …", "offer: …", "reason: …", "checkedAt: …"). Required for screening_hit.', properties: { type: { const: 'eip191' }, signer: { type: 'string' }, value: { type: 'string' } }, required: ['type', 'signer', 'value'] },
   },
   required: ['x402Version', 'resource', 'offer', 'reason', 'checkedAt'],
+  allOf: [{ if: { properties: { reason: { enum: [...SIGNED_ONLY] } }, required: ['reason'] }, then: { required: ['signature'] } }],
 };
 
 // The extension entry a seller puts in its 402: kept small (402 headers are size-limited); GET info.url has the rest.
@@ -148,6 +154,7 @@ function parseRefusal(body, { ownHost = null, now = Date.now() } = {}) {
   if (b.by !== undefined && (typeof b.by !== 'string' || b.by.length > 100)) return { error: 'by must be text of at most 100 characters' };
   const at = Date.parse(b.checkedAt);
   if (!Number.isFinite(at) || Math.abs(now - at) > 24 * 3600 * 1000) return { error: 'checkedAt must be an ISO time within a day of now' };
+  if (b.signature === undefined && SIGNED_ONLY.has(b.reason)) return { error: `a ${b.reason} report must be signed (signature { type: "eip191", signer, value })` };
   if (b.signature !== undefined) {
     const s = b.signature;
     if (!s || s.type !== 'eip191' || !/^0x[0-9a-fA-F]{40}$/.test(String(s.signer)) || !/^0x[0-9a-fA-F]+$/.test(String(s.value))) return { error: 'signature must be { type: "eip191", signer, value }' };
@@ -163,8 +170,9 @@ async function signedBy(report) {
   return ok ? report.signature.signer.toLowerCase() : false;
 }
 
-// The seller's endpoint: GET says what it takes and what came in (counts per resource and reason, last 30 days, since
-// the last restart); POST takes a report (204). record(report, { signer }) is called for every accepted report.
+// The seller's endpoint: GET says what it takes and what came in (last 30 days, since the last restart): counts per
+// resource and reason, and per UTC day, resource and reason; POST takes a report (204). record(report, { signer }) is
+// called for every accepted report.
 function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days = 30, now = () => Date.now() } = {}) {
   const ownHost = new URL(publicUrl).hostname;
   const seen = [];
@@ -182,17 +190,27 @@ function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days 
     const since = now() - days * 86400 * 1000;
     while (seen.length && seen[0].at < since) seen.shift();
     const out = {};
+    const daily = new Map();
     for (const s of seen) {
       const r = (out[s.resource] ||= { total: 0, signed: 0, reasons: {} });
       r.total++;
       if (s.signed) r.signed++;
       r.reasons[s.reason] = (r.reasons[s.reason] || 0) + 1;
+      const day = new Date(s.at).toISOString().slice(0, 10);
+      const key = `${day} ${s.resource} ${s.reason}`;
+      const d = daily.get(key) || { day, resource: s.resource, reason: s.reason, count: 0, signed: 0 };
+      d.count++;
+      if (s.signed) d.signed++;
+      daily.set(key, d);
     }
-    return out;
+    // Newest day first; within a day, most reports first.
+    const byDay = [...daily.values()].sort((a, b) => b.day.localeCompare(a.day) || b.count - a.count);
+    return { byResource: out, byDay };
   };
   return {
     get(_req, res) {
-      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: counts() } });
+      const { byResource, byDay } = counts();
+      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: byResource, by_day: byDay } });
     },
     async post(req, res) {
       if (!allow(req.ip)) return res.status(429).json({ error: 'too many refusals from this address; try again later' });
@@ -218,6 +236,8 @@ function createRefusalSender({ fetchImpl, by = null, timeoutMs = 5000, now = () 
   return {
     send(refusal) {
       if (!refusal || !refusal.url || !refusal.report) return Promise.resolve(false);
+      // A seller refuses these unsigned, so an unsigned one isn't sent.
+      if (SIGNED_ONLY.has(refusal.report.reason) && !refusal.report.signature) return Promise.resolve(false);
       const key = `${refusal.report.resource} ${refusal.report.reason}`;
       const t = now();
       if (t - (sent.get(key) || -Infinity) < 86400 * 1000) return Promise.resolve(false);
@@ -232,4 +252,4 @@ function createRefusalSender({ fetchImpl, by = null, timeoutMs = 5000, now = () 
   };
 }
 
-export { createRefusalSender, REPORT_SCHEMA, REASONS, FROM_PREFLIGHT, VERSION, PATH, ISSUE, canonical, offerHash, refusalExtension, refusalTarget, refusalReport, parseRefusal, signingMessage, createRefusalRoutes };
+export { createRefusalSender, REPORT_SCHEMA, REASONS, SIGNED_ONLY, FROM_PREFLIGHT, VERSION, PATH, ISSUE, canonical, offerHash, refusalExtension, refusalTarget, refusalReport, parseRefusal, signingMessage, createRefusalRoutes };
