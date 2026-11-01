@@ -1,5 +1,6 @@
 import { createPassVerifier, limitKeyOf } from "./src/fizzl-pass.js";
 import { createVault, redisVault } from "./src/fizzl-vault.js";
+import { createRefusalRoutes, PATH as REFUSAL_PATH } from "./src/refusal.js";
 import express from "express";
 import { securityHeaders } from "./src/security-headers.js";
 import { headGuard } from "./src/head-guard.js";
@@ -269,12 +270,17 @@ app.post("/v1/verify", express.json({ limit: "256kb" }), async (req, res) => {
 // req.body is filled in by the check router before the call is logged.
 const usageLog = createUsageLog({ service: "presign" });
 app.use(usageLog.middleware((req, res, body) => {
+  if (req.method === "POST" && req.path === REFUSAL_PATH) return { route: "refusal received", via: "api", input: res.locals.refusal || {}, result: { status: res.statusCode, error: body && body.error } };
   const d = describePresignCall(req, res, body);
   if (d && req.fizzlInternal) return { ...d, via: "internal" };
   if (d && req.fizzlCredits?.vault) return { ...d, via: "vault" };
   if (d && req.fizzlCredits) return { ...d, via: "credits", credits: req.fizzlCredits.cost };
   return d;
 }));
+// Refusals of presign-guard's own 402s (src/refusal.js, draft x402-foundation/x402#4087): why a buyer didn't pay.
+const refusalRoutes = createRefusalRoutes({ publicUrl: PUBLIC_URL });
+app.get(REFUSAL_PATH, (req, res) => { res.set("Access-Control-Allow-Origin", "*"); refusalRoutes.get(req, res); });
+app.post(REFUSAL_PATH, express.json({ limit: "4kb" }), (req, res) => { res.set("Access-Control-Allow-Origin", "*"); return refusalRoutes.post(req, res); });
 // After the usage log, so reads of the registration are logged.
 app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
 // Free, open data: every digital currency address on the OFAC SDN list with its entry, for anyone who wants to screen
