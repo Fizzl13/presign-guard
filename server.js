@@ -1,6 +1,7 @@
 import { createPassVerifier, limitKeyOf } from "./src/fizzl-pass.js";
 import { createVault, redisVault } from "./src/fizzl-vault.js";
 import { createRefusalRoutes, PATH as REFUSAL_PATH } from "./src/refusal.js";
+import { createErrorReporter } from "./src/error-report.js";
 import express from "express";
 import { securityHeaders } from "./src/security-headers.js";
 import { headGuard } from "./src/head-guard.js";
@@ -358,6 +359,11 @@ if (creditStore) app.use(creditsRouter(express, { store: creditStore, costs: CRE
 
 // The OFAC SDN list for GET /v1/screen: loaded now, re-checked every few hours (OFAC_SDN=off skips it, e.g. locally).
 if (process.env.OFAC_SDN !== "off") startOfacSync();
+
+// Last: a 5xx is answered as JSON and reported to Sentry when SENTRY_DSN is set (src/error-report.js).
+const errorReporter = createErrorReporter({ dsn: process.env.SENTRY_DSN, service: "presign-guard", release: JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version });
+app.use(errorReporter.expressHandler());
+errorReporter.installProcessHooks();
 
 app.listen(PORT, () => {
   console.log(`presign-guard on :${PORT} (${NETWORK}${MAINNET ? ", MAINNET" : ""})`);
