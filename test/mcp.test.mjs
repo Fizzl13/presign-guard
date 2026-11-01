@@ -19,6 +19,9 @@ import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { createMcpRouter, FREE_CALLS_PER_HOUR, isAnthropicIp } from "../src/mcp.js";
 import { createSigner, verifyReceipt } from "../src/receipt.js";
 import feedbackModule from "../src/feedback.cjs";
+import crypto from "node:crypto";
+import { createPassVerifier } from "../src/fizzl-pass.js";
+import { createVault, memoryVault } from "../src/fizzl-vault.js";
 
 const feedbackEvents = [];
 const feedback = feedbackModule.createFeedback({ service: "presign", record: (e) => feedbackEvents.push(e), log: { log() {}, error() {} } });
@@ -39,6 +42,7 @@ const realFetch = globalThis.fetch;
 const state = { verify: 0, settle: 0, goplus: 0, dex: 0 };
 const servers = [];
 let baseUrl;
+let facilitatorUrl;
 
 function listenJson(handler) {
   return new Promise((resolve) => {
@@ -113,6 +117,7 @@ before(async () => {
   };
   process.env.ANTHROPIC_API_KEY = "test-key";
   const fac = await listenJson(facilitator);
+  facilitatorUrl = `http://127.0.0.1:${fac.address().port}`;
   const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: `http://127.0.0.1:${fac.address().port}` })).register(BASE, new ServerEvmScheme())
     .register(SOLANA, new ServerSvmScheme());
   const app = express();
@@ -370,4 +375,48 @@ test("free quick check is rate limited", async () => {
   assert.ok(last.isError);
   assert.match(last.content[0].text, /Free limit reached/);
   await client.close();
+});
+
+// Fizzl Pass vault (src/fizzl-vault.js) over MCP: a paid tool call by a pass wallet earns credit back once @x402/mcp
+// reports the settlement; a tool call with the pass proof on the request and no payment is paid from the vault.
+test("vault: a paid presign_check earns 10% back; then a check with the proof and no payment is paid from the vault", async () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519");
+  const jwks = { keys: [{ kty: "OKP", crv: "Ed25519", kid: "k", x: publicKey.export({ format: "jwk" }).x }] };
+  const account = privateKeyToAccount(generatePrivateKey());
+  const wallet = account.address.toLowerCase();
+  const body = `fzp1.${Buffer.from(JSON.stringify({ kid: "k", tier: "bronze", until: Date.now() + 86400000, wallets: [wallet] })).toString("base64url")}`;
+  const headers = { "x-fizzl-pass": `${body}.${crypto.sign(null, Buffer.from(body), privateKey).toString("base64url")}` };
+  const store = memoryVault();
+  const pass = createPassVerifier({ keys: jwks });
+  const vault = createVault({ store, pass, fetchImpl: async () => ({ ok: true, json: async () => ({ pass: null }) }) });
+  const resourceServer = new x402ResourceServer(new HTTPFacilitatorClient({ url: facilitatorUrl })).register(BASE, new ServerEvmScheme());
+  const app = express();
+  app.use(createMcpRouter({ resourceServer, network: BASE, payTo: PAY_TO, signer: SIGNER, pass, vault }));
+  const s = await new Promise((resolve) => { const x = app.listen(0, "127.0.0.1", () => resolve(x)); });
+  servers.push(s);
+  const url = new URL(`http://127.0.0.1:${s.address().port}/mcp`);
+
+  const payments = new x402Client((_v, accepts) => accepts[0]).register(BASE, new ExactEvmScheme(account));
+  const paying = wrapMCPClientWithPayment(new Client({ name: "paying-agent", version: "1.0.0" }), payments, { autoPayment: true });
+  await paying.connect(new StreamableHTTPClientTransport(url, { requestInit: { headers } }));
+  const paid = await paying.callTool("presign_check", APPROVAL);
+  assert.ok(!paid.isError, JSON.stringify(paid.content));
+  assert.equal(paid.paymentMade, true);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(await store.balance([wallet]), 1000, "$0.01 paid: $0.001 back");
+  await paying.close();
+  await store.credit(wallet, 9000, 86400); // topped up to the $0.01 a presign_check costs
+
+  const plain = new Client({ name: "vault-agent", version: "1.0.0" });
+  await plain.connect(new StreamableHTTPClientTransport(url, { requestInit: { headers } }));
+  const settled = state.settle;
+  const fromVault = await plain.callTool({ name: "presign_check", arguments: APPROVAL });
+  assert.ok(!fromVault.isError, JSON.stringify(fromVault.content));
+  assert.equal(JSON.parse(fromVault.content[0].text).verdict, "green");
+  assert.deepEqual(fromVault._meta["fizzl/vault"], { paid: true, usd: 0.01, balance_usd: 0 });
+  assert.equal(state.settle, settled, "no payment");
+  const again = await plain.callTool({ name: "presign_check", arguments: APPROVAL });
+  assert.ok(again.isError, "empty vault: the normal payment request");
+  assert.equal(again._meta?.["fizzl/vault"], undefined);
+  await plain.close();
 });

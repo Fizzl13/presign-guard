@@ -22,6 +22,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createPaymentWrapper } from "@x402/mcp";
+import { usdOf } from "./fizzl-vault.js";
 import { declareDiscoveryExtension } from "@x402/extensions/bazaar";
 import { merchantExtension } from "./merchant.js";
 import { parseRequest, analyze, explain } from "./presign-guard.js";
@@ -381,7 +382,7 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
 
 // free: only the free tools, for directories whose clients don't pay (POST /mcp/free, e.g. Claude's connectors
 // directory): no paid tool, no feedback tool, and descriptions and answers that don't point to paid tools.
-function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {}, free = false }) {
+function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {}, free = false, vault = null }) {
   const server = new McpServer({ name: "presign-guard", version: VERSION, title: "presign-guard", websiteUrl: "https://presign-guard.fizzl.eu", icons: [{ src: "https://presign-guard.fizzl.eu/media/icon.png", mimeType: "image/png", sizes: ["512x512"] }] });
   const limitReached = (paid) => toolError(free ? "Free limit reached for this hour. Try again later." : `Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use ${paid}.`);
 
@@ -482,16 +483,34 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
         } catch (err) {
           return toolError(`payments unavailable: ${err.message}`);
         }
-        return paid(async () => {
+        const offered = extra && extra._meta && extra._meta["x402/payment"];
+        // No payment, but a Fizzl Pass proof on the request with enough credit: paid from the pass's vault.
+        const fromVault = !offered && vault ? await vault.take(caller.req, Number(price.replace("$", ""))).catch(() => null) : null;
+        if (fromVault) {
+          try {
+            const result = await tool.run(checked.request, args);
+            const out = json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment: null }) : result);
+            if (out && out.isError) { fromVault.refund(); return out; }
+            return { ...out, _meta: { ...(out._meta || {}), "fizzl/vault": { paid: true, usd: fromVault.usd, balance_usd: fromVault.balance_usd } } };
+          } catch (err) {
+            fromVault.refund();
+            return toolError(`could not check: ${err.message} (the credit was given back)`);
+          }
+        }
+        const out = await paid(async () => {
           try {
             const result = await tool.run(checked.request, args);
             // Signed like the HTTP answers (receipt.js): route "mcp <tool>", input = the tool arguments.
-            const payment = paymentOf(extra && extra._meta && extra._meta["x402/payment"]);
+            const payment = paymentOf(offered);
             return json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment }) : result);
           } catch (err) {
             return toolError(`could not check: ${err.message}`); // not charged
           }
         })(args, extra);
+        // Credit back for a pass wallet, once the payment settled (src/fizzl-vault.js).
+        const settled = out && !out.isError && out._meta && out._meta["x402/payment-response"];
+        if (vault && settled && settled.success && settled.payer) vault.creditSettled({ payer: settled.payer, usd: usdOf(offered && offered.accepted), req: caller.req }).catch(() => {});
+        return out;
       }
     );
   }
@@ -538,7 +557,7 @@ export async function serverCard(server) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null, vault = null }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, tool })]));
   const allowFreeFor = (ip) => () => (isAnthropicIp(ip) ? shared("anthropic") : limiter(ip));
@@ -547,7 +566,7 @@ export function createMcpRouter({ resourceServer, network, payTo, solana = null,
   const handle = (free) => async (req, res) => {
     // A Fizzl Pass (X-Fizzl-Pass) counts per pass, with the tier's higher limit (src/fizzl-pass.js).
     const held = await limitKeyOf(pass, req);
-    const server = buildServer({ paidWrappers, allowFree: held.claims ? () => limiter(held.key, held.factor) : allowFreeFor(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"] }, free });
+    const server = buildServer({ paidWrappers, allowFree: held.claims ? () => limiter(held.key, held.factor) : allowFreeFor(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"], req }, free, vault });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();
