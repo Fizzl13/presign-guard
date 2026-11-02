@@ -47,6 +47,17 @@ function stellarInput(a, answer) {
   };
 }
 
+// A NEAR check: the network and the kinds of action (transfer, functionCall, addKey, …), read from the answer's subject.
+function nearInput(a, answer) {
+  if (!a || a.type !== "near") return {};
+  const s = answer && answer.subject;
+  const kinds = s && Array.isArray(s.actions) ? [...new Set(s.actions.map((x) => x && x.action).filter((t) => typeof t === "string"))] : [];
+  return {
+    network: s && typeof s.network === "string" ? s.network.slice(0, 64) : undefined,
+    txType: kinds.length ? kinds.join(",").slice(0, 40) : undefined,
+  };
+}
+
 // An MCP tool call: which tool, the input summary, the verdict and the payment.
 function describeMcpCall(req, body) {
   const call = usageLog.mcpToolCall(req.body);
@@ -67,7 +78,7 @@ function describeMcpCall(req, body) {
         ? { source: typeof a.source === "string" ? a.source.slice(0, 16) : undefined, chars: a.text.length }
         : a.address
         ? { chain: a.chain, target: a.address }
-        : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), ...stellarInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang }),
+        : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), ...stellarInput(a, parsed), ...nearInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang }),
       ...(req.path === "/mcp/free" ? { endpoint: "free" } : {}),
     },
     result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
@@ -179,6 +190,7 @@ export function describePresignCall(req, _res, body) {
       ...xrplInput(input),
       ...algorandInput(input, b),
       ...stellarInput(input, b),
+      ...nearInput(input, b),
       primaryType: td ? td.primaryType : undefined,
       target: input.to || input.token || (td && td.domain && td.domain.verifyingContract) || undefined,
       spender: input.spender || (td && td.message && (td.message.spender || td.message.to)) || undefined,
