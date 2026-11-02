@@ -12,18 +12,23 @@
 // unless the buyer wants to be identified. A screening_hit must be signed: unsigned, anyone could flag a seller with
 // made-up sanctions hits, so the endpoint refuses it. Even signed it only shows that one wallet says so.
 //
+// "Couldn't check" is not "checked and failed": a check that could not complete (a lookup that didn't answer, a list
+// that wasn't loaded) is check_unavailable, with detail naming the check (payto_binding, screening or trust). It says
+// nothing about the seller, and a seller can count it apart or ignore it. payto_unverified then only means the check
+// ran and found nothing tying payTo to the seller, and screening_hit only an actual match.
+//
 // Buyers only send to a url on the same site as the resource (same host, or the same last two host labels, except on
 // shared hosting domains), so a 402 can't turn buyers into a flood against someone else's server.
 import crypto from 'node:crypto';
 
-const VERSION = '0.2-draft';
+const VERSION = '0.3-draft';
 const PATH = '/.well-known/x402-refusal';
 const ISSUE = 'https://github.com/x402-foundation/x402/issues/4087';
 const REASONS = {
   price_above_limit: "the price is above the buyer's spend limit",
   price_changed: 'the price differs from what the buyer saw before',
   payto_changed: 'payTo differs from what the buyer saw before',
-  payto_unverified: 'payTo could not be tied to the seller',
+  payto_unverified: 'the buyer checked and found nothing tying payTo to the seller (detail "unbound")',
   network_unsupported: 'none of the offered networks are usable by the buyer',
   asset_unsupported: 'none of the offered assets are usable by the buyer',
   challenge_invalid: 'the 402 could not be parsed or broke the spec',
@@ -31,12 +36,16 @@ const REASONS = {
   timeout_too_short: 'maxTimeoutSeconds was too short for the buyer to settle',
   screening_hit: 'the payTo or asset matched a sanctions or risk list',
   trust_low: 'the buyer\'s trust or reputation check said no; detail "unknown" (no history yet) or "score" (scored too low)',
+  check_unavailable: 'a check the buyer needed could not complete (a lookup did not answer, a list was not loaded); says nothing about the seller. detail starts with the check: "payto_binding", "screening" or "trust"',
   policy_blocked: 'another wallet or owner policy blocked it',
   other: 'none of the above; see detail',
 };
 const DETAIL_MAX = 200;
 // Reasons a report must be signed for (unsigned they are refused).
 const SIGNED_ONLY = new Set(['screening_hit']);
+// check_unavailable's detail starts with one of these: which check could not complete.
+const UNAVAILABLE_CHECKS = ['payto_binding', 'screening', 'trust'];
+const UNAVAILABLE_DETAIL = new RegExp(`^(${UNAVAILABLE_CHECKS.join('|')})(\\b|$)`);
 
 // x402 Doctor preflight reason codes, as a refusal reason (null: no 402 to refuse, or not a reason to refuse).
 const FROM_PREFLIGHT = {
@@ -83,7 +92,10 @@ const REPORT_SCHEMA = {
     signature: { type: 'object', description: 'EIP-191 signature over the signing message (lines "x402 refusal", "resource: …", "offer: …", "reason: …", "checkedAt: …"). Required for screening_hit.', properties: { type: { const: 'eip191' }, signer: { type: 'string' }, value: { type: 'string' } }, required: ['type', 'signer', 'value'] },
   },
   required: ['x402Version', 'resource', 'offer', 'reason', 'checkedAt'],
-  allOf: [{ if: { properties: { reason: { enum: [...SIGNED_ONLY] } }, required: ['reason'] }, then: { required: ['signature'] } }],
+  allOf: [
+    { if: { properties: { reason: { enum: [...SIGNED_ONLY] } }, required: ['reason'] }, then: { required: ['signature'] } },
+    { if: { properties: { reason: { const: 'check_unavailable' } }, required: ['reason'] }, then: { required: ['detail'], properties: { detail: { pattern: UNAVAILABLE_DETAIL.source } } } },
+  ],
 };
 
 // The extension entry a seller puts in its 402: kept small (402 headers are size-limited); GET info.url has the rest.
@@ -128,6 +140,7 @@ const signingMessage = (r) => ['x402 refusal', `resource: ${r.resource}`, `offer
 // The report a buyer sends (unsigned; add signature yourself when you want it to count as a wallet's).
 function refusalReport({ resource, accept, acceptIndex = null, reason, detail = null, by = null, x402Version = 2, now = new Date() }) {
   if (!REASONS[reason]) throw new Error(`unknown refusal reason ${reason}`);
+  if (reason === 'check_unavailable' && !UNAVAILABLE_DETAIL.test(String(detail ?? ''))) throw new Error(`check_unavailable needs a detail starting with ${UNAVAILABLE_CHECKS.join(', ')}`);
   return {
     x402Version,
     resource,
@@ -151,6 +164,7 @@ function parseRefusal(body, { ownHost = null, now = Date.now() } = {}) {
   if (b.offer.acceptIndex !== undefined && !(Number.isInteger(b.offer.acceptIndex) && b.offer.acceptIndex >= 0)) return { error: 'offer.acceptIndex must be a non-negative integer' };
   if (!REASONS[b.reason]) return { error: `reason must be one of ${Object.keys(REASONS).join(', ')}` };
   if (b.detail !== undefined && (typeof b.detail !== 'string' || b.detail.length > DETAIL_MAX)) return { error: `detail must be text of at most ${DETAIL_MAX} characters` };
+  if (b.reason === 'check_unavailable' && !UNAVAILABLE_DETAIL.test(String(b.detail ?? ''))) return { error: `a check_unavailable report needs a detail starting with the check that could not complete: ${UNAVAILABLE_CHECKS.join(', ')}` };
   if (b.by !== undefined && (typeof b.by !== 'string' || b.by.length > 100)) return { error: 'by must be text of at most 100 characters' };
   const at = Date.parse(b.checkedAt);
   if (!Number.isFinite(at) || Math.abs(now - at) > 24 * 3600 * 1000) return { error: 'checkedAt must be an ISO time within a day of now' };
@@ -210,7 +224,7 @@ function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days 
   return {
     get(_req, res) {
       const { byResource, byDay } = counts();
-      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: byResource, by_day: byDay } });
+      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed. A check that could not complete is check_unavailable (detail: ${UNAVAILABLE_CHECKS.join(', ')}), not a verdict on the seller.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: byResource, by_day: byDay } });
     },
     async post(req, res) {
       if (!allow(req.ip)) return res.status(429).json({ error: 'too many refusals from this address; try again later' });
@@ -252,4 +266,4 @@ function createRefusalSender({ fetchImpl, by = null, timeoutMs = 5000, now = () 
   };
 }
 
-export { createRefusalSender, REPORT_SCHEMA, REASONS, SIGNED_ONLY, FROM_PREFLIGHT, VERSION, PATH, ISSUE, canonical, offerHash, refusalExtension, refusalTarget, refusalReport, parseRefusal, signingMessage, createRefusalRoutes };
+export { createRefusalSender, REPORT_SCHEMA, REASONS, SIGNED_ONLY, UNAVAILABLE_CHECKS, FROM_PREFLIGHT, VERSION, PATH, ISSUE, canonical, offerHash, refusalExtension, refusalTarget, refusalReport, parseRefusal, signingMessage, createRefusalRoutes };
