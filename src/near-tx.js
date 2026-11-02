@@ -3,6 +3,7 @@
 //   { type: "near", transaction: "<base64 borsh Transaction or SignedTransaction>", network?, from?, origin?, intent? }
 //   { type: "near", tx: { signerId, receiverId, actions: [...] }, ... }            // wallet-selector JSON
 //   { type: "near", transactions: [<base64> | { signerId, receiverId, actions }], ... }  // several, as signAndSendTransactions
+//   { type: "near", nep413: { message, recipient: "intents.near", nonce } }       // a NEAR Intents message to sign
 //
 // On NEAR an account is controlled by its access keys. A full-access key can do everything: move every token,
 // delete the account, deploy code over it. A function-call key can only call the methods it names on one contract,
@@ -188,23 +189,120 @@ function fromJson(t) {
 export function parseNearRequest(body) {
   const network = pickNetwork(body.network);
   let txs;
-  if (body.transaction !== undefined) txs = [fromBase64(body.transaction)];
+  const signed = body.nep413 !== undefined ? [parseIntentsMessage(body.nep413, network)] : [];
+  if (signed.length && body.transaction === undefined && body.tx === undefined && body.transactions === undefined) txs = [];
+  else if (body.transaction !== undefined) txs = [fromBase64(body.transaction)];
   else if (body.tx !== undefined) txs = [fromJson(body.tx)];
   else if (Array.isArray(body.transactions)) {
     if (!body.transactions.length || body.transactions.length > MAX_TXS) throw new NearValidationError(`transactions must hold 1 to ${MAX_TXS} transactions`);
     txs = body.transactions.map((t) => (typeof t === "string" ? fromBase64(t) : fromJson(t)));
   } else {
-    throw new NearValidationError("send transaction (base64 borsh), tx (signerId, receiverId, actions) or transactions");
+    throw new NearValidationError("send transaction (base64 borsh), tx (signerId, receiverId, actions), transactions, or nep413 (a NEAR Intents message)");
   }
   if (!txs.every((t) => t.actions.length)) throw new NearValidationError("a transaction has no actions");
-  let wallet = txs.find((t) => t.signerId)?.signerId ?? null;
+  let wallet = txs.find((t) => t.signerId)?.signerId ?? signed[0]?.signerId ?? null;
   if (body.from !== undefined && body.from !== null && body.from !== "") {
     if (!isNearAccount(body.from)) throw new NearValidationError("from must be a NEAR account id");
     wallet = body.from;
   }
   if (!wallet) throw new NearValidationError("the wallet is unknown: send from, or tx.signerId");
   for (const t of txs) if (!t.signerId) t.signerId = wallet;
-  return { network, wallet, txs };
+  return { network, wallet, txs, signed };
+}
+
+// ---------- NEAR Intents (signed intents, NEP-413) ----------
+
+// A NEAR Intents message as an agent passes it to signMessage ({ message, recipient, nonce }), or the signed form
+// ({ standard: "nep413", payload: { message, recipient, nonce }, public_key, signature }). message is the JSON
+// { signer_id, verifying_contract, deadline, nonce, intents: [...] } as a string.
+export function parseIntentsMessage(raw, network = "mainnet") {
+  const env = raw && typeof raw === "object" ? (raw.payload && typeof raw.payload === "object" ? raw.payload : raw) : null;
+  if (!env || typeof env.message !== "string" || env.message.length > MAX_TX_CHARS) {
+    throw new NearValidationError("nep413 must be { message, recipient, nonce } with the intents payload as a JSON string in message");
+  }
+  let payload;
+  try { payload = JSON.parse(env.message); } catch { throw new NearValidationError("nep413.message is not JSON"); }
+  if (!payload || typeof payload !== "object" || !Array.isArray(payload.intents)) {
+    throw new NearValidationError("nep413.message must hold { signer_id, verifying_contract, deadline, nonce, intents: [...] }");
+  }
+  if (payload.intents.length > 32) throw new NearValidationError("at most 32 intents in one message");
+  const signerId = typeof payload.signer_id === "string" ? payload.signer_id : null;
+  if (signerId !== null && !isNearAccount(signerId)) throw new NearValidationError("signer_id must be a NEAR account id");
+  return {
+    signerId,
+    recipient: typeof env.recipient === "string" ? env.recipient : null,
+    verifyingContract: typeof payload.verifying_contract === "string" ? payload.verifying_contract : null,
+    deadline: typeof payload.deadline === "string" ? payload.deadline : null,
+    intents: payload.intents.filter((i) => i && typeof i === "object"),
+    network,
+  };
+}
+
+const tokenContract = (id) => (typeof id === "string" ? id.replace(/^nep141:/, "") : null);
+
+// The intents of one signed message, judged: who gets what, keys added to NEAR Intents, swaps that only give,
+// fake tokens received, a verifier that isn't intents.near, and deadlines far in the future.
+async function intentsReasons(msg, req, add, metaOf, now) {
+  const intents = INTENTS[req.network];
+  const signer = msg.signerId ?? req.wallet;
+  if (msg.signerId && msg.signerId !== req.wallet) add("NEAR_INTENTS_OTHER_SIGNER", "orange", msg.signerId, { wallet: req.wallet });
+  for (const v of [msg.recipient, msg.verifyingContract]) {
+    if (!v || v === intents) continue;
+    const like = nearLookalike(v, req.network);
+    add(like ? "NEAR_LOOKALIKE_ACCOUNT" : "NEAR_INTENTS_UNKNOWN_VERIFIER", like ? "red" : "orange", v, like ? { looksLike: like } : { expected: intents });
+  }
+  const deadline = msg.deadline ? Date.parse(msg.deadline) : NaN;
+  if (Number.isFinite(deadline) && deadline - now > 24 * 3600 * 1000) add("NEAR_INTENTS_LONG_DEADLINE", "orange", msg.deadline, { hours: Math.round((deadline - now) / 3600000) });
+  if (Number.isFinite(deadline) && deadline < now) add("NEAR_INTENTS_EXPIRED", "info", msg.deadline);
+
+  const fakeCheck = async (contract) => {
+    if (!contract || contract in NEAR_NETWORKS[req.network].tokens) return;
+    const meta = await metaOf(contract);
+    if (meta && typeof meta.symbol === "string" && COPIED_SYMBOLS.test(meta.symbol.trim())) add("NEAR_FAKE_TOKEN", "red", contract, { symbol: meta.symbol });
+  };
+  const receiverCheck = (to) => {
+    if (typeof to !== "string") return;
+    const like = nearLookalike(to, req.network);
+    if (like) add("NEAR_LOOKALIKE_ACCOUNT", "red", to, { looksLike: like });
+  };
+
+  for (const i of msg.intents) {
+    switch (i.intent) {
+      case "transfer":
+        receiverCheck(i.receiver_id);
+        if (i.receiver_id !== signer) add("NEAR_INTENTS_TRANSFER", "info", i.receiver_id, { tokens: i.tokens ?? {} });
+        for (const t of Object.keys(i.tokens ?? {})) await fakeCheck(tokenContract(t));
+        break;
+      case "ft_withdraw":
+      case "nft_withdraw":
+      case "mt_withdraw":
+      case "native_withdraw":
+        receiverCheck(i.receiver_id);
+        if (i.receiver_id !== signer) add("NEAR_INTENTS_WITHDRAW_TO_OTHER", "info", i.receiver_id, { intent: i.intent, ...(i.token && { token: i.token }), ...(i.amount && { amount: String(i.amount) }) });
+        if (i.intent === "ft_withdraw") await fakeCheck(tokenContract(i.token));
+        break;
+      case "token_diff": {
+        const diff = Object.entries(i.diff ?? {});
+        const gives = diff.filter(([, v]) => String(v).trim().startsWith("-"));
+        const gets = diff.filter(([, v]) => !String(v).trim().startsWith("-") && big(String(v).trim()) > 0n);
+        if (gives.length && !gets.length) add("NEAR_INTENTS_GIVES_FOR_NOTHING", "red", "token_diff", { gives: Object.fromEntries(gives) });
+        for (const [t] of gets) await fakeCheck(tokenContract(t));
+        if (gives.length && gets.length) add("NEAR_INTENTS_SWAP", "info", "token_diff", { gives: Object.fromEntries(gives), gets: Object.fromEntries(gets) });
+        break;
+      }
+      case "add_public_key":
+        add("NEAR_INTENTS_KEY_ADDED", "red", typeof i.public_key === "string" ? i.public_key : "add_public_key");
+        break;
+      case "remove_public_key":
+        add("NEAR_INTENTS_KEY_REMOVED", "orange", typeof i.public_key === "string" ? i.public_key : "remove_public_key");
+        break;
+      case "storage_deposit":
+        if (i.account_id !== signer) add("NEAR_INTENTS_STORAGE_FOR_OTHER", "info", String(i.account_id ?? ""), { contract: i.contract_id ?? null });
+        break;
+      default:
+        add("NEAR_INTENT_NOT_ANALYZED", "orange", String(i.intent ?? "unknown"));
+    }
+  }
 }
 
 // ---------- RPC (read-only) ----------
@@ -306,6 +404,12 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
   const addsFullKey = flat.some((f) => f.action.kind === "addKey" && f.action.fullAccess && f.receiver === f.signer);
   const created = new Set(flat.filter((f) => f.action.kind === "createAccount").map((f) => f.receiver));
   const metadata = new Map();
+  const metaOf = async (contract) => {
+    if (!metadata.has(contract)) metadata.set(contract, await ask(() => viewCall(req.network, contract, "ft_metadata", {}, { fetchImpl })).catch(() => null));
+    return metadata.get(contract);
+  };
+  const now = Date.now();
+  for (const msg of req.signed ?? []) await intentsReasons(msg, req, add, metaOf, now);
 
   for (const f of flat) {
     const { signer, receiver, action: a } = f;
@@ -351,8 +455,7 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
           const toLike = to ? nearLookalike(to, req.network) : null;
           if (toLike) add("NEAR_LOOKALIKE_ACCOUNT", "red", to, { looksLike: toLike });
           if (!(receiver in net.tokens)) {
-            if (!metadata.has(receiver)) metadata.set(receiver, await ask(() => viewCall(req.network, receiver, "ft_metadata", {}, { fetchImpl })).catch(() => null));
-            const meta = metadata.get(receiver);
+            const meta = await metaOf(receiver);
             if (meta && typeof meta.symbol === "string" && COPIED_SYMBOLS.test(meta.symbol.trim())) {
               add("NEAR_FAKE_TOKEN", "red", receiver, { symbol: meta.symbol, real: Object.entries(net.tokens).filter(([, s]) => s.toLowerCase().startsWith(meta.symbol.trim().toLowerCase().slice(0, 4))).map(([c]) => c) });
             }
@@ -368,6 +471,12 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
           add("NEAR_NFT_APPROVAL", "orange", args.account_id, { contract: receiver, tokenId: args.token_id ?? null });
         } else if (receiver === intents && a.methodName === "add_public_key") {
           add("NEAR_INTENTS_KEY_ADDED", "red", typeof args.public_key === "string" ? args.public_key : receiver);
+        } else if (receiver === intents && a.methodName === "execute_intents" && Array.isArray(args.signed)) {
+          // Signed intents sent on chain (a solver or relayer does this): each one judged like a message to sign.
+          for (const s of args.signed.slice(0, 16)) {
+            let msg; try { msg = parseIntentsMessage(s, req.network); } catch { add("NEAR_INTENT_NOT_ANALYZED", "orange", "execute_intents"); continue; }
+            await intentsReasons(msg, req, add, metaOf, now);
+          }
         } else if (receiver === intents && a.methodName === "remove_public_key") {
           add("NEAR_INTENTS_KEY_REMOVED", "orange", typeof args.public_key === "string" ? args.public_key : receiver);
         }
@@ -382,15 +491,22 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
     }
   }
   if (rpcFailed) add("NEAR_RPC_UNAVAILABLE", "info", req.network);
-  return { reasons, rpcUsed, operations: flat.map(describeNearAction) };
+  return {
+    reasons, rpcUsed,
+    operations: [
+      ...flat.map(describeNearAction),
+      ...(req.signed ?? []).flatMap((m) => m.intents.map((i) => ({ signer: m.signerId ?? req.wallet, receiver: m.verifyingContract ?? intents, action: "intent", intent: String(i.intent ?? "unknown"), ...(i.receiver_id && { to: i.receiver_id }), ...(i.tokens && { tokens: i.tokens }), ...(i.diff && { diff: i.diff }), ...(i.token && { token: i.token }), ...(i.amount && { amount: String(i.amount) }) }))),
+    ],
+  };
 }
 
 // Every account the transactions pay, approve, add as beneficiary or send tokens to (for the sanctions screen).
 export function nearParties(req) {
-  return flatten(req.txs).flatMap(({ receiver, action: a }) => [
+  const fromIntents = (req.signed ?? []).flatMap((m) => m.intents.map((i) => i.receiver_id).filter((x) => typeof x === "string"));
+  return fromIntents.concat(flatten(req.txs).flatMap(({ receiver, action: a }) => [
     receiver,
     a.kind === "deleteAccount" ? a.beneficiaryId : null,
     a.kind === "functionCall" && typeof a.args?.receiver_id === "string" ? a.args.receiver_id : null,
     a.kind === "functionCall" && typeof a.args?.account_id === "string" ? a.args.account_id : null,
-  ]).filter((x) => typeof x === "string" && x);
+  ])).filter((x) => typeof x === "string" && x);
 }
