@@ -13,6 +13,7 @@
 //   { type: "xrpl",        network?, tx }          // an unsigned XRP Ledger transaction (src/xrpl.js)
 //   { type: "algorand",    transaction | transactions, from? } // base64 msgpack Algorand transaction(s) (src/algorand-tx.js)
 //   { type: "stellar",     transaction, network?, from? }    // base64 XDR Stellar transaction envelope (src/stellar-tx.js)
+//   { type: "near",        transaction | tx | transactions, network?, from? } // NEAR transaction(s) (src/near-tx.js)
 //   { chain_id, request_type, transaction | typed_data, policy_config? } // an OWS PolicyContext (src/ows.js): the
 //                                                    answer also carries the OWS PolicyResult, { allow, reason }
 //   Add lang: "nl" | "en" on /v1/check/explain.
@@ -54,6 +55,7 @@ import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, describeStellarOp, STELLAR_NETWORKS } from "./stellar-tx.js";
 import { stellarAccept } from "./stellar.js";
+import { parseNearRequest, nearReasons, nearParties, NEAR_NETWORKS } from "./near-tx.js";
 import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
 import { knownDelegate } from "./known-delegates.js";
 import { xlayerAccept } from "./xlayer.js";
@@ -744,6 +746,7 @@ function parseSubject(body) {
   if (body.type === "solana") return { kind: "solana", offchain: false, value: 0n, grants: [], target: null, ...parseSolanaRequest(body) };
   if (body.type === "algorand") return { kind: "algorand", offchain: false, value: 0n, grants: [], target: null, ...parseAlgorandRequest(body) };
   if (body.type === "stellar") return { kind: "stellar", offchain: false, value: 0n, grants: [], target: null, ...parseStellarRequest(body) };
+  if (body.type === "near") return { kind: "near", offchain: false, value: 0n, grants: [], target: null, ...parseNearRequest(body) };
 
   const chainId = Number(body.chainId);
   if (!SUPPORTED_CHAINS.has(chainId)) {
@@ -777,7 +780,7 @@ function parseSubject(body) {
 
   if (body.type === "authorization") return parseAuthorization(body, chainId);
 
-  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand" or "stellar"');
+  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand", "stellar" or "near"');
 }
 
 // ---------- analysis ----------
@@ -1005,6 +1008,50 @@ async function analyzeStellar(req) {
   };
 }
 
+// NEAR transactions (src/near-tx.js): every action judged by its fields (full-access keys, account deletion, code
+// deployed over the wallet, the last full-access key deleted, NEAR Intents keys, fake tokens, look-alike accounts),
+// read-only RPC for the wallet's keys and token metadata, every party against the OFAC SDN list, and the site and
+// intent as for any request. NEAR has no public simulation call, so the answer says what each action does instead.
+async function analyzeNear(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject)) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  const net = NEAR_NETWORKS[req.network];
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const rules = await nearReasons(req);
+  for (const r of rules.reasons) add(r.code, r.severity, r.subject, r.details);
+  const intent = req.intent
+    ? intentCheck({ intent: req.intent, effects: { chain: net.name, wallet: req.wallet, actions: rules.operations } }).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+  const sanctions = partySanctionsReasons(nearParties(req), { exclude: [req.wallet] });
+  for (const r of sanctions.reasons) add(r.code, r.severity, r.subject, r.details);
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: {
+      kind: "near_transaction",
+      network: net.caip2,
+      wallet: req.wallet,
+      ...(req.origin && { origin: req.origin }),
+      actions: rules.operations,
+    },
+    scope: "NEAR transactions before signing: full-access keys added to the wallet, function-call keys and their gas allowance, the account deleted, contract code deployed over the wallet, the last full-access key deleted, NEAR Intents keys added (add_public_key on intents.near), tokens burned by a forced storage_unregister, fake USDC, USDT or wNEAR, look-alike accounts of well-known contracts, NFT approvals, deposits into NEAR Intents for someone else, large deposits to unknown contracts, meta transactions by their inner actions, every party against the OFAC SDN list, plus the requesting site's phishing-list status and domain age. Not covered: what a contract does beyond the call it is sent (NEAR has no public simulation).",
+    sources: [...(rules.rpcUsed ? ["near-rpc"] : []), ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 // personal_sign / eth_sign. eth_sign is red: it signs a raw hash, so nobody can see what is agreed to. A message
 // that isn't readable text is orange for the same reason. A sign-in message (EIP-4361) for another site than the one
 // asking is red: that is a phishing site relaying a real site's login. The site itself is checked as for any request.
@@ -1176,6 +1223,7 @@ export async function analyze(req) {
   if (req.kind === "solana") return analyzeSolana(req);
   if (req.kind === "algorand") return analyzeAlgorand(req);
   if (req.kind === "stellar") return analyzeStellar(req);
+  if (req.kind === "near") return analyzeNear(req);
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";
