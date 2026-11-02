@@ -191,3 +191,24 @@ test("near intents: signed intents sent on chain with execute_intents are judged
   assert.throws(() => parseNearRequest({ type: "near", nep413: { message: "not json" } }), /not JSON/);
   assert.throws(() => parseNearRequest({ type: "near", nep413: { message: JSON.stringify({ intents: [] }) } }), /wallet is unknown/);
 });
+
+test("near intents: a swap's rate at NEAR Intents' own prices: fair is info, poor orange, far below red", async () => {
+  const { clearNearPriceCache } = await import("../src/near-tx.js");
+  const prices = [{ assetId: "nep141:wrap.near", price: 4, decimals: 24 }, { assetId: `nep141:${USDC}`, price: 1, decimals: 6 }];
+  const stub = rpcStub();
+  const fetchImpl = async (url, init) => (String(url).includes("/v0/tokens") ? Response.json(prices) : stub.fetchImpl(url, init));
+  const swap = (usdcOut) => ({ nep413: intentsMsg([{ intent: "token_diff", diff: { "nep141:wrap.near": "-1000000000000000000000000", [`nep141:${USDC}`]: String(usdcOut) } }]) });
+  const run = async (out) => { clearNearPriceCache(); return nearReasons(parseNearRequest({ type: "near", ...swap(out) }), { fetchImpl }); };
+  const fair = await run(3_960_000);
+  assert.deepEqual(fair.reasons.map((x) => x.code), ["NEAR_INTENTS_SWAP"]);
+  assert.deepEqual([fair.reasons[0].details.givesUsd, fair.reasons[0].details.getsUsd], [4, 3.96]);
+  assert.equal(fair.pricesUsed, true);
+  const poor = await run(3_000_000);
+  assert.deepEqual(poor.reasons.find((x) => x.code === "NEAR_INTENTS_POOR_PRICE").details, { givesUsd: 4, getsUsd: 3, receivedPct: 75 });
+  const bad = await run(400_000);
+  assert.equal(sev(bad.reasons, "NEAR_INTENTS_BAD_PRICE"), "red");
+  // Prices unavailable: the swap is still shown, nothing is guessed.
+  clearNearPriceCache();
+  const none = await nearReasons(parseNearRequest({ type: "near", ...swap(400_000) }), { fetchImpl: stub.fetchImpl });
+  assert.deepEqual(none.reasons.map((x) => x.code), ["NEAR_INTENTS_SWAP"]);
+});
