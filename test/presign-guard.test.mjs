@@ -24,6 +24,8 @@ const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wall
 const DELEGATED_BAD = "0xbad0000000000000000000000000000000000005"; // EIP-7702 wallet delegating to PHISH
 const DELEGATED_UNVERIFIED = "0xbad0000000000000000000000000000000000006"; // delegating to unverified code
 const UNVERIFIED_IMPL = "0xbad0000000000000000000000000000000000007";
+const BITGET_V3 = "0x490aac77c960b0569c8e446ac7e12490bd44ca1d"; // Bitget Wallet 7702 Logic v0.0.3 (unverified source)
+const DELEGATED_BITGET = "0xbad0000000000000000000000000000000000010"; // a wallet delegating to it
 const SOURCIFY_IMPL = "0xbad0000000000000000000000000000000000008"; // unverified per GoPlus, an exact match on Sourcify
 const DELEGATED_SOURCIFY = "0xbad0000000000000000000000000000000000009"; // delegating to it (like Coinbase's EIP7702Proxy)
 const sourcifyCalls = [];
@@ -161,7 +163,7 @@ function mockRpc(opts) {
   if (address === MIN_PROXY) {
     return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3` }));
   }
-  const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2), [DELEGATED_SOURCIFY]: SOURCIFY_IMPL.slice(2) }[address];
+  const delegateTo = { [DELEGATED]: "ab".repeat(20), [DELEGATED_BAD]: PHISH.slice(2), [DELEGATED_UNVERIFIED]: UNVERIFIED_IMPL.slice(2), [DELEGATED_SOURCIFY]: SOURCIFY_IMPL.slice(2), [DELEGATED_BITGET]: BITGET_V3.slice(2) }[address];
   const result = delegateTo ? "0xef0100" + delegateTo : address === UNDEPLOYED ? "0x" : "0x6080604052";
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
 }
@@ -194,7 +196,7 @@ function mockGoplus(url) {
   const isPhish = u.includes(PHISH);
   const result = u.includes("/address_security/")
     ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
-    : { is_contract: isEoa ? "0" : "1", is_open_source: [UNVERIFIED_IMPL, SOURCIFY_IMPL].some((x) => u.includes(x)) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
+    : { is_contract: isEoa ? "0" : "1", is_open_source: [UNVERIFIED_IMPL, SOURCIFY_IMPL, BITGET_V3].some((x) => u.includes(x)) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
         ...(u.includes(TRUSTED_IMPL) && { trust_list: "1" }),
         ...([REAL_PROXY, FAKE_PROXY, MIN_PROXY, UNCHECKED_PROXY].some((p) => u.includes(p)) && { is_proxy: "1" }) };
   return new Response(JSON.stringify({ code: 1, message: "OK", result }));
@@ -1509,4 +1511,21 @@ test("Robinhood Chain (4663) is a supported EVM chain for /v1/check; an unknown 
   const tx = { type: "transaction", chainId: 4663, to: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", data: "0x", value: "0" };
   assert.equal(parseRequest(tx).chainId, 4663);
   assert.throws(() => parseRequest({ ...tx, chainId: 999 }), /Unsupported chainId\. Supported: .*42161, 4663/);
+});
+
+test("EIP-7702: Bitget Wallet's unverified 7702 Logic is named, and stays red / orange", async () => {
+  const a = await check({ type: "authorization", chainId: 8453, address: BITGET_V3 });
+  assert.equal(a.body.verdict, "red");
+  const r = a.body.reasons.find((x) => x.code === "AUTHORIZATION_TO_UNVERIFIED_CONTRACT");
+  assert.equal(r.details.known_as, "Bitget Wallet 7702 Logic v0.0.3");
+  assert.match(r.details.label_source, /source not published/);
+  // Paying a wallet that delegates to it: orange as before, with the name.
+  const p = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: DELEGATED_BITGET, amount: "1000000" });
+  assert.equal(p.body.verdict, "orange");
+  const u = p.body.reasons.find((x) => x.code === "UNVERIFIED_DELEGATE");
+  assert.equal(u.details.delegate, BITGET_V3);
+  assert.equal(u.details.known_as, "Bitget Wallet 7702 Logic v0.0.3");
+  // Other unverified code has no name.
+  const other = await check({ type: "authorization", chainId: 8453, address: UNVERIFIED_IMPL });
+  assert.equal(other.body.reasons.find((x) => x.code === "AUTHORIZATION_TO_UNVERIFIED_CONTRACT").details, undefined);
 });

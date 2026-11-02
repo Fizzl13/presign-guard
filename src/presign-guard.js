@@ -55,6 +55,7 @@ import { algorandAccept } from "./algorand.js";
 import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, describeStellarOp, STELLAR_NETWORKS } from "./stellar-tx.js";
 import { stellarAccept } from "./stellar.js";
 import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
+import { knownDelegate } from "./known-delegates.js";
 import { xlayerAccept } from "./xlayer.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
@@ -1119,7 +1120,7 @@ async function analyzeAuthorization(req) {
     if (flags.length) add("AUTHORIZATION_TO_FLAGGED_CONTRACT", "red", d, { flags });
     const deployedCode = code !== undefined && /^0x[0-9a-f]+$/i.test(code) && !/^0x0*$/i.test(code) && !DELEGATION_CODE.test(code);
     const verified = deployedCode && c.data ? await verifiedBy(req.chainId, d, c.data) : null;
-    if (deployedCode && c.data && !verified) add("AUTHORIZATION_TO_UNVERIFIED_CONTRACT", "red", d);
+    if (deployedCode && c.data && !verified) add("AUTHORIZATION_TO_UNVERIFIED_CONTRACT", "red", d, knownDelegate(req.chainId, d) ?? undefined);
     if (verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", d);
     const deployed = Number(c.data?.deployed_time);
     if (deployed && Math.floor(Date.now() / 1000) - deployed < RECENT_DEPLOY_SECONDS) add("RECENTLY_DEPLOYED", "orange", d);
@@ -1292,7 +1293,7 @@ export async function analyze(req) {
       ];
       if (flags.length) add("MALICIOUS_DELEGATE", "red", address, { delegate: delegate.address, flags });
       else if (delegate.contract && flag(delegate.contract.is_contract) && !delegate.verified) {
-        add("UNVERIFIED_DELEGATE", "orange", address, { delegate: delegate.address });
+        add("UNVERIFIED_DELEGATE", "orange", address, { delegate: delegate.address, ...knownDelegate(req.chainId, delegate.address) });
       }
       if (delegate.verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", delegate.address);
     }
