@@ -17,15 +17,21 @@
 // nothing about the seller, and a seller can count it apart or ignore it. payto_unverified then only means the check
 // ran and found nothing tying payTo to the seller, and screening_hit only an actual match.
 //
+// A buyer's limits are the owner's private policy (hamburgchan on #4087): detail never carries limits, balances, budgets
+// or other policy values. For the policy reasons (price_above_limit, policy_blocked, trust_low) detail is left out unless
+// the owner turned it on, and then it is a fixed category: price_above_limit says which limit (per_call, daily, total),
+// never how high it is. A signature shows which wallet or checker sent a report, not that the owner agreed to disclose
+// anything; whether to send refusals at all is the owner's choice.
+//
 // Buyers only send to a url on the same site as the resource (same host, or the same last two host labels, except on
 // shared hosting domains), so a 402 can't turn buyers into a flood against someone else's server.
 import crypto from 'node:crypto';
 
-const VERSION = '0.3-draft';
+const VERSION = '0.4-draft';
 const PATH = '/.well-known/x402-refusal';
 const ISSUE = 'https://github.com/x402-foundation/x402/issues/4087';
 const REASONS = {
-  price_above_limit: "the price is above the buyer's spend limit",
+  price_above_limit: 'the price is above a buyer spend limit; detail, if the owner allows it, says which: "per_call", "daily" or "total" (never the limit itself)',
   price_changed: 'the price differs from what the buyer saw before',
   payto_changed: 'payTo differs from what the buyer saw before',
   payto_unverified: 'the buyer checked and found nothing tying payTo to the seller (detail "unbound")',
@@ -43,6 +49,13 @@ const REASONS = {
 const DETAIL_MAX = 200;
 // Reasons a report must be signed for (unsigned they are refused).
 const SIGNED_ONLY = new Set(['screening_hit']);
+// The policy reasons: detail only with the owner's consent, and only a category.
+const POLICY_REASONS = ['price_above_limit', 'policy_blocked', 'trust_low'];
+// price_above_limit's detail, when there is one: which limit was hit.
+const LIMIT_KINDS = ['per_call', 'daily', 'total'];
+const LIMIT_DETAIL = new RegExp(`^(${LIMIT_KINDS.join('|')})$`);
+// An amount in a policy reason's detail ("$0.05", "0.05 USDC", "limit 5"): a limit or budget leaking.
+const AMOUNT = /\$\s?\d|\d\s?(usd|usdc|usdt|rlusd|eur|dollars?)\b|\b(limit|budget|balance|cap|max)\b[^a-z]*\d/i;
 // check_unavailable's detail starts with one of these: which check could not complete.
 const UNAVAILABLE_CHECKS = ['payto_binding', 'screening', 'trust'];
 const UNAVAILABLE_DETAIL = new RegExp(`^(${UNAVAILABLE_CHECKS.join('|')})(\\b|$)`);
@@ -95,6 +108,7 @@ const REPORT_SCHEMA = {
   allOf: [
     { if: { properties: { reason: { enum: [...SIGNED_ONLY] } }, required: ['reason'] }, then: { required: ['signature'] } },
     { if: { properties: { reason: { const: 'check_unavailable' } }, required: ['reason'] }, then: { required: ['detail'], properties: { detail: { pattern: UNAVAILABLE_DETAIL.source } } } },
+    { if: { properties: { reason: { const: 'price_above_limit' } }, required: ['reason'] }, then: { properties: { detail: { enum: LIMIT_KINDS } } } },
   ],
 };
 
@@ -138,9 +152,20 @@ function refusalTarget(challenge, resourceUrl) {
 const signingMessage = (r) => ['x402 refusal', `resource: ${r.resource}`, `offer: ${r.offer?.hash}`, `reason: ${r.reason}`, `checkedAt: ${r.checkedAt}`].join('\n');
 
 // The report a buyer sends (unsigned; add signature yourself when you want it to count as a wallet's).
+// A policy reason's detail that would disclose the owner's policy: price_above_limit's detail is a category or nothing,
+// and no policy reason carries an amount. Null when fine.
+function policyDetailError(reason, detail) {
+  if (!POLICY_REASONS.includes(reason) || detail === undefined || detail === null || detail === '') return null;
+  if (reason === 'price_above_limit' && !LIMIT_DETAIL.test(String(detail))) return `price_above_limit's detail, if any, is which limit was hit: ${LIMIT_KINDS.join(', ')} (never the limit itself)`;
+  if (AMOUNT.test(String(detail))) return `a ${reason} report's detail must not contain limits, budgets or other amounts: they are the owner's private policy`;
+  return null;
+}
+
 function refusalReport({ resource, accept, acceptIndex = null, reason, detail = null, by = null, x402Version = 2, now = new Date() }) {
   if (!REASONS[reason]) throw new Error(`unknown refusal reason ${reason}`);
   if (reason === 'check_unavailable' && !UNAVAILABLE_DETAIL.test(String(detail ?? ''))) throw new Error(`check_unavailable needs a detail starting with ${UNAVAILABLE_CHECKS.join(', ')}`);
+  const policy = policyDetailError(reason, detail);
+  if (policy) throw new Error(policy);
   return {
     x402Version,
     resource,
@@ -165,6 +190,8 @@ function parseRefusal(body, { ownHost = null, now = Date.now() } = {}) {
   if (!REASONS[b.reason]) return { error: `reason must be one of ${Object.keys(REASONS).join(', ')}` };
   if (b.detail !== undefined && (typeof b.detail !== 'string' || b.detail.length > DETAIL_MAX)) return { error: `detail must be text of at most ${DETAIL_MAX} characters` };
   if (b.reason === 'check_unavailable' && !UNAVAILABLE_DETAIL.test(String(b.detail ?? ''))) return { error: `a check_unavailable report needs a detail starting with the check that could not complete: ${UNAVAILABLE_CHECKS.join(', ')}` };
+  const policy = policyDetailError(b.reason, b.detail);
+  if (policy) return { error: policy };
   if (b.by !== undefined && (typeof b.by !== 'string' || b.by.length > 100)) return { error: 'by must be text of at most 100 characters' };
   const at = Date.parse(b.checkedAt);
   if (!Number.isFinite(at) || Math.abs(now - at) > 24 * 3600 * 1000) return { error: 'checkedAt must be an ISO time within a day of now' };
@@ -224,7 +251,7 @@ function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days 
   return {
     get(_req, res) {
       const { byResource, byDay } = counts();
-      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed. A check that could not complete is check_unavailable (detail: ${UNAVAILABLE_CHECKS.join(', ')}), not a verdict on the seller.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: byResource, by_day: byDay } });
+      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed. A check that could not complete is check_unavailable (detail: ${UNAVAILABLE_CHECKS.join(', ')}), not a verdict on the seller. Never put the buyer's limits, budgets or other policy values in detail; price_above_limit's detail, if any, is ${LIMIT_KINDS.join(', ')}.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: byResource, by_day: byDay } });
     },
     async post(req, res) {
       if (!allow(req.ip)) return res.status(429).json({ error: 'too many refusals from this address; try again later' });
@@ -266,4 +293,4 @@ function createRefusalSender({ fetchImpl, by = null, timeoutMs = 5000, now = () 
   };
 }
 
-export { createRefusalSender, REPORT_SCHEMA, REASONS, SIGNED_ONLY, UNAVAILABLE_CHECKS, FROM_PREFLIGHT, VERSION, PATH, ISSUE, canonical, offerHash, refusalExtension, refusalTarget, refusalReport, parseRefusal, signingMessage, createRefusalRoutes };
+export { createRefusalSender, REPORT_SCHEMA, REASONS, SIGNED_ONLY, UNAVAILABLE_CHECKS, POLICY_REASONS, LIMIT_KINDS, FROM_PREFLIGHT, VERSION, PATH, ISSUE, canonical, offerHash, refusalExtension, refusalTarget, refusalReport, parseRefusal, signingMessage, createRefusalRoutes };
