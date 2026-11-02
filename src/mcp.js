@@ -428,7 +428,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       const checked = validateToken(args);
       if (checked.error) return toolError(checked.error);
       try {
-        const r = await tokenVerdict(checked.request);
+        const r = await tokenVerdict(checked.request, Date.now(), { toll: false });
         return json({ verdict: r.verdict, grade: r.grade, note: free ? "Verdict only." : "Verdict only. token_verdict ($0.01) returns the reasons, summary and market data." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
