@@ -2,6 +2,7 @@
 // RugCheck and DexScreener are mocked through globalThis.fetch. The fixtures
 // follow real responses (BONK, a fresh pump token, DEGEN on Base).
 import { test, before, after, beforeEach } from "node:test";
+import { clearTollCache } from "../src/toll.js";
 import assert from "node:assert/strict";
 import express from "express";
 import {
@@ -244,6 +245,28 @@ test("Solana, established token (BONK): green, SAFE, market facts in the one-lin
   assert.equal(r.one_liner, "SAFE: no red flags, $422k liquidity, 2.7 years old");
   assert.deepEqual([r.market.symbol, r.market.liquidityUsd, r.market.priceUsd], ["Bonk", 422000, 0.5]);
   assert.deepEqual(r.sources, ["goplus", "dexscreener", "rugcheck"]);
+});
+
+test("Toll's launch facts: shown with source and link, one info reason, never a change of verdict", async () => {
+  clearTollCache();
+  const asked = [];
+  const fetchImpl = async (url) => {
+    asked.push(String(url));
+    return Response.json({ headline: "dev sold early", dev: { addr: "x", launches: 7, graduated: 0 }, flags: [{ good: false, text: "the dev sold 40% of supply in the first minute" }], tally: { combined: { against: 1, careful: 0, clear: 0 } } });
+  };
+  const r = await tokenVerdict({ chain: "solana", address: BONK }, NOW, { toll: { fetchImpl, env: {} } });
+  assert.deepEqual([r.verdict, r.grade], ["green", "SAFE"], "Toll's findings are information only");
+  assert.equal(r.one_liner, "SAFE: no red flags, $422k liquidity, 2.7 years old");
+  assert.deepEqual(r.reasons.find((x) => x.code === "TOLL_FINDINGS"), { code: "TOLL_FINDINGS", severity: "info", details: { against: 1, link: `https://t0ll.xyz/sol/check/${BONK}`, source: "Toll" } });
+  assert.equal(r.toll.source, "Toll");
+  assert.equal(r.toll.dev.launches, 7);
+  assert.ok(r.sources.includes("toll"));
+  assert.equal(asked.length, 1);
+  // The free verdict-only checks pass toll: false and don't ask Toll at all.
+  clearTollCache();
+  const quick = await tokenVerdict({ chain: "solana", address: BONK }, NOW, { toll: false });
+  assert.equal(quick.toll, undefined);
+  assert.equal(asked.length, 1);
 });
 
 test("Solana, fresh pump token: orange, RISKY, reasons in order of weight", async () => {

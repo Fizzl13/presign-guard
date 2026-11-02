@@ -5,6 +5,8 @@
 // - GoPlus token security (EVM and Solana): authorities, honeypot, tax, holders.
 // - RugCheck (Solana only, optional): LP lock, rugged flag, its own risk list.
 // - DexScreener: price, liquidity, market cap, volume and the age of the first pair.
+// - Toll (t0ll.xyz, Robinhood Chain, Solana and BSC): who launched the coin, the dev's record, the first buyers and
+//   Toll's findings, shown as "source: Toll" with a link (src/toll.js). Information only, never the verdict.
 //
 // Verdict rules, the same spirit as /v1/check:
 // - red: the token itself is a trap (honeypot, rugged, impersonation, can't be transferred).
@@ -26,6 +28,7 @@ import { launchEscrows } from "./launch-escrow.js";
 import { secondOpinion, isOfficialToken } from "./jev.js";
 import { isXrplAddress, ledger, isRlusdCode, currencyName, RLUSD, LSF, BLACKHOLES, XRPL_NETWORKS } from "./xrpl.js";
 import { ALGORAND_NETWORKS, ALGORAND_ZERO } from "./algorand-tx.js";
+import { tollCheck, TOLL_CHAINS } from "./toll.js";
 
 const DEXSCREENER_BASE = "https://api.dexscreener.com";
 const RUGCHECK_BASE = "https://api.rugcheck.xyz/v1";
@@ -593,6 +596,9 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
   let market;
   let permissionedInfo = null;
   let controllersInfo = null;
+  // Asked at the start, alongside the other sources; awaited at the end. The free verdict-only checks pass
+  // toll: false: they show none of it, so they don't spend Toll's daily count or wait for it.
+  const tollAsk = TOLL_CHAINS[chain] && opts.toll !== false ? tollCheck(chain, address, opts.toll || {}) : null;
 
   if (chain === "solana") {
     const [sec, rug, pairs] = await Promise.all([getSolanaSecurity(address), getRugcheck(address), getMarket(chain, address)]);
@@ -641,6 +647,14 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     sources.push(...ai.sources);
   }
 
+  // Toll's launch facts: one info reason when Toll found something against the coin, the facts under `toll`.
+  const toll = tollAsk ? await tollAsk : null;
+  if (toll?.data) {
+    sources.push("toll");
+    const against = toll.data.findings.filter((f) => f.kind === "against").length;
+    if (against) add("TOLL_FINDINGS", "info", { against, link: toll.data.link, source: "Toll" });
+  }
+
   const order = { red: 0, orange: 1, info: 2 };
   reasons.sort((a, b) => order[a.severity] - order[b.severity]);
   const { verdict, grade } = gradeOf(reasons);
@@ -654,6 +668,8 @@ export async function tokenVerdict(request, now = Date.now(), opts = {}) {
     market,
     ...(permissionedInfo && { permissioned: permissionedInfo }),
     ...(controllersInfo && { controllers: controllersInfo }),
+    ...(toll?.data && { toll: toll.data }),
+    ...(toll?.error && toll.error !== "off" && { toll: { source: "Toll", error: toll.error, ...(toll.link && { link: toll.link }) } }),
     ...(partial && { partial: true }),
     sources,
     checkedAt: new Date(now).toISOString(),

@@ -19,7 +19,7 @@ export function createTokenQuickRouter({ allowFree, verdict = tokenVerdict }) {
       return res.status(429).json({ error: `Free limit reached (${FREE_CALLS_PER_HOUR} per hour). The paid check is GET /v1/token ($0.01 via x402).` });
     }
     try {
-      const r = await verdict(request);
+      const r = await verdict(request, Date.now(), { toll: false });
       res.json({ chain: request.chain, address: request.address, verdict: r.verdict, grade: r.grade, note: "Verdict only. GET /v1/token ($0.01) returns the reasons, summary and market data." });
     } catch (err) {
       res.status(502).json({ error: `could not check: ${err.message}` });
