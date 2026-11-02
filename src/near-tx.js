@@ -240,9 +240,45 @@ export function parseIntentsMessage(raw, network = "mainnet") {
 
 const tokenContract = (id) => (typeof id === "string" ? id.replace(/^nep141:/, "") : null);
 
+// Token prices in USD from NEAR Intents' own 1Click API (the prices its quotes use), for a swap's fairness:
+// { "nep141:wrap.near": { price, decimals } }. Cached 5 minutes; mainnet only; unavailable is simply no price check.
+const PRICES_URL = process.env.NEAR_INTENTS_TOKENS_URL || "https://1click.chaindefuser.com/v0/tokens";
+const PRICES_TTL_MS = 5 * 60 * 1000;
+let priceCache = { at: 0, map: null };
+export function clearNearPriceCache() { priceCache = { at: 0, map: null }; }
+async function intentsPrices({ fetchImpl = globalThis.fetch } = {}) {
+  if (priceCache.map && Date.now() - priceCache.at < PRICES_TTL_MS) return priceCache.map;
+  try {
+    const res = await fetchImpl(PRICES_URL, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(RPC_TIMEOUT_MS) });
+    if (!res.ok) return null;
+    const list = await res.json();
+    const map = {};
+    for (const t of Array.isArray(list) ? list : []) {
+      if (typeof t?.assetId === "string" && Number.isFinite(Number(t.price)) && Number.isInteger(t.decimals)) map[t.assetId] = { price: Number(t.price), decimals: t.decimals };
+    }
+    priceCache = { at: Date.now(), map };
+    return map;
+  } catch {
+    return null;
+  }
+}
+// The USD value of { tokenId: amount } (amounts signed or not), or null when a token has no price.
+function usdValue(entries, prices) {
+  let total = 0;
+  for (const [id, raw] of entries) {
+    const p = prices?.[id.startsWith("nep") ? id : `nep141:${id}`];
+    if (!p) return null;
+    const amount = String(raw).trim().replace(/^-/, "");
+    if (!/^\d+$/.test(amount)) return null;
+    total += (Number(amount) / 10 ** p.decimals) * p.price;
+  }
+  return total;
+}
+const MIN_PRICED_USD = 1; // below a dollar, fixed costs make any ratio look bad
+
 // The intents of one signed message, judged: who gets what, keys added to NEAR Intents, swaps that only give,
 // fake tokens received, a verifier that isn't intents.near, and deadlines far in the future.
-async function intentsReasons(msg, req, add, metaOf, now) {
+async function intentsReasons(msg, req, add, metaOf, now, pricesOf = async () => null) {
   const intents = INTENTS[req.network];
   const signer = msg.signerId ?? req.wallet;
   if (msg.signerId && msg.signerId !== req.wallet) add("NEAR_INTENTS_OTHER_SIGNER", "orange", msg.signerId, { wallet: req.wallet });
@@ -287,7 +323,18 @@ async function intentsReasons(msg, req, add, metaOf, now) {
         const gets = diff.filter(([, v]) => !String(v).trim().startsWith("-") && big(String(v).trim()) > 0n);
         if (gives.length && !gets.length) add("NEAR_INTENTS_GIVES_FOR_NOTHING", "red", "token_diff", { gives: Object.fromEntries(gives) });
         for (const [t] of gets) await fakeCheck(tokenContract(t));
-        if (gives.length && gets.length) add("NEAR_INTENTS_SWAP", "info", "token_diff", { gives: Object.fromEntries(gives), gets: Object.fromEntries(gets) });
+        if (gives.length && gets.length) {
+          // What is given and received in dollars, at NEAR Intents' own prices: far less back than given is a
+          // bad rate (a tampered quote, a drainer offering a swap), whatever the tokens are.
+          const prices = req.network === "mainnet" ? await pricesOf() : null;
+          const givesUsd = prices ? usdValue(gives, prices) : null;
+          const getsUsd = prices ? usdValue(gets, prices) : null;
+          const priced = givesUsd !== null && getsUsd !== null && givesUsd >= MIN_PRICED_USD;
+          const round = (v) => Math.round(v * 100) / 100;
+          add("NEAR_INTENTS_SWAP", "info", "token_diff", { gives: Object.fromEntries(gives), gets: Object.fromEntries(gets), ...(priced && { givesUsd: round(givesUsd), getsUsd: round(getsUsd) }) });
+          if (priced && getsUsd < givesUsd * 0.5) add("NEAR_INTENTS_BAD_PRICE", "red", "token_diff", { givesUsd: round(givesUsd), getsUsd: round(getsUsd), receivedPct: Math.round((getsUsd / givesUsd) * 100) });
+          else if (priced && getsUsd < givesUsd * 0.9) add("NEAR_INTENTS_POOR_PRICE", "orange", "token_diff", { givesUsd: round(givesUsd), getsUsd: round(getsUsd), receivedPct: Math.round((getsUsd / givesUsd) * 100) });
+        }
         break;
       }
       case "add_public_key":
@@ -409,7 +456,9 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
     return metadata.get(contract);
   };
   const now = Date.now();
-  for (const msg of req.signed ?? []) await intentsReasons(msg, req, add, metaOf, now);
+  let pricesUsed = false;
+  const pricesOf = async () => { const p = await intentsPrices({ fetchImpl }); if (p) pricesUsed = true; return p; };
+  for (const msg of req.signed ?? []) await intentsReasons(msg, req, add, metaOf, now, pricesOf);
 
   for (const f of flat) {
     const { signer, receiver, action: a } = f;
@@ -475,7 +524,7 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
           // Signed intents sent on chain (a solver or relayer does this): each one judged like a message to sign.
           for (const s of args.signed.slice(0, 16)) {
             let msg; try { msg = parseIntentsMessage(s, req.network); } catch { add("NEAR_INTENT_NOT_ANALYZED", "orange", "execute_intents"); continue; }
-            await intentsReasons(msg, req, add, metaOf, now);
+            await intentsReasons(msg, req, add, metaOf, now, pricesOf);
           }
         } else if (receiver === intents && a.methodName === "remove_public_key") {
           add("NEAR_INTENTS_KEY_REMOVED", "orange", typeof args.public_key === "string" ? args.public_key : receiver);
@@ -492,7 +541,7 @@ export async function nearReasons(req, { fetchImpl = globalThis.fetch } = {}) {
   }
   if (rpcFailed) add("NEAR_RPC_UNAVAILABLE", "info", req.network);
   return {
-    reasons, rpcUsed,
+    reasons, rpcUsed, pricesUsed,
     operations: [
       ...flat.map(describeNearAction),
       ...(req.signed ?? []).flatMap((m) => m.intents.map((i) => ({ signer: m.signerId ?? req.wallet, receiver: m.verifyingContract ?? intents, action: "intent", intent: String(i.intent ?? "unknown"), ...(i.receiver_id && { to: i.receiver_id }), ...(i.tokens && { tokens: i.tokens }), ...(i.diff && { diff: i.diff }), ...(i.token && { token: i.token }), ...(i.amount && { amount: String(i.amount) }) }))),
