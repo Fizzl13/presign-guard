@@ -326,6 +326,7 @@ export const INPUT_SCHEMA = {
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
     chainId: { type: "integer", enum: [1, 10, 56, 137, 196, 8453, 42161, 4663, 43114], description: "EVM chain; required for approval, transaction, signature and authorization" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1", "stellar:pubnet", "stellar:testnet"], description: "xrpl: the ledger (default xrpl:0, mainnet); stellar: stellar:pubnet (default) or stellar:testnet" },
+    nep413: { type: "object", description: "near: a NEAR Intents message about to be signed ({ message, recipient, nonce }, message = the JSON with signer_id, verifying_contract, deadline, nonce and intents). Red: a token_diff that only gives, add_public_key, fake tokens received, look-alike receivers" },
     tx: { type: "object", description: "near: { signerId, receiverId, actions } (wallet-selector JSON); red: a full-access key added, the account deleted, code deployed over the wallet, the last full-access key deleted, a key added to NEAR Intents, fake USDC/USDT/wNEAR, look-alike accounts. xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD, a DelegateSet that lets another account send payments, checks or escrows for you; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows, NFT giveaways, credentials issued to another account or that can't be accepted, other delegated permissions, a Batch of several accounts that isn't all-or-nothing, MPTs whose issuer can claw back or has locked them, MPT payments that would fail, vault deposits into lending vaults, fixed-term funds or vaults with a paper loss, vault withdrawals to another account, loans costing the borrower more than 36% a year with fees (the terms are always shown), and vault, loan or loan-payment transactions that would fail. Every transaction inside a Batch is judged the same way" },
     token: { type: "string", description: "approval: token contract" },
     spender: { type: "string", description: "approval: who gets the allowance" },
@@ -422,7 +423,7 @@ const CHECK_INPUT_SCHEMA = {
     { if: { properties: { type: { const: "algorand" } }, required: ["type"] }, then: { anyOf: [{ required: ["transaction"] }, { required: ["transactions"] }] } },
     { if: { properties: { type: { const: "xrpl" } }, required: ["type"] }, then: { required: ["tx"] } },
     { if: { properties: { type: { const: "stellar" } }, required: ["type"] }, then: { required: ["transaction"] } },
-    { if: { properties: { type: { const: "near" } }, required: ["type"] }, then: { anyOf: [{ required: ["transaction"] }, { required: ["tx"] }, { required: ["transactions"] }] } },
+    { if: { properties: { type: { const: "near" } }, required: ["type"] }, then: { anyOf: [{ required: ["transaction"] }, { required: ["tx"] }, { required: ["transactions"] }, { required: ["nep413"] }] } },
     { if: { properties: { type: { const: "message" } }, required: ["type"] }, then: { required: ["message"] } },
   ],
 };

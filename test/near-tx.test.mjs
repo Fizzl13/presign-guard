@@ -143,3 +143,51 @@ test("near: the full check through /v1/check's parser: verdict, subject and scop
   assert.equal(ok.verdict, "green");
   assert.equal(ok.subject.actions[0].amountNear, "1");
 });
+
+// ---------- NEAR Intents: signed intents (NEP-413) ----------
+
+const intentsMsg = (intents, { signer = W, verifier = "intents.near", recipient = "intents.near", deadline = new Date(Date.now() + 10 * 60 * 1000).toISOString() } = {}) => ({
+  message: JSON.stringify({ signer_id: signer, verifying_contract: verifier, deadline, nonce: "AAAAAA==", intents }),
+  recipient,
+  nonce: "AAAAAA==",
+});
+
+test("near intents: a normal swap is green, with what is given and received", async () => {
+  const r = await judge({ nep413: intentsMsg([{ intent: "token_diff", diff: { [`nep141:${USDC}`]: "-10000000", "nep141:wrap.near": "3000000000000000000000000" } }]) });
+  assert.deepEqual(r.reasons.map((x) => [x.code, x.severity]), [["NEAR_INTENTS_SWAP", "info"]]);
+  assert.equal(r.operations[0].intent, "token_diff");
+});
+
+test("near intents: giving for nothing, a key added to NEAR Intents and fake tokens received are red", async () => {
+  const give = await judge({ nep413: intentsMsg([{ intent: "token_diff", diff: { [`nep141:${USDC}`]: "-10000000" } }]) });
+  assert.equal(sev(give.reasons, "NEAR_INTENTS_GIVES_FOR_NOTHING"), "red");
+  const key = await judge({ nep413: intentsMsg([{ intent: "add_public_key", public_key: OTHER_KEY.toString() }]) });
+  assert.equal(sev(key.reasons, "NEAR_INTENTS_KEY_ADDED"), "red");
+  const stub = rpcStub({ metadata: { "usdc-token.near": { symbol: "USDC", decimals: 6 } } });
+  const fake = await judge({ nep413: intentsMsg([{ intent: "token_diff", diff: { "nep141:wrap.near": "-1000000000000000000000000", "nep141:usdc-token.near": "3000000" } }]) }, stub);
+  assert.equal(sev(fake.reasons, "NEAR_FAKE_TOKEN"), "red");
+});
+
+test("near intents: transfers and withdrawals to others are shown; look-alikes, another verifier and long deadlines are flagged", async () => {
+  const pay = await judge({ nep413: intentsMsg([{ intent: "transfer", receiver_id: "bob.near", tokens: { [`nep141:${USDC}`]: "5000000" } }, { intent: "ft_withdraw", token: USDC, receiver_id: "carol.near", amount: "1" }]) });
+  assert.deepEqual(pay.reasons.map((x) => [x.code, x.severity]), [["NEAR_INTENTS_TRANSFER", "info"], ["NEAR_INTENTS_WITHDRAW_TO_OTHER", "info"]]);
+  const like = await judge({ nep413: intentsMsg([{ intent: "transfer", receiver_id: "intents-near.near", tokens: { "nep141:wrap.near": "1" } }]) });
+  assert.equal(sev(like.reasons, "NEAR_LOOKALIKE_ACCOUNT"), "red");
+  const verifier = await judge({ nep413: intentsMsg([], { verifier: "intents.fake.near", recipient: "intents.fake.near" }) });
+  assert.equal(sev(verifier.reasons, "NEAR_INTENTS_UNKNOWN_VERIFIER"), "orange");
+  const late = await judge({ nep413: intentsMsg([], { deadline: new Date(Date.now() + 7 * 86400000).toISOString() }) });
+  assert.equal(sev(late.reasons, "NEAR_INTENTS_LONG_DEADLINE"), "orange");
+  const unknown = await judge({ nep413: intentsMsg([{ intent: "auth_call", contract_id: "x.near" }]) });
+  assert.equal(sev(unknown.reasons, "NEAR_INTENT_NOT_ANALYZED"), "orange");
+  // The signed form (standard nep413 with payload) is read the same way.
+  const signed = await judge({ nep413: { standard: "nep413", payload: intentsMsg([{ intent: "add_public_key", public_key: "ed25519:x" }]), public_key: "ed25519:y", signature: "ed25519:z" } });
+  assert.equal(sev(signed.reasons, "NEAR_INTENTS_KEY_ADDED"), "red");
+});
+
+test("near intents: signed intents sent on chain with execute_intents are judged too", async () => {
+  const signed = { standard: "nep413", payload: intentsMsg([{ intent: "token_diff", diff: { "nep141:wrap.near": "-5" } }]), public_key: "ed25519:y", signature: "ed25519:z" };
+  const r = await judge({ transaction: b64("intents.near", [fc("execute_intents", { signed: [signed] })]) });
+  assert.equal(sev(r.reasons, "NEAR_INTENTS_GIVES_FOR_NOTHING"), "red");
+  assert.throws(() => parseNearRequest({ type: "near", nep413: { message: "not json" } }), /not JSON/);
+  assert.throws(() => parseNearRequest({ type: "near", nep413: { message: JSON.stringify({ intents: [] }) } }), /wallet is unknown/);
+});
