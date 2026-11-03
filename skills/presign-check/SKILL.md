@@ -20,6 +20,7 @@ An agent with a wallet can be talked into signing a drainer approval, buying a h
   - **One exception: a safe way to do exactly what the user asked.** Sometimes it is orange only because of where the funds go, for example `XRPL_WITHDRAW_TO_OTHER`: a withdrawal paid to someone else's account, which promises to pass it on. If the user's goal can be reached with transactions that keep the funds in the user's own account or send them only where the user asked, build those instead. An example is withdrawing to the user's account, then depositing into the new vault. Check each one, and sign only if every one comes back green. Tell the user what you did differently and why.
   - **Any other orange:** ask.
 - **Red:** never sign, never buy, never send. Tell the user why.
+- **Each orange or red reason has a `fix`:** what to change to get green. With `retry: "change"`, build the request again as `fix.change` says (`fix.set` names the field) and check it again; sign only if that comes back green. With `"elsewhere"` or `"ask"`, nothing in the request fixes it: use another contract, pool or site, or ask the user. With `"never"`, don't sign at all. `fixable: true` means every reason can be changed away.
 
 The keys never leave the agent: presign-guard only sees what you send it.
 

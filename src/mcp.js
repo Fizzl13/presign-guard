@@ -37,6 +37,7 @@ import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
 import { screenAddress, parseScreenRequest } from "./screen.js";
 import { checkText, parseInjectionRequest, SOURCES, MAX_TEXT_CHARS, QUICK_MAX_CHARS } from "./injection.js";
 import { paymentOf } from "./receipt.js";
+import { withFixes } from "./fixes.js";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, INPUT_SCHEMA, INPUT_EXAMPLE, TOKEN_INPUT_SCHEMA, TOKEN_INPUT_EXAMPLE,
   APPROVALS_INPUT_SCHEMA, APPROVALS_INPUT_EXAMPLE, serviceMetadata, tokenServiceMetadata, approvalsServiceMetadata,
@@ -197,7 +198,7 @@ async function validate(args) {
     return { error: err.message || "invalid request" };
   }
 }
-const check = (request) => (request.xrpl ? analyzeXrpl(request.xrpl) : analyze(request));
+const check = async (request) => (request.xrpl ? withFixes(await analyzeXrpl(request.xrpl)) : analyze(request));
 // The same validation and check for the free HTTP route POST /v1/check/quick (src/check-quick.js).
 export { validate as validateCheckArgs, check as runCheck };
 
@@ -253,7 +254,7 @@ const PAID_TOOLS = [
     summary: "Green/orange/red verdict with reason codes before an agent signs an EVM, Solana, XRP Ledger, Algorand or Stellar transaction, token approval, EIP-712 signature or plain message.",
     solana: true,
     description: (price) =>
-      `Paid (${price} via x402 in USDC on Base, Solana, Monad, Algorand or Stellar, in RLUSD on the XRP Ledger or in USD₮0 on X Layer): call this before you sign. Send the transaction, token approval, EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) or EIP-7702 authorization (type authorization: delegating the wallet to a contract, the sweeper trap) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, the token itself (honeypot, fake look-alike, high tax), and for a Uniswap v4 swap or position what the pool's hook may do (keep part of the swap, set the fee, block a withdrawal, be upgraded). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. On Algorand (type algorand, base64 msgpack transaction or group in transactions): rekeys, closing the account or an asset to someone else, clawbacks, fake USDC, app update/delete/clear, simulated. On Stellar (type stellar, base64 XDR envelope in transaction): account merges, added signers, a disabled master key, fake USDC/EURC, look-alike recipients (address poisoning), missing required memos, Soroban token approvals (also inside x402 payment authorizations), simulated. Only proceed on green; on orange ask your user; never sign on red. Same as POST /v1/check.`,
+      `Paid (${price} via x402 in USDC on Base, Solana, Monad, Algorand or Stellar, in RLUSD on the XRP Ledger or in USD₮0 on X Layer): call this before you sign. Send the transaction, token approval, EIP-712 signature (Permit, Permit2, EIP-3009 x402 payment, Seaport) or EIP-7702 authorization (type authorization: delegating the wallet to a contract, the sweeper trap) your agent is about to sign; get back green, orange or red with reason codes: who gets access, whether the spender or recipient is flagged, sanctioned (OFAC SDN) or unverified, unlimited allowances, the token itself (honeypot, fake look-alike, high tax), and for a Uniswap v4 swap or position what the pool's hook may do (keep part of the swap, set the fee, block a withdrawal, be upgraded). On Solana (type solana, the base64 wire transaction): every instruction decoded and the transaction simulated (token account takeovers, System Assign, unlimited delegates, durable nonces, hidden owner or delegate changes). On the XRP Ledger (type xrpl, the unsigned tx JSON): account takeovers (SetRegularKey, SignerListSet, disabling the master key), fake RLUSD, partial payments, missing destination tags, trust-line and issuer risks, and DEX offers far below market. On Algorand (type algorand, base64 msgpack transaction or group in transactions): rekeys, closing the account or an asset to someone else, clawbacks, fake USDC, app update/delete/clear, simulated. On Stellar (type stellar, base64 XDR envelope in transaction): account merges, added signers, a disabled master key, fake USDC/EURC, look-alike recipients (address poisoning), missing required memos, Soroban token approvals (also inside x402 payment authorizations), simulated. Only proceed on green; on orange ask your user; never sign on red. Each orange or red reason carries a fix (what to change to get green; retry "change" means rebuild the request that way and check it again, "never" means don't sign at all). Same as POST /v1/check.`,
     run: (request) => check(request),
   },
   {

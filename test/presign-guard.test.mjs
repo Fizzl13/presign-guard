@@ -379,6 +379,17 @@ test("effectively unlimited: uint96 and uint128 maxima count as unlimited (Grok'
   assert.ok(!codes(big).includes("UNLIMITED_APPROVAL"), "a large exact amount below 2^96 stays exact");
 });
 
+test("the check gives a fix per orange or red reason: an unlimited approval says approve the exact amount; a flagged spender says don't sign", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: (2n ** 256n - 1n).toString() });
+  const unl = r.body.reasons.find((x) => x.code === "UNLIMITED_APPROVAL");
+  assert.equal(unl.fix.retry, "change");
+  assert.deepEqual(unl.fix.set, { amount: "the exact amount needed" });
+  for (const x of r.body.reasons) if (x.severity === "info") assert.equal(x.fix, undefined, x.code);
+  const bad = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: PHISH, amount: "1" });
+  assert.equal(bad.body.reasons.find((x) => x.code === "MALICIOUS_CONTRACT_BEHAVIOR").fix.retry, "never");
+  assert.equal(bad.body.fixable, false);
+});
+
 test("approval to a flagged contract is red", async () => {
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: PHISH, amount: "1" });
   assert.equal(r.body.verdict, "red");
