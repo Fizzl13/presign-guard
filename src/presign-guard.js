@@ -59,6 +59,7 @@ import { parseNearRequest, nearReasons, nearParties, NEAR_NETWORKS } from "./nea
 import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
 import { knownDelegate } from "./known-delegates.js";
 import { xlayerAccept } from "./xlayer.js";
+import { monadAccept } from "./monad.js";
 
 const GOPLUS_BASE = "https://api.gopluslabs.io/api";
 const GOPLUS_TIMEOUT_MS = 4000;
@@ -71,7 +72,7 @@ const LONG_LIVED_SECONDS = 31 * 86400; // Permit2 UIs commonly default to 30 day
 // An EIP-3009 payment is settled within minutes (x402 clients sign for the seller's timeout, often 60 to 300 s); one
 // that stays valid for more than a day works like a bearer cheque anyone holding it can cash.
 const LONG_LIVED_PAYMENT_SECONDS = 86400;
-const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 196, 8453, 42161, 4663, 43114]);
+const SUPPORTED_CHAINS = new Set([1, 10, 56, 137, 143, 196, 8453, 42161, 4663, 43114]);
 // Public RPCs for eth_getCode; override per chain with RPC_URL_<chainId>.
 const RPC_URLS = {
   1: "https://ethereum-rpc.publicnode.com",
@@ -83,6 +84,7 @@ const RPC_URLS = {
   4663: "https://rpc.mainnet.chain.robinhood.com", // Robinhood Chain
   43114: "https://avalanche-c-chain-rpc.publicnode.com", // Avalanche C-Chain
   196: "https://rpc.xlayer.tech", // X Layer (OKX)
+  143: "https://rpc.monad.xyz", // Monad
 };
 // EIP-7702: a plain wallet with delegated code. Its private key still controls it.
 const DELEGATION_CODE = /^0xef0100[0-9a-f]{40}$/i;
@@ -1608,7 +1610,7 @@ export async function explain(result, lang) {
 // algorand: optional { network, payTo }; every route can then also be paid in USDC on Algorand.
 // builderCode: optional Base Builder Code (env BUILDER_CODE), so Base can attribute the payments to Fizzl.
 // stellar: optional { network, payTo }; every route can then also be paid in USDC on Stellar.
-export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null, stellar = null, xlayer = null) {
+export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null, stellar = null, xlayer = null, monad = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
   // refusal (draft, src/refusal.js): where a buyer that doesn't pay can say why.
   const sellerExtensions = { ...merchantExtension, ...builderCodeExtension(builderCode), ...paymentIdentifierExtension, ...refusalExtension(process.env.PUBLIC_URL ?? "https://presign-guard.fizzl.eu") };
@@ -1621,6 +1623,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       ...algorandAccept(algorand, `$${ROUTES[path].price}`),
       ...stellarAccept(stellar, `$${ROUTES[path].price}`),
       ...xlayerAccept(xlayer, `$${ROUTES[path].price}`),
+      ...monadAccept(monad, `$${ROUTES[path].price}`),
     ],
     description,
     mimeType: "application/json",
@@ -1644,6 +1647,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...algorandAccept(algorand, tokenPrice),
         ...stellarAccept(stellar, tokenPrice),
         ...xlayerAccept(xlayer, tokenPrice),
+        ...monadAccept(monad, tokenPrice),
       ],
       description: "Honeypot and rug pull check for a token: is it safe to buy? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
@@ -1658,6 +1662,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...algorandAccept(algorand, approvalsPrice),
         ...stellarAccept(stellar, approvalsPrice),
         ...xlayerAccept(xlayer, approvalsPrice),
+        ...monadAccept(monad, approvalsPrice),
       ],
       description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
       mimeType: "application/json",
@@ -1672,6 +1677,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...algorandAccept(algorand, screenPrice),
         ...stellarAccept(stellar, screenPrice),
         ...xlayerAccept(xlayer, screenPrice),
+        ...monadAccept(monad, screenPrice),
       ],
       description: "Sanctions screen for a wallet address: is it on the OFAC list? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
       mimeType: "application/json",
@@ -1686,6 +1692,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...algorandAccept(algorand, injectionPrice),
         ...stellarAccept(stellar, injectionPrice),
         ...xlayerAccept(xlayer, injectionPrice),
+        ...monadAccept(monad, injectionPrice),
       ],
       description: "Prompt injection detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to make the agent ignore its instructions, pay or send money, hand over keys or private data, or obey a fake user, admin or support message? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
       mimeType: "application/json",

@@ -1318,16 +1318,16 @@ test("simulation self-test (GET /health): which source answered per chain, the r
   const { simulationSelfTest, simulationStatus } = await import("../src/simulate.js");
   assert.equal((await simulationSelfTest({ env: { SIMULATION: "off" } })).selfTest, "off (SIMULATION=off)");
   const ok = async () => Response.json({ jsonrpc: "2.0", id: 1, result: [{ calls: [SIM_OK] }] });
-  assert.equal((await simulationSelfTest({ env: {}, fetch: ok })).selfTest, "ok (public rpc: 1, 10, 56, 137, 196, 4663, 8453, 42161)");
+  assert.equal((await simulationSelfTest({ env: {}, fetch: ok })).selfTest, "ok (public rpc: 1, 10, 56, 137, 143, 196, 4663, 8453, 42161)");
   const part = await simulationSelfTest({ env: { ALCHEMY_API_KEY: "secretkey" }, fetch: async (u) => {
     if (u.includes("base-mainnet")) return Response.json({ jsonrpc: "2.0", id: 1, error: { message: "BASE_MAINNET is not enabled for this app (secretkey)" } });
     if (u.includes("base-rpc") || u.includes("mainnet.base.org")) return new Response("down", { status: 502 });
     return u.includes("opt-mainnet") ? new Response("no", { status: 403 }) : ok();
   } });
-  assert.equal(part.selfTest, "failed on 8453 (rpc chain 8453: Error: HTTP 502) (ok on alchemy: 1, 56, 137, 4663, 42161; public rpc: 10, 196)");
+  assert.equal(part.selfTest, "failed on 8453 (rpc chain 8453: Error: HTTP 502) (ok on alchemy: 1, 56, 137, 4663, 42161; public rpc: 10, 143, 196)");
   // One public node down: the second public RPC of that chain answers.
   const second = await simulationSelfTest({ env: {}, fetch: async (u) => (u.includes("bsc-rpc.publicnode") ? Response.json({ jsonrpc: "2.0", id: 1, error: { message: "global signer not initialized for mining mode" } }) : ok()) });
-  assert.equal(second.selfTest, "ok (public rpc: 1, 10, 56, 137, 196, 4663, 8453, 42161)");
+  assert.equal(second.selfTest, "ok (public rpc: 1, 10, 56, 137, 143, 196, 4663, 8453, 42161)");
   assert.ok(!JSON.stringify(part).includes("secretkey"));
   assert.equal(simulationStatus({}).on, true);
   assert.equal(simulationStatus({ SIMULATION: "off" }).on, false);
