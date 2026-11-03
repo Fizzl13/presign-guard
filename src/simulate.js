@@ -21,9 +21,11 @@ const PUBLIC = {
   // X Layer: only dRPC runs eth_simulateV1 there (OKX's own nodes answered "rpc method is not whitelisted" on
   // 27 Oct 2026).
   196: ["https://xlayer.drpc.org"],
+  // Monad: its own public node runs eth_simulateV1 (dRPC's free plan, publicnode and monadinfra didn't, 3 Nov 2026).
+  143: ["https://rpc.monad.xyz"],
 };
 export const SIMULATED_CHAINS = Object.keys(PUBLIC).map(Number);
-const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 196: "OKB", 8453: "ETH", 42161: "ETH", 4663: "ETH" };
+const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 143: "MON", 196: "OKB", 8453: "ETH", 42161: "ETH", 4663: "ETH" };
 
 const T_TRANSFER = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 const T_APPROVAL = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";

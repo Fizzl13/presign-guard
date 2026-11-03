@@ -51,6 +51,8 @@ export const TOKEN_CHAINS = {
   // X Layer (OKX): GoPlus has its token data but no wallet approvals, and DexScreener lists no X Layer pairs (27 Oct
   // 2026), so its tokens are judged without market data (NO_MARKET_DATA, info) rather than as having no market.
   xlayer: { chainId: 196, dexscreener: null, approvals: false },
+  // Monad: GoPlus has its token data but no wallet approvals; DexScreener lists Monad pairs.
+  monad: { chainId: 143, dexscreener: "monad", approvals: false },
   // XRP Ledger: address is "CURRENCY.rIssuer" (a 3-letter code or its 40-hex form, e.g. RLUSD.rMxCK…).
   xrpl: { dexscreener: "xrpl" },
   // Algorand: address is the asset id (ASA), e.g. 31566704 for USDC.

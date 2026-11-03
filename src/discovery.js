@@ -33,7 +33,7 @@ export const TOKEN_INPUT_EXAMPLE = { chain: "solana", address: "DezXAZ8z7PnrnRJj
 export const TOKEN_INPUT_SCHEMA = {
   type: "object",
   properties: {
-    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "avalanche", "xlayer", "xrpl", "algorand"], description: "Chain the token lives on" },
+    chain: { type: "string", enum: ["solana", "base", "ethereum", "arbitrum", "optimism", "polygon", "bsc", "robinhood", "avalanche", "xlayer", "monad", "xrpl", "algorand"], description: "Chain the token lives on" },
     address: { type: "string", description: "Solana mint address (base58), EVM token contract (0x...), an XRPL token as CURRENCY.rIssuer (e.g. RLUSD.rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De), or an Algorand asset id (e.g. 31566704)" },
   },
   required: ["chain", "address"],
@@ -324,7 +324,7 @@ export const INPUT_SCHEMA = {
     transactions: { type: "array", maxItems: 16, items: {}, description: "algorand: an atomic group, each base64 msgpack; send the whole group. near: several NEAR transactions (base64 borsh or JSON)" },
     method: { type: "string", enum: ["personal_sign", "eth_sign"], description: "message: how it is signed (default personal_sign); eth_sign is always red" },
     message: { type: "string", maxLength: 16384, description: "message: the text or 0x-hex about to be signed. A Sign-In with Ethereum message for another site than origin is red (SIGN_IN_DOMAIN_MISMATCH), unreadable bytes are orange" },
-    chainId: { type: "integer", enum: [1, 10, 56, 137, 196, 8453, 42161, 4663, 43114], description: "EVM chain; required for approval, transaction, signature and authorization" },
+    chainId: { type: "integer", enum: [1, 10, 56, 137, 143, 196, 8453, 42161, 4663, 43114], description: "EVM chain; required for approval, transaction, signature and authorization" },
     network: { type: "string", enum: ["xrpl:0", "xrpl:1", "stellar:pubnet", "stellar:testnet"], description: "xrpl: the ledger (default xrpl:0, mainnet); stellar: stellar:pubnet (default) or stellar:testnet" },
     nep413: { type: "object", description: "near: a NEAR Intents message about to be signed ({ message, recipient, nonce }, message = the JSON with signer_id, verifying_contract, deadline, nonce and intents). Red: a token_diff that only gives, add_public_key, fake tokens received, look-alike receivers" },
     tx: { type: "object", description: "near: { signerId, receiverId, actions } (wallet-selector JSON); red: a full-access key added, the account deleted, code deployed over the wallet, the last full-access key deleted, a key added to NEAR Intents, fake USDC/USDT/wNEAR, look-alike accounts. xrpl: the unsigned transaction JSON (TransactionType, Account, ...). Red: SetRegularKey/SignerListSet to another key, disabling the master key, AccountDelete, fake RLUSD, a DelegateSet that lets another account send payments, checks or escrows for you; orange: partial payments, destinations that refuse or need a tag, issuers that can claw back or freeze, escrows, NFT giveaways, credentials issued to another account or that can't be accepted, other delegated permissions, a Batch of several accounts that isn't all-or-nothing, MPTs whose issuer can claw back or has locked them, MPT payments that would fail, vault deposits into lending vaults, fixed-term funds or vaults with a paper loss, vault withdrawals to another account, loans costing the borrower more than 36% a year with fees (the terms are always shown), and vault, loan or loan-payment transactions that would fail. Every transaction inside a Batch is judged the same way" },
@@ -698,7 +698,7 @@ export function wellKnown(origin, { credits = false } = {}) {
     category: CATEGORY,
     iconUrl: `${origin}/media/icon.png`,
     tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "aml", "agents"],
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL, Algorand and Stellar transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana, Algorand or Stellar, or RLUSD on the XRP Ledger.",
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL, Algorand and Stellar transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana, Monad, Algorand or Stellar, or RLUSD on the XRP Ledger.",
     signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
@@ -723,7 +723,7 @@ export function agentRegistration(origin) {
   return {
     type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     name: "presign-guard",
-    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana, Algorand and Stellar transactions (decoded and simulated), XRP Ledger transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Signed answers, paid per call over x402 (USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer) or MPP (USDC on Base).",
+    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana, Algorand and Stellar transactions (decoded and simulated), XRP Ledger transactions, approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Signed answers, paid per call over x402 (USDC on Base, Solana, Monad, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer) or MPP (USDC on Base).",
     image: `${origin}/media/og.jpg`,
     services: [
       { name: "web", endpoint: `${origin}/` },
