@@ -411,7 +411,7 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
       if (checked.error) return toolError(checked.error);
       try {
         const r = await check(checked.request);
-        return json({ verdict: r.verdict, note: free ? "Verdict only." : "Verdict only. presign_check ($0.01) returns the reasons and details." });
+        return json({ verdict: r.verdict, note: free ? "Verdict only." : "Verdict only. presign_check ($0.01) returns the reasons, the details and, for orange or red, what to change to get green." });
       } catch (err) {
         return toolError(`could not check: ${err.message}`);
       }

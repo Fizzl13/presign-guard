@@ -15,7 +15,7 @@ export function createCheckQuickRouter({ allowFree, validate = validateCheckArgs
     }
     try {
       const r = await check(checked.request);
-      res.set("Cache-Control", "no-store").json({ verdict: r.verdict, note: "Verdict only. POST /v1/check ($0.01) returns the reasons and details." });
+      res.set("Cache-Control", "no-store").json({ verdict: r.verdict, note: "Verdict only. POST /v1/check ($0.01) returns the reasons, the details and, for orange or red, what to change to get green." });
     } catch (err) {
       res.status(502).json({ error: `could not check: ${err.message}` });
     }
