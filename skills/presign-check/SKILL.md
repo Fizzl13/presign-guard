@@ -43,7 +43,7 @@ curl -s "https://presign-guard.fizzl.eu/v1/token/quick?chain=base&address=<token
 | What | Body |
 | --- | --- |
 | Token approval | `{"type":"approval","chainId":8453,"token":"0x…","spender":"0x…","amount":"1000000"}` |
-| Transaction (swap, transfer, contract call) | `{"type":"transaction","chainId":8453,"to":"0x…","data":"0x…","value":"0","from":"<your wallet>"}`. With `from`, it is simulated and you see what really leaves the wallet. |
+| Transaction (swap, transfer, contract call) | `{"type":"transaction","chainId":8453,"to":"0x…","data":"0x…","value":"0","from":"<your wallet>"}`. With `from`, it is simulated and you see what really leaves the wallet. A Uniswap v4 swap or position also gets its pool hooks judged: red when a hook can keep part of a swap that has no minimum. |
 | EIP-712 signature (Permit, Permit2, x402 EIP-3009 payment, Seaport) | `{"type":"signature","chainId":8453,"typedData":{…the exact eth_signTypedData_v4 payload…}}` |
 | Plain message | `{"type":"message","message":"…","method":"personal_sign"}` |
 | EIP-7702 authorization (delegating your wallet to a contract) | `{"type":"authorization","chainId":8453,"address":"<the contract>","from":"<your wallet>"}`. This hands the contract your whole wallet: never sign it unless your user asked for that smart account by name. |
