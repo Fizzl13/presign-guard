@@ -57,6 +57,7 @@ import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulation
 import { stellarAccept } from "./stellar.js";
 import { parseNearRequest, nearReasons, nearParties, NEAR_NETWORKS } from "./near-tx.js";
 import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
+import { uniswapV4Reasons } from "./uniswap-v4.js";
 import { knownDelegate } from "./known-delegates.js";
 import { xlayerAccept } from "./xlayer.js";
 import { monadAccept } from "./monad.js";
@@ -1243,6 +1244,9 @@ export async function analyze(req) {
   const tapeout = TAPEOUT[req.chainId] && req.calldata !== undefined
     ? tapeoutReasons({ chainId: req.chainId, to: req.target, data: req.calldata, value: req.value, from: req.from })
     : Promise.resolve([]);
+  // Uniswap v4 swaps and positions (src/uniswap-v4.js): what each pool's hook may do (keep part of the swap, set the
+  // fee, block or tax withdrawals), a swap without a limit, and a hook its owner can change.
+  const uniswapV4 = req.calldata !== undefined ? uniswapV4Reasons({ chainId: req.chainId, to: req.target, data: req.calldata }) : Promise.resolve([]);
 
   // Revoked spenders are not looked up: revoking a bad address is safe.
   const subjects = new Set([req.target, ...req.grants.map((g) => g.spender)].filter(Boolean));
@@ -1472,6 +1476,7 @@ export async function analyze(req) {
     if (!flagged.has(r.subject)) add(r.code, r.severity, r.subject, r.details);
   }
   for (const r of await tapeout) add(r.code, r.severity, r.subject, r.details);
+  for (const r of await uniswapV4) add(r.code, r.severity, r.subject, r.details);
 
   // Not what the seller asked (x402 requirements): paying more, someone else, another token or chain is red.
   if (req.x402) {
@@ -1525,7 +1530,7 @@ export async function analyze(req) {
       ...(req.origin && { origin: req.origin }),
       value: req.value.toString(),
     },
-    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, TapeOut circuits, containers and on-chain websites (X Layer, Base, BNB Smart Chain), with GoPlus token security for the tokens involved, OFAC SDN sanctions screening (the US Treasury list, PG1 as fallback) and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
+    scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, TapeOut circuits, containers and on-chain websites (X Layer, Base, BNB Smart Chain), Uniswap v4 hooks (what a pool's hook may do to a swap or position), with GoPlus token security for the tokens involved, OFAC SDN sanctions screening (the US Treasury list, PG1 as fallback) and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
     ...(mandate && { mandate }),
     ...(sim && { simulation: sim }),
     sources: [...new Set(["goplus", "chain-rpc", ...(ofacUsed ? ["ofac-sdn"] : []), ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" || pastRecipients ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
