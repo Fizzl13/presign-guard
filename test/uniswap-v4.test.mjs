@@ -139,7 +139,7 @@ test("a hook behind a proxy: its owner can change it after you sign (orange)", a
 
 test("without the chain: hooks are still judged by their address; other calldata is left alone", async () => {
   const r = await uniswapV4Reasons({ chainId: 8453, to: UR, data: v4Swap([exactInSingle(TAKER, { min: 0n })]) }, { rpc: chain({ fail: true }).rpc });
-  assert.deepEqual(codes(r), ["info:V4_HOOK", "red:V4_HOOK_CAN_TAKE_SWAP"]);
+  assert.deepEqual(codes(r), ["info:V4_CHAIN_UNAVAILABLE", "info:V4_HOOK", "red:V4_HOOK_CAN_TAKE_SWAP"]);
   const transfer = encodeFunctionData({ abi: parseAbi(["function transfer(address to, uint256 amount)"]), functionName: "transfer", args: [ME, 1n] });
   const c = chain();
   assert.deepEqual(await uniswapV4Reasons({ chainId: 8453, to: USDC, data: transfer }, { rpc: c.rpc }), []);

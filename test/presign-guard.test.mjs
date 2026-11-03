@@ -390,6 +390,18 @@ test("the check gives a fix per orange or red reason: an unlimited approval says
   assert.equal(bad.body.fixable, false);
 });
 
+test("every answer says what it checked and what it didn't: an approval without from or origin names the fields to send", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: GOOD, amount: "1000000" });
+  assert.equal(r.body.verdict, "green");
+  const checked = r.body.checked.map((x) => x.check);
+  for (const c of ["permissions", "reputation", "tokens"]) assert.ok(checked.includes(c), c);
+  const sends = Object.fromEntries(r.body.not_checked.filter((x) => x.send).map((x) => [x.check, x.send]));
+  assert.equal(sends.simulation, "from");
+  assert.equal(sends.site, "origin");
+  assert.equal(sends.intent, "intent");
+  assert.equal(typeof r.body.checks_complete, "boolean");
+});
+
 test("approval to a flagged contract is red", async () => {
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: PHISH, amount: "1" });
   assert.equal(r.body.verdict, "red");

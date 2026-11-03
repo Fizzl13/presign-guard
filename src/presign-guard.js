@@ -59,6 +59,7 @@ import { parseNearRequest, nearReasons, nearParties, NEAR_NETWORKS } from "./nea
 import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
 import { uniswapV4Reasons } from "./uniswap-v4.js";
 import { withFixes } from "./fixes.js";
+import { evmCoverage, withCoverage } from "./coverage.js";
 import { knownDelegate } from "./known-delegates.js";
 import { xlayerAccept } from "./xlayer.js";
 import { monadAccept } from "./monad.js";
@@ -1234,8 +1235,9 @@ async function screenParty(address) {
 }
 
 // Every check, with a fix on each orange and red reason (src/fixes.js): what to change to get green.
+// Then what it covered and what it didn't (src/coverage.js), for the request types that don't say so themselves.
 export async function analyze(req) {
-  return withFixes(await analyzeAny(req), req);
+  return withCoverage(withFixes(await analyzeAny(req), req));
 }
 
 async function analyzeAny(req) {
@@ -1559,6 +1561,13 @@ async function analyzeAny(req) {
     scope: `On-chain transactions and approvals, plus EIP-712 Permit, Permit2, EIP-3009 (x402 payment) and Seaport signatures, TapeOut circuits, containers and on-chain websites (X Layer, Base, BNB Smart Chain), Uniswap v4 hooks (what a pool's hook may do to a swap or position), with GoPlus token security for the tokens involved, OFAC SDN sanctions screening (the US Treasury list, PG1 as fallback) and the requesting site's domain age (via PG1). ${createSimulator().enabled ? `Transactions sent with \`from\` are simulated (asset changes, on chains ${SIMULATED_CHAINS.join(", ")}).` : "Not covered: transaction simulation."} Plain messages (personal_sign, eth_sign) are checked with type \"message\".`,
     ...(mandate && { mandate }),
     ...(sim && { simulation: sim }),
+    // What this verdict covered and what it didn't (src/coverage.js): a green is never more than what was checked.
+    ...evmCoverage(req, reasons, {
+      simulation: sim,
+      simulationReason: !req.from ? "not_sent" : !createSimulator().enabled ? "off" : !SIMULATED_CHAINS.includes(req.chainId) ? "out_of_scope" : "unavailable",
+      history: Boolean(pastRecipients),
+      intentSources: intent.sources,
+    }),
     sources: [...new Set(["goplus", "chain-rpc", ...(ofacUsed ? ["ofac-sdn"] : []), ...(pg1Used ? ["pg1"] : []), ...(metamaskUsed ? ["metamask"] : []), ...(sim?.source === "alchemy" || pastRecipients ? ["alchemy"] : []), ...ai.sources, ...intent.sources])],
     checkedAt: new Date().toISOString(),
   };
@@ -1756,7 +1765,7 @@ export function createCheckRouter() {
       const body = translated ? translated.body : req.body;
       const work = (async () => {
         // XRP Ledger transactions have their own parser and rules (src/xrpl.js).
-        const result = isXrplRequest(body) ? withFixes(await analyzeXrpl(await parseXrplRequest(body))) : await analyze(parseRequest(body));
+        const result = isXrplRequest(body) ? withCoverage(withFixes(await analyzeXrpl(await parseXrplRequest(body)))) : await analyze(parseRequest(body));
         if (withExplanation) {
           const lang = req.body.lang === "nl" ? "nl" : "en";
           result.explanation = { lang, text: await explain(result, lang) };
