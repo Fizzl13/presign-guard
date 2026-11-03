@@ -505,6 +505,29 @@ A red verdict is a stop, not a direction. So every orange or red reason that has
 `fixable` is `true` when every orange and red reason can be changed into green. A fix never changes the verdict:
 the next request is checked again in full. Info reasons carry no fix.
 
+### What a verdict covered: `checked` and `not_checked`
+
+Green means "no problem found in what was checked", never more. So every answer (`src/coverage.js`) also says what
+that was:
+
+- `checked`: `[{ check, what }]`, for example `permissions`, `reputation`, `tokens`, `sanctions`, `site`,
+  `simulation`, `lookalikes`, `uniswap_v4`, `x402`, `intent`;
+- `not_checked`: `[{ check, because, why, send?, subject? }]`, where `because` is
+  - `unavailable`: a check that applies couldn't run this time (a source didn't answer, GoPlus gave partial data,
+    the chain didn't answer the proxy or hook lookup); asking again may help;
+  - `not_sent`: the request lacks a field it needs, named in `send`: `from` (simulation and this wallet's own
+    payment history), `origin` (phishing and look-alike sites), `intent` (does signing do what the agent meant),
+    `x402` (the seller's 402, for a payment);
+  - `out_of_scope`: presign-guard doesn't check this, and `why` says what does: a Uniswap v4 hook's code (its
+    permissions come from its address), cumulative spend against a mandate, and for a payment whether the seller
+    delivers (that is x402 Doctor's preflight);
+- `checks_complete`: `false` when anything is `unavailable`.
+
+An agent that wants a stronger green sends the fields named in `send`. A green with `checks_complete: false` is a
+green on less than usual: worth asking again, or telling the owner. EVM requests get the full list; the other types
+(messages, EIP-7702, Solana, XRPL, Algorand, Stellar, NEAR) list the sources that answered and the checks that
+couldn't run.
+
 ### Reason codes
 
 | Severity | Codes |

@@ -21,6 +21,7 @@ An agent with a wallet can be talked into signing a drainer approval, buying a h
   - **Any other orange:** ask.
 - **Red:** never sign, never buy, never send. Tell the user why.
 - **Each orange or red reason has a `fix`:** what to change to get green. With `retry: "change"`, build the request again as `fix.change` says (`fix.set` names the field) and check it again; sign only if that comes back green. With `"elsewhere"` or `"ask"`, nothing in the request fixes it: use another contract, pool or site, or ask the user. With `"never"`, don't sign at all. `fixable: true` means every reason can be changed away.
+- **Green covers only what was checked.** Read `not_checked`: an item with `because: "not_sent"` names the field to `send` (`from`, `origin`, `intent`, `x402`) for a fuller check; with `checks_complete: false` a check couldn't run (a source didn't answer), so ask again or tell the user before signing anything large. `out_of_scope` items are for other tools (a payment's seller: x402 Doctor's preflight).
 
 The keys never leave the agent: presign-guard only sees what you send it.
 

@@ -200,6 +200,7 @@ export async function uniswapV4Reasons({ chainId, to, data }, { rpc = rpcBatch }
     reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
   };
 
+  let unavailable = false;
   // Positions named by token id: their pool key from the PositionManager the transaction calls.
   const lookups = ops.filter((o) => o.tokenId && o.positionManager && !o.hook);
   if (lookups.length) {
@@ -212,7 +213,7 @@ export async function uniswapV4Reasons({ chainId, to, data }, { rpc = rpcBatch }
           o.fee = Number(key.fee);
         } catch { /* not a position, or not a PositionManager */ }
       });
-    } catch { /* the chain couldn't be asked */ }
+    } catch { unavailable = true; /* the chain couldn't be asked */ }
   }
 
   // Every hook involved, with its permissions, and whether it sits behind a proxy (one batch for all).
@@ -230,8 +231,10 @@ export async function uniswapV4Reasons({ chainId, to, data }, { rpc = rpcBatch }
         const k = slots.findIndex((s) => addressIn(s));
         if (k >= 0) upgradable[h] = { kind: PROXY_SLOTS[k][0], points_to: addressIn(slots[k]) };
       });
-    } catch { /* the chain couldn't be asked: judged by address only */ }
+    } catch { unavailable = true; /* the chain couldn't be asked: judged by address only */ }
   }
+  // Said out loud, so the answer's not_checked (src/coverage.js) names what was left out.
+  if (unavailable) add("V4_CHAIN_UNAVAILABLE", "info", String(chainId));
   for (const h of hooks) {
     add("V4_HOOK", "info", h, { permissions: hookPermissions(h) });
     if (upgradable[h]) add("V4_HOOK_UPGRADEABLE", "orange", h, upgradable[h]);
