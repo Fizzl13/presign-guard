@@ -98,6 +98,18 @@ const UINT160_UNLIMITED = UNLIMITED_THRESHOLD; // Permit2 allowance amounts are 
 // Canonical Permit2 deployment (same address on all supported chains)
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 const PERMIT2_ALLOWANCE_TYPES = new Set(["PermitSingle", "PermitBatch"]);
+
+// Official contracts GoPlus has called malicious: its address reputation counts what phishers do through a router
+// (the Uniswap Universal Router on Base came back as phishing_activities, stealing_attack, malicious behavior and
+// doubt list on 3 Nov 2026), which made every Uniswap swap there red. On exactly these addresses, on these chains,
+// GoPlus's reputation flags are reported as info (GOPLUS_FLAGS_ON_OFFICIAL_CONTRACT) instead of deciding the verdict;
+// a sanctions hit stays red, and every other check (the call, the token, the simulation) still applies.
+const OFFICIAL_CONTRACTS = {
+  any: new Map([[PERMIT2, "Permit2"]]),
+  1: new Map([["0x66a9893cc07d91d95644aedd05d03f95e1dba8af", "Uniswap Universal Router"], ["0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45", "Uniswap SwapRouter02"]]),
+  8453: new Map([["0x6ff5693b99212da76ad316178a184ab56d299b43", "Uniswap Universal Router"], ["0x2626664c2603336e57b271c5c0b26f421741e481", "Uniswap SwapRouter02"]]),
+};
+export const officialContract = (chainId, address) => OFFICIAL_CONTRACTS.any.get(String(address).toLowerCase()) ?? OFFICIAL_CONTRACTS[chainId]?.get(String(address).toLowerCase()) ?? null;
 // EIP-3009 (USDC): one fixed payment to one recipient. This is what x402 asks agents to sign.
 const TRANSFER_AUTHORIZATION_TYPES = new Set(["TransferWithAuthorization", "ReceiveWithAuthorization"]);
 const PERMIT2_TRANSFER_TYPES = new Set([
@@ -1351,16 +1363,23 @@ export async function analyze(req) {
       }
       if (delegate.verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", delegate.address);
     }
-    for (const f of ADDRESS_RED_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "red", address);
-    for (const f of ADDRESS_ORANGE_FLAGS) if (flag(addrSec?.[f])) add(f.toUpperCase(), "orange", address);
+    // On an official contract, GoPlus's reputation flags are context, not the verdict (OFFICIAL_CONTRACTS above).
+    const official = officialContract(req.chainId, address);
+    const overruled = [];
+    const reputation = (code, severity, details) => {
+      if (official && code !== "SANCTIONED") overruled.push(code.toLowerCase());
+      else add(code, severity, address, details);
+    };
+    for (const f of ADDRESS_RED_FLAGS) if (flag(addrSec?.[f])) reputation(f.toUpperCase(), "red");
+    for (const f of ADDRESS_ORANGE_FLAGS) if (flag(addrSec?.[f])) reputation(f.toUpperCase(), "orange");
     if (Number(addrSec?.number_of_malicious_contracts_created) > 0) {
-      add("CREATOR_OF_MALICIOUS_CONTRACTS", "red", address);
+      reputation("CREATOR_OF_MALICIOUS_CONTRACTS", "red");
     }
 
     if (isContract(address)) {
       const malicious = Array.isArray(contract.malicious_behavior) ? contract.malicious_behavior : [];
-      if (malicious.length) add("MALICIOUS_CONTRACT_BEHAVIOR", "red", address, malicious);
-      if (flag(contract.doubt_list)) add("ON_DOUBT_LIST", "red", address);
+      if (malicious.length) reputation("MALICIOUS_CONTRACT_BEHAVIOR", "red", malicious);
+      if (flag(contract.doubt_list)) reputation("ON_DOUBT_LIST", "red");
       if (!verified) add("UNVERIFIED_CONTRACT", "orange", address);
       else if (verified === "sourcify") add("VERIFIED_ON_SOURCIFY", "info", address);
       if (proxy === "unchecked") add("UPGRADEABLE_PROXY", "info", address, { confirmed: false });
@@ -1369,6 +1388,7 @@ export async function analyze(req) {
       if (deployed && now - deployed < RECENT_DEPLOY_SECONDS) add("RECENTLY_DEPLOYED", "orange", address);
       if (flag(contract.trust_list)) add("ON_TRUST_LIST", "info", address);
     }
+    if (overruled.length) add("GOPLUS_FLAGS_ON_OFFICIAL_CONTRACT", "info", address, { contract: official, flags: overruled });
   }
 
   const [sanctions, domain] = await pg1;
