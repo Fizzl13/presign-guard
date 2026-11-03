@@ -20,7 +20,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 128 128%22%3E%3Crect width=%22128%22 height=%22128%22 rx=%2228%22 fill=%22%23020708%22/%3E%3Cpath d=%22M78 30 A22 22 0 0 0 52 52 V104%22 fill=%22none%22 stroke=%22%23f4f8f7%22 stroke-width=%2216%22 stroke-linecap=%22round%22/%3E%3Cpath d=%22M36 68 H72%22 stroke=%22%23f4f8f7%22 stroke-width=%2216%22 stroke-linecap=%22round%22/%3E%3Cg fill=%22%2361f5c3%22%3E%3Ccircle cx=%2292%22 cy=%2272%22 r=%228%22/%3E%3Ccircle cx=%22100%22 cy=%2252%22 r=%225%22/%3E%3Ccircle cx=%22104%22 cy=%2238%22 r=%223%22/%3E%3C/g%3E%3C/svg%3E">
 <meta name="theme-color" content="#020708">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature on EVM chains, Solana, the XRP Ledger, Algorand or Stellar, including the token itself. $0.01 per check in USDC via x402 on Base, Solana, the XRP Ledger, Algorand or Stellar.">
+<meta name="description" content="A green, orange or red verdict before an AI agent signs a transaction, approval or signature on EVM chains, Solana, the XRP Ledger, Algorand or Stellar, including the token itself. $0.01 per check in USDC via x402 on Base, Solana, Monad, the XRP Ledger, Algorand or Stellar.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&family=Unbounded:wght@500;600;700;800&display=swap">
@@ -122,7 +122,7 @@
  "offers": [
   {
    "@type": "Offer",
-   "name": "Pre-sign check, paid per call over x402 in USDC (Base, Solana, the XRP Ledger, Algorand or Stellar)",
+   "name": "Pre-sign check, paid per call over x402 in USDC (Base, Solana, Monad, the XRP Ledger, Algorand or Stellar)",
    "price": "0.01",
    "priceCurrency": "USD"
   }
@@ -168,7 +168,7 @@
    "name": "Which chains does presign-guard support?",
    "acceptedAnswer": {
     "@type": "Answer",
-    "text": "EVM chains (Ethereum, Optimism, BNB Chain, Polygon, Base, Arbitrum, Robinhood Chain, Avalanche and X Layer), Solana, the XRP Ledger, Algorand and Stellar. Paid calls accept USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer, or MPP."
+    "text": "EVM chains (Ethereum, Optimism, BNB Chain, Polygon, Base, Arbitrum, Robinhood Chain, Avalanche, X Layer and Monad), Solana, the XRP Ledger, Algorand and Stellar. Paid calls accept USDC on Base, Solana, Monad, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer, or MPP."
    }
   },
   {
@@ -282,7 +282,7 @@
   <h2><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>Questions</h2>
   <div class="faq">
     <details><summary>How do I check a transaction before an AI agent signs it?</summary><p>Send it to presign-guard: POST https://presign-guard.fizzl.eu/v1/check with the transaction, approval, typed-data signature or message. For $0.01 it answers green, orange or red with reason codes: known drainers, sanctioned addresses, unlimited approvals, look-alike tokens and a simulation of what the transaction does. On red, don't sign. Errors are never charged.</p></details>
-    <details><summary>Which chains does presign-guard support?</summary><p>EVM chains (Ethereum, Optimism, BNB Chain, Polygon, Base, Arbitrum, Robinhood Chain, Avalanche and X Layer), Solana, the XRP Ledger, Algorand and Stellar. Paid calls accept USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer, or MPP.</p></details>
+    <details><summary>Which chains does presign-guard support?</summary><p>EVM chains (Ethereum, Optimism, BNB Chain, Polygon, Base, Arbitrum, Robinhood Chain, Avalanche, X Layer and Monad), Solana, the XRP Ledger, Algorand and Stellar. Paid calls accept USDC on Base, Solana, Monad, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer, or MPP.</p></details>
     <details><summary>Is there an API to screen a wallet against the OFAC sanctions list?</summary><p>Yes: GET https://presign-guard.fizzl.eu/v1/screen?address=&lt;address&gt; screens any chain's address against the US Treasury's OFAC SDN list for $0.01, plus theft and phishing reports for EVM addresses. The whole list is free open data at GET https://presign-guard.fizzl.eu/v1/sanctions, refreshed from the Treasury every 6 hours.</p></details>
     <details><summary>How do I check a token before an agent buys it?</summary><p>GET https://presign-guard.fizzl.eu/v1/token?chain=base&amp;address=&lt;token&gt; gives a grade with reasons (honeypot and rug-pull signs, look-alike tokens, mint and freeze authority, liquidity) and market data for $0.01. It works for tokens on Base, Solana and Algorand.</p></details>
     <details><summary>Can an AI agent use presign-guard without an account or API key?</summary><p>Yes. Each paid call is paid per use over x402 or MPP, with no account. The MCP server at https://presign-guard.fizzl.eu/mcp has free tools (presign_quick_check and token_quick_verdict) to try first, and the Fizzl Agent Wallet runs a presign-guard check on every signature it makes.</p></details>

@@ -75,3 +75,36 @@ test("Monad's USDC is a known official token, and /v1/token takes chain=monad", 
   const { TOKEN_INPUT_SCHEMA } = await import("../src/discovery.js");
   assert.ok(TOKEN_INPUT_SCHEMA.properties.chain.enum.includes("monad"));
 });
+
+test("MCP: the paid tools offer USDC on Monad and USD₮0 on X Layer too, like the HTTP routes", async () => {
+  const http = (await import("node:http")).default;
+  const express = (await import("express")).default;
+  const { x402ResourceServer: ResourceServer } = await import("@x402/express");
+  const { HTTPFacilitatorClient } = await import("@x402/core/server");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const { createMcpRouter } = await import("../src/mcp.js");
+  const { createSigner } = await import("../src/receipt.js");
+  const { XLAYER_NETWORK } = await import("../src/xlayer.js");
+  const BASE = "eip155:8453";
+  const fac = await new Promise((resolve) => {
+    const s = http.createServer((req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify(req.url.endsWith("/supported") ? { kinds: [BASE, MONAD_NETWORK, XLAYER_NETWORK].map((network) => ({ x402Version: 2, scheme: "exact", network })), extensions: [], signers: {} } : { isValid: false }));
+    }).listen(0, "127.0.0.1", () => resolve(s));
+  });
+  const resourceServer = new ResourceServer(new HTTPFacilitatorClient({ url: `http://127.0.0.1:${fac.address().port}` }))
+    .register(BASE, new ExactEvmScheme()).register(MONAD_NETWORK, new ExactEvmScheme()).register(XLAYER_NETWORK, new ExactEvmScheme());
+  const app = express();
+  app.use(createMcpRouter({ resourceServer, network: BASE, payTo: EVM, xlayer: { network: XLAYER_NETWORK, payTo: EVM }, monad: MON, signer: createSigner({ RECEIPT_SIGNER_SECRET: "monad-test-secret-that-is-long-enough-01" }) }));
+  const srv = await new Promise((resolve) => { const x = app.listen(0, "127.0.0.1", () => resolve(x)); });
+  try {
+    const client = new Client({ name: "test", version: "1.0.0" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${srv.address().port}/mcp`)));
+    const result = await client.callTool({ name: "presign_check", arguments: { type: "approval", chainId: 143, token: MONAD_USDC, spender: OTHER, amount: "1000000" } });
+    const challenge = result.structuredContent || JSON.parse(result.content[0].text);
+    assert.deepEqual(challenge.accepts.map((a) => a.network), [BASE, XLAYER_NETWORK, MONAD_NETWORK]);
+    assert.equal(challenge.accepts.find((a) => a.network === MONAD_NETWORK).amount, "10000");
+    await client.close();
+  } finally { srv.close(); fac.close(); }
+});

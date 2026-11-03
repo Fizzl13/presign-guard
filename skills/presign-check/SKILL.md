@@ -91,7 +91,7 @@ curl -s "https://presign-guard.fizzl.eu/v1/token/quick?chain=base&address=<token
 
 ## Paying
 
-Use the x402 client you already have. The checks take USDC on Base, Solana, Algorand or Stellar, RLUSD on the XRP Ledger, or MPP. With Coinbase's Agentic Wallet, for example:
+Use the x402 client you already have. The checks take USDC on Base, Solana, Monad, Algorand or Stellar, RLUSD on the XRP Ledger, or MPP. With Coinbase's Agentic Wallet, for example:
 
 ```bash
 npx awal@2.12.1 x402 pay "https://presign-guard.fizzl.eu/v1/check" -X POST \

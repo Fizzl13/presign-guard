@@ -30,6 +30,8 @@ import { isXrplRequest, parseXrplRequest, analyzeXrpl, XRPL_NETWORKS } from "./x
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 import { stellarAccept } from "./stellar.js";
+import { xlayerAccept } from "./xlayer.js";
+import { monadAccept } from "./monad.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
 import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
 import { screenAddress, parseScreenRequest } from "./screen.js";
@@ -351,7 +353,7 @@ async function requirementsFor(resourceServer, options) {
 }
 
 // accepts[] per paid tool, built once the facilitator is reachable.
-function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, tool }) {
+function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, xlayer = null, monad = null, tool }) {
   let wrapper = null;
   return async () => {
     if (wrapper) return wrapper;
@@ -362,6 +364,9 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
       ...xrplAccept(xrpl, price, `mcp ${tool.name}`),
       ...algorandAccept(algorand, price),
       ...stellarAccept(stellar, price),
+      // The same networks as the HTTP routes: USD₮0 on X Layer and USDC on Monad.
+      ...xlayerAccept(xlayer, price),
+      ...monadAccept(monad, price),
     ]);
     wrapper = createPaymentWrapper(resourceServer, {
       accepts,
@@ -558,9 +563,9 @@ export async function serverCard(server) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null, vault = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, xlayer = null, monad = null, signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null, vault = null }) {
   const router = express.Router();
-  const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, tool })]));
+  const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, xlayer, monad, tool })]));
   const allowFreeFor = (ip) => () => (isAnthropicIp(ip) ? shared("anthropic") : limiter(ip));
 
   // POST /mcp/free: the same server with only the free tools, for Claude's connectors directory.
