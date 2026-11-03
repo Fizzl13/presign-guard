@@ -58,6 +58,7 @@ import { stellarAccept } from "./stellar.js";
 import { parseNearRequest, nearReasons, nearParties, NEAR_NETWORKS } from "./near-tx.js";
 import { TAPEOUT, tapeoutReasons } from "./tapeout.js";
 import { uniswapV4Reasons } from "./uniswap-v4.js";
+import { withFixes } from "./fixes.js";
 import { knownDelegate } from "./known-delegates.js";
 import { xlayerAccept } from "./xlayer.js";
 import { monadAccept } from "./monad.js";
@@ -1232,7 +1233,12 @@ async function screenParty(address) {
   return pg1 && { ...pg1, source: "pg1" };
 }
 
+// Every check, with a fix on each orange and red reason (src/fixes.js): what to change to get green.
 export async function analyze(req) {
+  return withFixes(await analyzeAny(req), req);
+}
+
+async function analyzeAny(req) {
   if (req.kind === "message") return analyzeMessage(req);
   if (req.kind === "authorization") return analyzeAuthorization(req);
   if (req.kind === "solana") return analyzeSolana(req);
@@ -1750,7 +1756,7 @@ export function createCheckRouter() {
       const body = translated ? translated.body : req.body;
       const work = (async () => {
         // XRP Ledger transactions have their own parser and rules (src/xrpl.js).
-        const result = isXrplRequest(body) ? await analyzeXrpl(await parseXrplRequest(body)) : await analyze(parseRequest(body));
+        const result = isXrplRequest(body) ? withFixes(await analyzeXrpl(await parseXrplRequest(body))) : await analyze(parseRequest(body));
         if (withExplanation) {
           const lang = req.body.lang === "nl" ? "nl" : "en";
           result.explanation = { lang, text: await explain(result, lang) };

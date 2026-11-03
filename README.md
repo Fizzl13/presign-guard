@@ -472,9 +472,14 @@ An x402 payment moves one fixed amount to one recipient and grants no allowance,
   "version": "2",
   "verdict": "red",
   "reasons": [
-    { "code": "UNLIMITED_APPROVAL", "severity": "orange", "subject": "0x…", "details": { "token": "0x…" } },
-    { "code": "SIGNATURE_GRANT_TO_EOA", "severity": "red", "subject": "0x…" }
+    { "code": "UNLIMITED_APPROVAL", "severity": "orange", "subject": "0x…", "details": { "token": "0x…" },
+      "fix": { "expected": "an allowance for the amount this action needs", "saw": "an unlimited allowance",
+               "change": "Approve 0x… for exactly the amount this action spends, not the maximum; approve again next time.",
+               "retry": "change", "set": { "amount": "the exact amount needed" } } },
+    { "code": "SIGNATURE_GRANT_TO_EOA", "severity": "red", "subject": "0x…",
+      "fix": { "expected": "…", "saw": "…", "change": "Don't sign. No version of this request is safe; tell the user what was found.", "retry": "never" } }
   ],
+  "fixable": false,
   "subject": { "chainId": 8453, "kind": "permit2_allowance", "offchain": true, "grants": [ … ] },
   "scope": "…",
   "sources": ["goplus"],
@@ -483,6 +488,22 @@ An x402 payment moves one fixed amount to one recipient and grants no allowance,
 ```
 
 Every token that is approved, permitted or paid is also checked with GoPlus token security (honeypot, impersonation, owner powers, taxes). Each grant in `subject.grants` carries `tokenSymbol` and `tokenName` when GoPlus knows the token. The verdict is the most severe reason: any `red` makes it red, otherwise any `orange` makes it orange. `info` reasons never change the verdict.
+
+### Fixes: what to change to get green
+
+A red verdict is a stop, not a direction. So every orange or red reason that has a known safe version carries `fix`
+(`src/fixes.js`): `expected` (what a safe request looks like), `saw` (what this one does), `change` (what to do),
+`set` (the field to set, where there is one) and `retry`:
+
+- `change`: build the request again with the change and check it again; it can come back green (an exact approval
+  amount, an expiry within the hour, the seller's own payTo and amount from the 402, the real token, a swap minimum);
+- `elsewhere`: nothing in this request fixes it: use another contract, pool or site, or ask the user (an unverified
+  contract, a Uniswap v4 hook that can block withdrawals or be upgraded);
+- `ask`: only the user can decide (a smart account they chose, a token's own tax, a fresh wallet as spender);
+- `never`: don't sign; no version is safe (sanctions, phishing, drainer patterns, honeypots).
+
+`fixable` is `true` when every orange and red reason can be changed into green. A fix never changes the verdict:
+the next request is checked again in full. Info reasons carry no fix.
 
 ### Reason codes
 
