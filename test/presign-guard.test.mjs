@@ -19,6 +19,10 @@ const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const GOOD = "0x2222222222222222222222222222222222222222"; // verified contract
 const EOA = "0xbad0000000000000000000000000000000000001";  // plain wallet
 const PHISH = "0xbad0000000000000000000000000000000000002"; // flagged contract
+// Official contracts GoPlus flags anyway: the Universal Router on Base (as phishing, 3 Nov 2026) and, for the test,
+// SwapRouter02 on Base as sanctioned.
+const UR_BASE = "0x6ff5693b99212da76ad316178a184ab56d299b43";
+const ROUTER02_BASE = "0x2626664c2603336e57b271c5c0b26f421741e481";
 const USER = "0x1111111111111111111111111111111111111111";
 const DELEGATED = "0xbad0000000000000000000000000000000000004"; // EIP-7702 wallet: GoPlus says contract
 const DELEGATED_BAD = "0xbad0000000000000000000000000000000000005"; // EIP-7702 wallet delegating to PHISH
@@ -193,9 +197,9 @@ function mockGoplus(url) {
   }
   if (u.includes(PARTIAL)) return new Response(JSON.stringify({ code: 2, message: "partial data obtained", result: {} }));
   const isEoa = [EOA, ...AGE_WALLETS].some((w) => u.includes(w));
-  const isPhish = u.includes(PHISH);
+  const isPhish = u.includes(PHISH) || u.includes(UR_BASE);
   const result = u.includes("/address_security/")
-    ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) ? "1" : "0" }
+    ? { phishing_activities: isPhish ? "1" : "0", sanctioned: u.includes(SANCTIONED) || u.includes(ROUTER02_BASE) ? "1" : "0" }
     : { is_contract: isEoa ? "0" : "1", is_open_source: [UNVERIFIED_IMPL, SOURCIFY_IMPL, BITGET_V3].some((x) => u.includes(x)) ? "0" : "1", malicious_behavior: isPhish ? ["drainer"] : [],
         ...(u.includes(TRUSTED_IMPL) && { trust_list: "1" }),
         ...([REAL_PROXY, FAKE_PROXY, MIN_PROXY, UNCHECKED_PROXY].some((p) => u.includes(p)) && { is_proxy: "1" }) };
@@ -379,6 +383,22 @@ test("approval to a flagged contract is red", async () => {
   const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: PHISH, amount: "1" });
   assert.equal(r.body.verdict, "red");
   assert.ok(codes(r).includes("MALICIOUS_CONTRACT_BEHAVIOR"));
+});
+
+test("an official contract GoPlus flags anyway: its reputation flags are info on its own chain; a sanctions hit stays red", async () => {
+  const r = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: UR_BASE, amount: "1" });
+  assert.notEqual(r.body.verdict, "red");
+  assert.ok(!codes(r).includes("MALICIOUS_CONTRACT_BEHAVIOR") && !codes(r).includes("PHISHING_ACTIVITIES"));
+  const note = r.body.reasons.find((x) => x.code === "GOPLUS_FLAGS_ON_OFFICIAL_CONTRACT");
+  assert.equal(note.severity, "info");
+  assert.deepEqual(note.details, { contract: "Uniswap Universal Router", flags: ["phishing_activities", "malicious_contract_behavior"] });
+  // The same address on a chain where it is not the official router: red as before.
+  const elsewhere = await check({ type: "approval", chainId: 1, token: TOKEN, spender: UR_BASE, amount: "1" });
+  assert.equal(elsewhere.body.verdict, "red");
+  assert.ok(codes(elsewhere).includes("MALICIOUS_CONTRACT_BEHAVIOR"));
+  const sanctioned = await check({ type: "approval", chainId: 8453, token: TOKEN, spender: ROUTER02_BASE, amount: "1" });
+  assert.equal(sanctioned.body.verdict, "red");
+  assert.ok(codes(sanctioned).includes("SANCTIONED"));
 });
 
 test("revoking a flagged spender is not red", async () => {
