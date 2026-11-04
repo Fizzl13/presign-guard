@@ -81,9 +81,20 @@ function describeMcpCall(req, body) {
         : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), ...stellarInput(a, parsed), ...nearInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang }),
       ...(req.path === "/mcp/free" ? { endpoint: "free" } : {}),
     },
-    result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined },
+    result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined, ...tollOf(parsed) },
     payment: usageLog.mcpPayment(req.body, body),
   };
+}
+
+// Toll's part of a /v1/token answer (src/toll.js), so the log shows how often Toll answered: "ok" with the number
+// of findings against the coin, or why there was nothing ("timeout", "HTTP 503", "rate limited", …). Undefined
+// when Toll wasn't asked (a chain Toll doesn't read, or TOLL=off).
+function tollOf(b) {
+  const t = b && b.toll;
+  if (!t || typeof t !== "object") return {};
+  if (t.error) return { toll: String(t.error).slice(0, 40) };
+  const against = Array.isArray(t.findings) ? t.findings.filter((f) => f && f.kind === "against").length : undefined;
+  return { toll: "ok", tollAgainst: against };
 }
 
 // GET /v1/token: which token, the verdict and grade.
@@ -99,6 +110,7 @@ function describeTokenCall(req, body) {
       grade: b.grade,
       reasons: Array.isArray(b.reasons) ? b.reasons.filter((r) => r.severity !== "info").map((r) => r.code).join(", ") || undefined : undefined,
       error: b.error,
+      ...tollOf(b),
     },
   };
 }
