@@ -106,6 +106,18 @@ test("usage log: a token verdict is logged with the chain, token, verdict and gr
   });
 });
 
+test("usage log: a token verdict logs whether Toll answered (ok with findings against, or why not)", () => {
+  const req = { method: "GET", path: "/v1/token", query: { chain: "solana", address: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" }, get: () => undefined };
+  const ok = describePresignCall(req, {}, { verdict: "green", grade: "SAFE", reasons: [], toll: { source: "Toll", findings: [{ kind: "against", text: "a" }, { kind: "good", text: "b" }, { kind: "against", text: "c" }] } });
+  assert.equal(ok.result.toll, "ok");
+  assert.equal(ok.result.tollAgainst, 2);
+  const failed = describePresignCall(req, {}, { verdict: "green", grade: "SAFE", reasons: [], toll: { source: "Toll", error: "HTTP 503", link: "https://t0ll.xyz/sol/check/x" } });
+  assert.equal(failed.result.toll, "HTTP 503");
+  assert.equal(failed.result.tollAgainst, undefined);
+  const notAsked = describePresignCall({ ...req, query: { chain: "base", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" } }, {}, { verdict: "green", grade: "SAFE", reasons: [] });
+  assert.equal("toll" in notAsked.result, false, "no toll field when Toll wasn't asked");
+});
+
 test("usage log: a wallet screen is logged with the address, its format and the codes that are not context", () => {
   const req = { method: "GET", path: "/v1/screen", query: { address: "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81" }, get: () => undefined };
   const body = { verdict: "red", grade: "AVOID", address: { format: "tron" }, reasons: [{ code: "SANCTIONED_ADDRESS", severity: "red" }, { code: "REPUTATION_NOT_COVERED", severity: "info" }] };
