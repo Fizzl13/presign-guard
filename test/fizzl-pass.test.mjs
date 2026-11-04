@@ -31,3 +31,12 @@ test("the limiter gives a pass holder the tier's multiple of the free calls", ()
   for (let i = 0; i < 2 * LIMIT_FACTOR.bronze; i++) assert.equal(limiter("pass:abc", LIMIT_FACTOR.bronze), true);
   assert.equal(limiter("pass:abc", LIMIT_FACTOR.bronze), false);
 });
+
+test("a pass the owner gave away and took back (its gid in the revoked list) is ignored; others still count", () => {
+  const given = proof({ tier: "gold", until: Date.UTC(2100, 0, 1), gid: "g_abc" });
+  assert.equal(createPassVerifier({ keys: jwks }).verify(given).tier, "gold", "no end date, not revoked");
+  const pass = createPassVerifier({ keys: { ...jwks, revoked: ["g_abc", 42] } });
+  assert.equal(pass.verify(given), null);
+  assert.equal(pass.verify(proof({ tier: "gold", until: Date.UTC(2100, 0, 1), gid: "g_other" })).tier, "gold");
+  assert.equal(pass.verify(proof({ tier: "bronze", until: Date.now() + 86400000 })).tier, "bronze", "a bought pass has no gid");
+});
