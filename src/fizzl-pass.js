@@ -46,6 +46,8 @@ export function createPassVerifier({ jwksUrl = DEFAULT_JWKS, fetchImpl = globalT
     let ok = false;
     try { ok = crypto.verify(null, Buffer.from(`${parts[0]}.${parts[1]}`), key, Buffer.from(parts[2], 'base64url')); } catch { return null; }
     if (!ok || !(claims.until > now()) || !LIMIT_FACTOR[claims.tier]) return null;
+    // A pass the owner gave away and took back: its grant id is in the revoked list next to the key.
+    if (claims.gid && keys.revoked?.has(claims.gid)) return null;
     return { ...claims, ref: crypto.createHash('sha256').update(token).digest('hex').slice(0, 16) };
   }
 
@@ -67,6 +69,7 @@ function toKeys(jwks) {
     if (k?.kty !== 'OKP' || k.crv !== 'Ed25519' || !k.x || !k.kid) continue;
     try { out.set(k.kid, crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: k.x }, format: 'jwk' })); } catch { /* skip a bad key */ }
   }
+  out.revoked = new Set((Array.isArray(jwks?.revoked) ? jwks.revoked : []).filter((x) => typeof x === 'string'));
   return out;
 }
 
