@@ -66,6 +66,20 @@ test("a 402 carries the session challenge next to the MPP charge one", async () 
   } finally { await srv.close(); }
 });
 
+test("offer: false leaves the session challenge out of the 402 (the MPP charge one stays)", async () => {
+  const s = session({ offer: false });
+  assert.equal(s.offer, false);
+  const charge = createMppPay({ secret: "s", realm: "presign.test", recipient: RECIPIENT, routes: ROUTES, facilitator: { verify() {}, settle() {} }, log: quiet });
+  const srv = await serve(s.middleware, (req, res, next) => (req.mppPaid ? next() : charge.middleware(req, res, next)));
+  try {
+    const res = await fetch(`${srv.url}/v1/check`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.equal(res.status, 402);
+    const www = res.headers.get("www-authenticate");
+    assert.match(www, /intent="charge"/);
+    assert.doesNotMatch(www, /intent="session"/);
+  } finally { await srv.close(); }
+});
+
 test("a session credential that doesn't check out is refused before the route runs", async () => {
   const srv = await serve(session().middleware);
   try {

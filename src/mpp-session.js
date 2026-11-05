@@ -56,7 +56,7 @@ function decodeCredential(auth) {
 export const credentialIntent = (auth) => decodeCredential(auth)?.challenge?.intent ?? null;
 
 // routes: { "POST /v1/check": "$0.01", ... }. Returns null when the operator key, recipient or store is missing.
-export function createMppSession({ operatorKey, recipient, secret, realm, routes, chainId = 4217, store, publicUrl, rpcUrl, settlementSchedule = { amount: "0.5", intervalMs: SWEEP_MS }, suggestedDeposit = "1", log = console }) {
+export function createMppSession({ operatorKey, recipient, secret, realm, routes, chainId = 4217, store, publicUrl, rpcUrl, settlementSchedule = { amount: "0.5", intervalMs: SWEEP_MS }, suggestedDeposit = "1", offer = true, log = console }) {
   if (!operatorKey || !recipient || !secret || !store) return null;
   const known = TEMPO_CHAINS[chainId];
   if (!known) throw new Error(`MPP sessions: unknown Tempo chain ${chainId}`);
@@ -110,6 +110,8 @@ export function createMppSession({ operatorKey, recipient, secret, realm, routes
     if (!route) return next();
     const auth = req.headers.authorization;
     if (credentialIntent(auth) !== "session") {
+      // offer false: no session challenge in the 402 (the header stays small); a channel already open still pays.
+      if (!offer) return next();
       // Not a session credential: on a 402, add the session challenge to whatever the others put there.
       // Built before the route runs (a local HMAC, no network), so it is ready when a 402 goes out.
       return challengeHeader(req, route).then((extra) => {
@@ -162,7 +164,7 @@ export function createMppSession({ operatorKey, recipient, secret, realm, routes
   const timer = setInterval(() => { sweep().catch(() => {}); }, SWEEP_MS);
   timer.unref?.();
 
-  return { middleware, challengeHeader, routeOf, sweep, operator: account.address, recipient, chainId, currency: known.currency };
+  return { middleware, challengeHeader, routeOf, sweep, offer, operator: account.address, recipient, chainId, currency: known.currency };
 }
 
 // Store.redis over a node-redis client (or Store.memory() when there is none: tests only).

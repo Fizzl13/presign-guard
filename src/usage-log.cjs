@@ -69,6 +69,9 @@ const NETWORK_NAMES = {
   'stellar:testnet': 'stellar-testnet',
   'eip155:196': 'xlayer',
   'eip155:143': 'monad',
+  'eip155:137': 'polygon',
+  'eip155:42161': 'arbitrum',
+  'eip155:43114': 'avalanche',
 };
 const RLUSD_HEX = '524C555344000000000000000000000000000000';
 
