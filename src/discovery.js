@@ -69,6 +69,12 @@ const RECEIPT_SCHEMA = {
   required: ["request_id", "route", "input_sha256", "signed_at", "signer", "algorithm", "signature"],
 };
 
+// The bazaar extension rides in the 402's PAYMENT-REQUIRED header, next to the accepts for every network (and MPP's
+// WWW-Authenticate challenges); Node clients refuse headers over 16 KB. So the header names the receipt in one line;
+// openapi.json and the answers carry the full receipt schema.
+const HEADER_RECEIPT = { type: "object", description: "Signed receipt binding this verdict to your request; see openapi.json" };
+const headerOutput = (schema) => ({ ...schema, properties: { ...schema.properties, receipt: HEADER_RECEIPT } });
+
 const TOKEN_OUTPUT_SCHEMA = {
   type: "object",
   properties: {
@@ -109,7 +115,7 @@ export const tokenBazaarExtension = () => declareDiscoveryExtension({
   method: "GET",
   input: TOKEN_INPUT_EXAMPLE,
   inputSchema: TOKEN_INPUT_SCHEMA,
-  output: { schema: TOKEN_OUTPUT_SCHEMA, example: TOKEN_OUTPUT_EXAMPLE },
+  output: { schema: headerOutput(TOKEN_OUTPUT_SCHEMA), example: TOKEN_OUTPUT_EXAMPLE },
 });
 
 // GET /v1/approvals: the open ERC-20 allowances of a wallet, and which to revoke.
@@ -181,7 +187,7 @@ export const approvalsBazaarExtension = () => declareDiscoveryExtension({
   method: "GET",
   input: APPROVALS_INPUT_EXAMPLE,
   inputSchema: APPROVALS_INPUT_SCHEMA,
-  output: { schema: APPROVALS_OUTPUT_SCHEMA, example: APPROVALS_OUTPUT_EXAMPLE },
+  output: { schema: headerOutput(APPROVALS_OUTPUT_SCHEMA), example: APPROVALS_OUTPUT_EXAMPLE },
 });
 
 // GET /v1/screen: one address on any chain against the OFAC SDN list (and GoPlus reports for EVM).
@@ -240,7 +246,7 @@ export const screenBazaarExtension = () => declareDiscoveryExtension({
   method: "GET",
   input: SCREEN_INPUT_EXAMPLE,
   inputSchema: SCREEN_INPUT_SCHEMA,
-  output: { schema: SCREEN_OUTPUT_SCHEMA, example: SCREEN_OUTPUT_EXAMPLE },
+  output: { schema: headerOutput(SCREEN_OUTPUT_SCHEMA), example: SCREEN_OUTPUT_EXAMPLE },
 });
 
 // POST /v1/injection: is a text the agent received a prompt-injection trap (src/injection.js)?
@@ -308,7 +314,7 @@ export const injectionBazaarExtension = () => declareDiscoveryExtension({
   bodyType: "json",
   input: INJECTION_INPUT_EXAMPLE,
   inputSchema: INJECTION_INPUT_SCHEMA,
-  output: { schema: INJECTION_OUTPUT_SCHEMA, example: INJECTION_OUTPUT_EXAMPLE },
+  output: { schema: headerOutput(INJECTION_OUTPUT_SCHEMA), example: INJECTION_OUTPUT_EXAMPLE },
 });
 
 export const INPUT_EXAMPLE = { type: "approval", chainId: 8453, token: EXAMPLE_TOKEN, spender: EXAMPLE_SPENDER, amount: "1000000" };
@@ -439,6 +445,9 @@ const OUTPUT_EXAMPLE = {
 // descriptions; openapi.json has the full ones (reason codes, simulation, what each type needs).
 const SHORT = {
   type: "What is about to be signed",
+  address: "authorization: the contract the wallet is delegated to (EIP-7702)",
+  authorizationChainId: "authorization, optional: the chain id inside it (0 = every chain)",
+  nep413: "near: a NEAR Intents message { message, recipient, nonce }",
   transaction: "solana: base64 wire tx; algorand: base64 msgpack tx; stellar: base64 XDR envelope",
   transactions: "algorand: an atomic group, each base64 msgpack",
   method: "message: personal_sign (default) or eth_sign",
@@ -462,10 +471,7 @@ const SHORT = {
 };
 const shorten = (props) => Object.fromEntries(Object.entries(props).map(([k, v]) => [k, { ...v, description: SHORT[k] ?? String(v.description ?? "").slice(0, 80) }]));
 export const BAZAAR_INPUT_SCHEMA = { ...INPUT_SCHEMA, properties: shorten(INPUT_SCHEMA.properties) };
-const BAZAAR_OUTPUT_SCHEMA = {
-  ...OUTPUT_SCHEMA,
-  properties: { ...OUTPUT_SCHEMA.properties, receipt: { type: "object", description: "Signed receipt binding this verdict to your request; see openapi.json" } },
-};
+const BAZAAR_OUTPUT_SCHEMA = headerOutput(OUTPUT_SCHEMA);
 
 export const bazaarExtension = () => declareDiscoveryExtension({
   method: "POST",
