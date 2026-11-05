@@ -21,6 +21,7 @@ import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { stellarConfig, stellarFacilitator, STELLAR_NETWORK } from "./src/stellar.js";
 import { xlayerConfig, xlayerFacilitator, XLAYER_NETWORK } from "./src/xlayer.js";
 import { monadConfig, monadFacilitator, MONAD_NETWORK } from "./src/monad.js";
+import { extraEvmConfig, EXTRA_EVM_FACILITATOR } from "./src/extra-evm.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { createPaymentRetry } from "./src/payment-retry.js";
@@ -88,6 +89,10 @@ const XLAYER = MAINNET ? xlayerConfig(process.env, PAY_TO) : null;
 // lists Monad, else the facilitator in Monad's own x402 guide.
 const MONAD = MAINNET ? monadConfig(process.env, PAY_TO) : null;
 const MONAD_FALLBACK = MONAD ? monadFacilitator() : null;
+// USDC on Polygon, Arbitrum and Avalanche (src/extra-evm.js), mainnet only, to PAY_TO unless <NAME>_PAY_TO says
+// otherwise; CDP settles a network where it lists it, else PayAI.
+const EXTRA_EVM = MAINNET ? extraEvmConfig(process.env, PAY_TO) : [];
+const EXTRA_EVM_NETWORKS = EXTRA_EVM.map((e) => e.network);
 
 if (MAINNET && !(process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET)) {
   throw new Error("Mainnet needs CDP_API_KEY_ID and CDP_API_KEY_SECRET for the CDP facilitator");
@@ -120,6 +125,8 @@ const facilitators = MAINNET
     cdp,
     // After CDP, so CDP settles Monad wherever it lists it.
     ...(MONAD_FALLBACK ? [onlyNetworks(MONAD_FALLBACK, (n) => n === MONAD_NETWORK)] : []),
+    // After CDP too: PayAI settles Polygon, Arbitrum and Avalanche where CDP doesn't list them.
+    ...(EXTRA_EVM.length ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.EXTRA_EVM_FACILITATOR_URL || EXTRA_EVM_FACILITATOR }), (n) => EXTRA_EVM_NETWORKS.includes(n))] : []),
     ...(xrplFacilitator ? [xrplFacilitator] : []),
   ]
   : [new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL ?? "https://x402.org/facilitator" })];
@@ -133,8 +140,9 @@ if (ALGORAND) resourceServer.register(ALGORAND_NETWORK, new ExactAvmScheme());
 if (STELLAR) resourceServer.register(STELLAR_NETWORK, new ExactStellarScheme());
 if (XLAYER) resourceServer.register(XLAYER_NETWORK, new ExactEvmScheme());
 if (MONAD) resourceServer.register(MONAD_NETWORK, new ExactEvmScheme());
-facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : []), ...(MONAD ? [MONAD_NETWORK] : [])]);
-const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR, XLAYER, MONAD);
+for (const n of EXTRA_EVM_NETWORKS) resourceServer.register(n, new ExactEvmScheme());
+facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : []), ...(MONAD ? [MONAD_NETWORK] : []), ...EXTRA_EVM_NETWORKS]);
+const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR, XLAYER, MONAD, EXTRA_EVM);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
@@ -142,7 +150,7 @@ if (process.env.CREDITS_REDIS_URL) {
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
-const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD) } : ROUTES;
+const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD, EXTRA_EVM) } : ROUTES;
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
@@ -161,6 +169,9 @@ const MPP = MAINNET && process.env.MPP_SECRET
   : null;
 // MPP sessions (src/mpp-session.js): pay-as-you-go over a Tempo payment channel, one voucher per call, paid out to
 // MPP_TEMPO_RECIPIENT. Needs the operator key (MPP_TEMPO_OPERATOR_KEY) and Redis for the channel state.
+// Not offered in the 402 or openapi.json since 5 Nov 2026 (never used; its challenge took 0.8 KB of the 402's
+// headers, the room for Polygon, Arbitrum and Avalanche): MPP_SESSION_OFFER=on offers it again. A channel already
+// open still pays and is still settled.
 const MPP_SESSION = MPP?.tempo && process.env.MPP_TEMPO_OPERATOR_KEY && creditStore?.client
   ? createMppSession({
     operatorKey: process.env.MPP_TEMPO_OPERATOR_KEY,
@@ -172,6 +183,7 @@ const MPP_SESSION = MPP?.tempo && process.env.MPP_TEMPO_OPERATOR_KEY && creditSt
     rpcUrl: process.env.MPP_TEMPO_RPC || undefined,
     store: sessionStore(creditStore.client),
     routes: Object.fromEntries(Object.entries(ROUTES).map(([route, r]) => [route, r.accepts.find((a) => a.network === NETWORK).price])),
+    offer: process.env.MPP_SESSION_OFFER === "on",
   })
   : null;
 if (MPP_SESSION) console.log(`[mpp-session] on: operator ${MPP_SESSION.operator}, paid out to ${MPP_SESSION.recipient}`);
@@ -235,9 +247,9 @@ app.use("/media", express.static(MEDIA_DIR, { maxAge: "1d" }));
 app.get("/favicon.ico", (_req, res) => res.set("cache-control", "public, max-age=86400").sendFile(fileURLToPath(new URL("./public/favicon.ico", import.meta.url))));
 app.get("/skill.md", (_req, res) => res.set("cache-control", "public, max-age=300").type("text/markdown; charset=utf-8").sendFile(fileURLToPath(new URL("./public/skill.md", import.meta.url))));
 app.get("/openapi.json", (_req, res) => {
-  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : []), ...(MONAD ? [MONAD_NETWORK] : [])], { credits: Boolean(creditStore) });
+  const spec = openApi(PUBLIC_URL, NETWORK, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : []), ...(MONAD ? [MONAD_NETWORK] : []), ...EXTRA_EVM_NETWORKS], { credits: Boolean(creditStore) });
   // MPP discovery for MPPScan: the evm offer on the routes MPP sells (not the credit packs).
-  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: CONTACT, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION ? { currency: MPP_SESSION.currency } : null, xrpl: MPP.xrpl });
+  if (MPP) mppPayModule.addMppOffers(spec, { categories: ["security", "payments", "blockchain"], docs: { homepage: PUBLIC_URL, apiReference: `${PUBLIC_URL}/openapi.json`, llms: `${PUBLIC_URL}/skill.md` }, contact: CONTACT, include: (path, method) => `${method} ${path}` in ROUTES, tempo: MPP.tempo, session: MPP_SESSION?.offer ? { currency: MPP_SESSION.currency } : null, xrpl: MPP.xrpl });
   res.json(spec);
 });
 app.get("/.well-known/x402", (_req, res) => res.json(wellKnown(PUBLIC_URL, { credits: Boolean(creditStore) })));
@@ -320,7 +332,7 @@ app.use((req, res, next) => { if (req.path.startsWith("/v1/credits/")) res.local
 app.use(vault.creditBack());
 app.get("/v1/vault", vault.balanceHandler());
 const allowFreeQuick = async (ip, req) => { const { key, factor } = await limitKeyOf(passVerifier, req, ip); return freeLimiter(key, factor); };
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, xlayer: XLAYER, monad: MONAD, signer: SIGNER, limiter: freeLimiter, feedback, pass: passVerifier, vault }));
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, xlayer: XLAYER, monad: MONAD, extraEvm: EXTRA_EVM, signer: SIGNER, limiter: freeLimiter, feedback, pass: passVerifier, vault }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: allowFreeQuick }));

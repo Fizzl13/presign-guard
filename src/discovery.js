@@ -704,7 +704,7 @@ export function wellKnown(origin, { credits = false } = {}) {
     category: CATEGORY,
     iconUrl: `${origin}/media/icon.png`,
     tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "token-security", "aml", "agents"],
-    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL, Algorand and Stellar transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana, Monad, Algorand or Stellar, or RLUSD on the XRP Ledger.",
+    description: "Pre-sign risk verdicts (green/orange/red) for EVM, Solana, XRPL, Algorand and Stellar transactions, approvals and signatures, token verdicts for Solana and EVM tokens, wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Every paid answer is signed (verifiable receipt). Pay in USDC on Base, Solana, Monad, Polygon, Arbitrum, Avalanche, Algorand or Stellar, or RLUSD on the XRP Ledger.",
     signer: `${origin}/.well-known/presign-guard-signer.json`,
     endpoints: [
       ...Object.entries(ROUTES).map(([p, r]) => ({ url: origin + p, method: "POST", description: r.summary })),
@@ -729,7 +729,7 @@ export function agentRegistration(origin) {
   return {
     type: "https://eips.ethereum.org/EIPS/eip-8004#registration-v1",
     name: "presign-guard",
-    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana, Algorand and Stellar transactions (decoded and simulated), XRP Ledger transactions, Uniswap v4 hooks (what a pool's hook may do to a swap or position), approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Signed answers, paid per call over x402 (USDC on Base, Solana, Monad, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer) or MPP (USDC on Base).",
+    description: "Pre-sign risk check for AI agents: green/orange/red verdicts for EVM, Solana, Algorand and Stellar transactions (decoded and simulated), XRP Ledger transactions, Uniswap v4 hooks (what a pool's hook may do to a swap or position), approvals and Permit/Permit2/Seaport signatures, token verdicts for Solana and EVM tokens (honeypots, mint and freeze powers, permissioned tokens), wallet approval audits, OFAC sanctions screening for any chain's address and prompt-injection checks for text an agent receives. Signed answers, paid per call over x402 (USDC on Base, Solana, Monad, Polygon, Arbitrum, Avalanche, Algorand or Stellar, RLUSD on the XRP Ledger, USD₮0 on X Layer) or MPP (USDC on Base).",
     image: `${origin}/media/og.jpg`,
     services: [
       { name: "web", endpoint: `${origin}/` },
