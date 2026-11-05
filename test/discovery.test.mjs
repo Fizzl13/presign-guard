@@ -203,6 +203,19 @@ test("the bazaar schema in the 402 header: every field, type and enum of the ful
   assert.ok(JSON.stringify(bazaarExtension()).length < 4500, `bazaar extension ${JSON.stringify(bazaarExtension()).length} characters`);
 });
 
+test("every route's 402 header names the receipt in one line (the full schema is in openapi.json), so the header stays small", async () => {
+  const d = await import("../src/discovery.js");
+  const exts = { check: d.bazaarExtension, token: d.tokenBazaarExtension, approvals: d.approvalsBazaarExtension, screen: d.screenBazaarExtension, injection: d.injectionBazaarExtension };
+  for (const [name, ext] of Object.entries(exts)) {
+    const json = JSON.stringify(ext());
+    assert.ok(json.includes("Signed receipt binding this verdict to your request; see openapi.json"), `${name}: short receipt`);
+    assert.ok(!json.includes("input_sha256"), `${name}: no full receipt schema in the header`);
+    assert.ok(json.length < (name === "check" ? 4500 : 3300), `${name}: bazaar extension ${json.length} characters`);
+  }
+  const receipt = d.openApi().paths["/v1/injection"].post.responses[200].content["application/json"].schema.properties.receipt;
+  assert.ok(receipt.properties.input_sha256, "openapi.json keeps the full receipt schema");
+});
+
 test("payee delegations in the registration file: signed by the agent wallet for agent #97520 on this origin, at most 365 days", async () => {
   const { recoverTypedDataAddress } = await import("viem");
   const payees = agentRegistration("https://presign-guard.fizzl.eu").services.find((x) => x.name === "x402").payees;
