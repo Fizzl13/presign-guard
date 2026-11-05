@@ -21,8 +21,10 @@ const PUBLIC = {
   // X Layer: only dRPC runs eth_simulateV1 there (OKX's own nodes answered "rpc method is not whitelisted" on
   // 27 Oct 2026).
   196: ["https://xlayer.drpc.org"],
-  // Monad: its own public node runs eth_simulateV1 (dRPC's free plan, publicnode and monadinfra didn't, 3 Nov 2026).
-  143: ["https://rpc.monad.xyz"],
+  // Monad: rpc.monad.xyz ran eth_simulateV1 on 3 Nov 2026 and answered "Method not found" on 5 Nov; of Monad's own
+  // nodes only rpc4 runs it now (dRPC's free plan, publicnode and monadinfra don't). rpc4 refuses an explicit
+  // "validation": false, so the call leaves it out (false is the default in the eth_simulateV1 spec).
+  143: ["https://rpc4.monad.xyz", "https://rpc.monad.xyz"],
 };
 export const SIMULATED_CHAINS = Object.keys(PUBLIC).map(Number);
 const NATIVE = { 1: "ETH", 10: "ETH", 56: "BNB", 137: "POL", 143: "MON", 196: "OKB", 8453: "ETH", 42161: "ETH", 4663: "ETH" };
@@ -114,7 +116,7 @@ export function createSimulator({ env = process.env, fetch: fetchImpl, timeoutMs
   // { ok, changes, gasUsed, error, source } or null when off, the chain isn't covered, or no RPC answered.
   async function simulate({ chainId, from, to, data = "0x", value = 0n }) {
     if (!enabled || !PUBLIC[chainId] || !from || !to) return null;
-    const body = { jsonrpc: "2.0", id: 1, method: "eth_simulateV1", params: [{ blockStateCalls: [{ calls: [{ from, to, data, value: "0x" + BigInt(value).toString(16) }] }], traceTransfers: true, validation: false }, "latest"] };
+    const body = { jsonrpc: "2.0", id: 1, method: "eth_simulateV1", params: [{ blockStateCalls: [{ calls: [{ from, to, data, value: "0x" + BigInt(value).toString(16) }] }], traceTransfers: true }, "latest"] };
     for (const { url, source } of urls(chainId)) {
       try {
         const answer = await rpc(url, body);
