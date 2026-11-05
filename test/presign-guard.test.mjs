@@ -1357,6 +1357,19 @@ test("simulation: the intent check sees the simulated balance changes", async ()
   assert.match(asked, /5000 USDC to 0xbad0000000000000000000000000000000000001/);
 });
 
+test("simulation on Monad asks rpc4 first, and no call sends an explicit validation flag (rpc4 refuses one)", async () => {
+  const { createSimulator } = await import("../src/simulate.js");
+  const asked = [];
+  const sim = createSimulator({ env: {}, fetch: async (url, init) => {
+    asked.push({ url, body: JSON.parse(init.body) });
+    return Response.json({ jsonrpc: "2.0", id: 1, result: [{ calls: [{ status: "0x1", logs: [], gasUsed: "0x5208" }] }] });
+  } });
+  const r = await sim.simulate({ chainId: 143, from: "0x0000000000000000000000000000000000000001", to: "0x0000000000000000000000000000000000000002" });
+  assert.equal(r.ok, true);
+  assert.equal(asked[0].url, "https://rpc4.monad.xyz");
+  assert.equal("validation" in asked[0].body.params[0], false);
+});
+
 test("simulation self-test (GET /health): which source answered per chain, the reason when one fails, never the key", async () => {
   const { simulationSelfTest, simulationStatus } = await import("../src/simulate.js");
   assert.equal((await simulationSelfTest({ env: { SIMULATION: "off" } })).selfTest, "off (SIMULATION=off)");
