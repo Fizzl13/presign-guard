@@ -24,6 +24,7 @@ import { monadConfig, monadFacilitator, MONAD_NETWORK } from "./src/monad.js";
 import { extraEvmConfig, EXTRA_EVM_FACILITATOR } from "./src/extra-evm.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
+import { createAfuel } from "./src/afuel.js";
 import { createPaymentRetry } from "./src/payment-retry.js";
 import { owsPaymentRequired } from "./src/ows.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
@@ -150,7 +151,11 @@ if (process.env.CREDITS_REDIS_URL) {
 }
 const CREDIT_COSTS = creditCosts(ROUTES);
 // With packs on, every paid route's description (also in the Bazaar) mentions them.
-const PAYWALL_ROUTES = creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD, EXTRA_EVM) } : ROUTES;
+// $AFUEL (src/afuel.js): with AFUEL_PAYMENTS=on, every USDC-on-Solana option also gets an AFUEL option, discounted.
+const afuel = createAfuel();
+if (afuel.enabled && SOLANA) afuel.attach(resourceServer);
+const PAYWALL_ROUTES = (afuel.enabled && SOLANA ? afuel.withAfuel : (r) => r)(creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD, EXTRA_EVM) } : ROUTES);
+if (afuel.enabled && SOLANA) afuel.ensurePrice().catch(() => {});
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
@@ -202,7 +207,7 @@ app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus(), ...memoryStatus() }));
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus(), afuel: afuel.status(), ...memoryStatus() }));
 jevSelfTest().catch(() => {});
 simulationSelfTest().catch(() => {});
 // Again every 6 hours, so /health shows how simulation works now, not only how it did at startup.
