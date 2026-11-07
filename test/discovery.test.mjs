@@ -219,7 +219,7 @@ test("every route's 402 header names the receipt in one line (the full schema is
 test("payee delegations in the registration file: signed by the agent wallet for agent #97520 on this origin, at most 365 days", async () => {
   const { recoverTypedDataAddress } = await import("viem");
   const payees = agentRegistration("https://presign-guard.fizzl.eu").services.find((x) => x.name === "x402").payees;
-  assert.deepEqual(payees.map((p) => p.network.split(":")[0]), ["solana", "xrpl", "algorand", "stellar"]);
+  assert.deepEqual(payees.map((p) => p.network.split(":")[0]), ["solana", "xrpl", "algorand", "stellar", "solana"]); // the second Solana one is for $AFUEL
   const types = { PayeeDelegation: [["chainId", "uint256"], ["registry", "address"], ["agentId", "uint256"], ["agentWallet", "address"], ["network", "string"], ["payTo", "string"], ["asset", "string"], ["origin", "string"], ["validAfter", "uint64"], ["validUntil", "uint64"], ["nonce", "bytes32"]].map(([name, type]) => ({ name, type })) };
   for (const p of payees) {
     const m = p.delegation.message;
