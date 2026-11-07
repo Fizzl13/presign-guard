@@ -2,7 +2,7 @@
 // the dashboard at x402-doctor.fizzl.eu/admin/usage. Null = not logged.
 import usageLog from "./usage-log.cjs";
 
-export const { createUsageLog, agentOf } = usageLog;
+export const { createUsageLog, agentOf, setTokenPrice } = usageLog;
 
 const ROUTES = { "/v1/check": "check", "/v1/check/explain": "check + explain" };
 

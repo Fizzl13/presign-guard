@@ -75,11 +75,27 @@ const NETWORK_NAMES = {
 };
 const RLUSD_HEX = '524C555344000000000000000000000000000000';
 
+// Tokens that are not dollars ($AFUEL): the service registers each with a live price (setTokenPrice), so a payment
+// in it is logged at its dollar value, not as if its base units were USDC. Without a price its usd is null.
+const TOKENS = new Map(); // asset -> { symbol, decimals, usdPerToken }
+function setTokenPrice(asset, symbol, usdPerToken, decimals = 6) {
+  TOKENS.set(String(asset), { symbol, decimals, usdPerToken });
+}
+function tokenOf(accepted) {
+  const t = accepted && TOKENS.get(String(accepted.asset));
+  const amount = accepted && (accepted.amount || accepted.maxAmountRequired);
+  if (!t || !/^\d+$/.test(String(amount ?? ''))) return null;
+  return { symbol: t.symbol, amount: Number(amount) / 10 ** t.decimals, t };
+}
+
 // USD value of a payment requirement: USDC in atomic units (6 decimals, 7 on Stellar), or RLUSD on the XRP Ledger,
 // where amounts are decimal values ("0.02"). Null for anything else.
 function usdOf(accepted) {
   const amount = accepted && (accepted.amount || accepted.maxAmountRequired);
   if (amount === undefined || amount === null) return null;
+  const token = tokenOf(accepted);
+  if (token) { const p = Number(token.t.usdPerToken()); return p > 0 ? token.amount * p : null; }
+  if (accepted && TOKENS.has(String(accepted.asset))) return null;
   if (/^xrpl:/.test(String(accepted.network || ''))) return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
   return /^\d+$/.test(String(amount)) ? Number(amount) / (/^stellar:/.test(String(accepted.network || '')) ? 1e7 : 1e6) : null;
 }
@@ -102,8 +118,10 @@ function paymentOf(req, res) {
   const payload = decodeBase64Json(req.headers['payment-signature'] || req.headers['x-payment']);
   const accepted = payload && (payload.accepted || payload.requirements);
   const network = settlement.network || (accepted && accepted.network) || null;
+  const token = tokenOf(accepted);
   return {
     usd: usdOf(accepted),
+    ...(token ? { token: token.symbol, token_amount: token.amount } : {}),
     network: NETWORK_NAMES[network] || network,
     payer: settlement.payer || null,
     tx: settlement.transaction || null,
@@ -380,12 +398,14 @@ function mcpPayment(requestBody, responseBody) {
   const paid = call.params && call.params._meta && call.params._meta['x402/payment'];
   const accepted = paid && paid.accepted;
   const network = settlement.network || (accepted && accepted.network) || null;
+  const token = tokenOf(accepted);
   return {
     usd: usdOf(accepted),
+    ...(token ? { token: token.symbol, token_amount: token.amount } : {}),
     network: NETWORK_NAMES[network] || network,
     payer: settlement.payer || null,
     tx: settlement.transaction || null,
   };
 }
 
-module.exports = { createUsageLog, paymentOf, attemptedNetwork, usdOf, mcpToolCall, mcpPayment, clip, agentOf, visitorOf, pathOf, BOT_AGENT };
+module.exports = { createUsageLog, paymentOf, attemptedNetwork, usdOf, setTokenPrice, mcpToolCall, mcpPayment, clip, agentOf, visitorOf, pathOf, BOT_AGENT };
