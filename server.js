@@ -29,7 +29,7 @@ import { createHolders } from "./src/afuel-holders.js";
 import { createPaymentRetry } from "./src/payment-retry.js";
 import { owsPaymentRequired } from "./src/ows.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
-import { createUsageLog, agentOf, describePresignCall } from "./src/usage.js";
+import { createUsageLog, agentOf, describePresignCall, setTokenPrice } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
 import facilitatorStartModule from "./src/facilitator-start.cjs";
 import indexNow from "./src/indexnow.cjs";
@@ -159,6 +159,8 @@ const PAYWALL_ROUTES = (afuel.enabled && SOLANA ? afuel.withAfuel : (r) => r)(cr
 if (afuel.enabled && SOLANA) afuel.ensurePrice().catch(() => {});
 // $AFUEL holders (src/afuel-holders.js): a wallet that signs and holds Bronze or more gets a few paid calls a day free.
 const holders = createHolders();
+// The usage log values AFUEL payments at the live AFUEL price, not as if AFUEL base units were USDC.
+setTokenPrice(afuel.mint, "AFUEL", () => afuel.usdPrice());
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
