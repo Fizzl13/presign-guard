@@ -25,6 +25,7 @@ import { extraEvmConfig, EXTRA_EVM_FACILITATOR } from "./src/extra-evm.js";
 import { facilitator as cdpFacilitator } from "@coinbase/x402";
 import { createCheckRouter, x402Routes } from "./src/presign-guard.js";
 import { createAfuel } from "./src/afuel.js";
+import { createHolders } from "./src/afuel-holders.js";
 import { createPaymentRetry } from "./src/payment-retry.js";
 import { owsPaymentRequired } from "./src/ows.js";
 import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
@@ -156,6 +157,8 @@ const afuel = createAfuel();
 if (afuel.enabled && SOLANA) afuel.attach(resourceServer);
 const PAYWALL_ROUTES = (afuel.enabled && SOLANA ? afuel.withAfuel : (r) => r)(creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD, EXTRA_EVM) } : ROUTES);
 if (afuel.enabled && SOLANA) afuel.ensurePrice().catch(() => {});
+// $AFUEL holders (src/afuel-holders.js): a wallet that signs and holds Bronze or more gets a few paid calls a day free.
+const holders = createHolders();
 // MPP (src/mpp-pay.cjs): the same Base USDC payment for agents that speak MPP, settled by
 // CDP like x402. Mainnet only, and only with its own MPP_SECRET. Prices come from ROUTES.
 const MPP = MAINNET && process.env.MPP_SECRET
@@ -207,7 +210,9 @@ app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus(), afuel: afuel.status(), ...memoryStatus() }));
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus(), afuel: afuel.status(), afuel_holders: holders.status(), ...memoryStatus() }));
+// Which $AFUEL holder tier a wallet has and how many free calls it has left today (free).
+app.get("/v1/afuel/holder", holders.statusHandler());
 jevSelfTest().catch(() => {});
 simulationSelfTest().catch(() => {});
 // Again every 6 hours, so /health shows how simulation works now, not only how it did at startup.
@@ -299,6 +304,7 @@ app.use(usageLog.middleware((req, res, body) => {
   if (req.method === "POST" && req.path === REFUSAL_PATH) return { route: "refusal received", via: "api", input: res.locals.refusal || {}, result: { status: res.statusCode, error: body && body.error } };
   const d = describePresignCall(req, res, body);
   if (d && req.fizzlInternal) return { ...d, via: "internal" };
+  if (d && req.fizzlCredits?.holder) return { ...d, via: "holder", tier: req.fizzlCredits.holder, payer: req.fizzlCredits.wallet };
   if (d && req.fizzlCredits?.vault) return { ...d, via: "vault" };
   if (d && req.fizzlCredits) return { ...d, via: "credits", credits: req.fizzlCredits.cost };
   return d;
@@ -359,10 +365,13 @@ app.post(["/v1/check", "/v1/check/explain"], (req, res, next) => checkJson(req, 
 // Our own services (PlainText) skip the paywall with the internal key (src/internal.js).
 const isInternal = internalAccess();
 app.use((req, _res, next) => { if (isInternal(req)) req.fizzlInternal = true; next(); });
+// A signed $AFUEL holder's free calls come first, before credits and the vault (CREDIT_COSTS are cents).
+const routeUsd = (req) => (CREDIT_COSTS[`${req.method} ${req.path}`] ? CREDIT_COSTS[`${req.method} ${req.path}`] / 100 : null);
+app.use(holders.payWithHolding(routeUsd));
 // A valid credit key with enough credits pays the call instead (src/credits.js).
 if (creditStore) app.use(payWithCredits({ store: creditStore, costs: CREDIT_COSTS }));
 // A Fizzl Pass proof (X-Fizzl-Pass) with enough credit in its vault pays the call too (CREDIT_COSTS are cents).
-app.use(vault.payFromVault((req) => (CREDIT_COSTS[`${req.method} ${req.path}`] ? CREDIT_COSTS[`${req.method} ${req.path}`] / 100 : null)));
+app.use(vault.payFromVault(routeUsd));
 // A retry with an x402 payment id this service already answered (same route and input, same payer) gets that answer
 // again, without a second charge (src/payment-retry.js). /v1/check's body is parsed above; /v1/injection's here.
 const injectionJson = express.json({ limit: "160kb" });
