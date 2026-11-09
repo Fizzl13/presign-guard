@@ -22,7 +22,7 @@ test("the offer hash matches x402-doctor's (the same canonical JSON)", () => {
 });
 
 test("the endpoint takes a report about presign-guard and refuses one about another seller", async () => {
-  const routes = createRefusalRoutes({ publicUrl: "https://presign-guard.fizzl.eu" });
+  const routes = createRefusalRoutes({ publicUrl: "https://presign-guard.fizzl.eu", routes: ["/v1/check"] });
   const app = express();
   app.get(PATH, routes.get);
   app.post(PATH, express.json(), routes.post);
@@ -33,8 +33,17 @@ test("the endpoint takes a report about presign-guard and refuses one about anot
   try {
     assert.equal((await post(refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check", accept, acceptIndex: 0, reason: "price_above_limit" }))).status, 204);
     assert.equal((await post(refusalReport({ resource: "https://other.example/v1/check", accept, reason: "price_above_limit" }))).status, 400);
+    // Lucian's report: the buyer's query or path never reaches the public counts, and a repost counts once.
+    const marked = refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check?wallet=marker-3e9a", accept, reason: "price_above_limit" });
+    assert.equal((await post(marked)).status, 204);
+    assert.equal((await post(marked)).status, 204);
+    assert.equal((await post(refusalReport({ resource: "https://presign-guard.fizzl.eu/u/marker-77b1", accept, reason: "price_above_limit" }))).status, 204);
+    const text = await (await fetch(url)).text();
+    assert.ok(!text.includes("marker-"), "no buyer input in the public counts");
+    assert.equal(JSON.parse(text).received.by_resource.other.total, 1);
+    assert.equal(JSON.parse(text).received.by_resource["/v1/check"].total, 2);
     const info = await (await fetch(url)).json();
-    assert.deepEqual(info.received.by_resource["https://presign-guard.fizzl.eu/v1/check"], { total: 1, signed: 0, reasons: { price_above_limit: 1 } });
+    assert.deepEqual(info.received.by_resource["/v1/check"], { total: 2, signed: 0, reasons: { price_above_limit: 2 } });
   } finally {
     server.close();
   }

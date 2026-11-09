@@ -312,7 +312,7 @@ app.use(usageLog.middleware((req, res, body) => {
   return d;
 }));
 // Refusals of presign-guard's own 402s (src/refusal.js, draft x402-foundation/x402#4087): why a buyer didn't pay.
-const refusalRoutes = createRefusalRoutes({ publicUrl: PUBLIC_URL });
+const refusalRoutes = createRefusalRoutes({ publicUrl: PUBLIC_URL, routes: [...new Set([...Object.keys(PAYWALL_ROUTES).map((k) => k.split(" ").pop()), "/mcp"])] });
 app.get(REFUSAL_PATH, (req, res) => { res.set("Access-Control-Allow-Origin", "*"); refusalRoutes.get(req, res); });
 app.post(REFUSAL_PATH, express.json({ limit: "4kb" }), (req, res) => { res.set("Access-Control-Allow-Origin", "*"); return refusalRoutes.post(req, res); });
 // After the usage log, so reads of the registration are logged.
