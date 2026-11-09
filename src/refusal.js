@@ -211,12 +211,25 @@ async function signedBy(report) {
   return ok ? report.signature.signer.toLowerCase() : false;
 }
 
+// The route a report counts under. A buyer's resource URL can carry its own query values or a caller-specific path,
+// and the counts are public, so reports are bucketed by a route the seller declares (routes: ['/api/v1/fix',
+// '/signal/:pair'], or a function url => template or null), never by the URL as sent. Anything else is "other".
+function routeMatcher(routes) {
+  if (typeof routes === 'function') return (u) => { try { return routes(u) || null; } catch { return null; } };
+  const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const list = (routes || []).map((t) => ({ t, re: new RegExp(`^${t.split('/').map((s) => (s.startsWith(':') ? '[^/]+' : esc(s))).join('/')}/?$`) }));
+  return (u) => list.find((x) => x.re.test(u.pathname))?.t ?? null;
+}
+
 // The seller's endpoint: GET says what it takes and what came in (last 30 days, since the last restart): counts per
-// resource and reason, and per UTC day, resource and reason; POST takes a report (204). record(report, { signer }) is
-// called for every accepted report.
-function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days = 30, now = () => Date.now() } = {}) {
+// route and reason, and per UTC day, route and reason; POST takes a report (204). An exact repost of a report already
+// counted is answered 204 and not counted again. record(report, { signer }) is called for every counted report, with
+// resource replaced by its route as well.
+function createRefusalRoutes({ publicUrl, routes = [], record = () => {}, perHour = 30, days = 30, now = () => Date.now() } = {}) {
   const ownHost = new URL(publicUrl).hostname;
+  const routeOf = routeMatcher(routes);
   const seen = [];
+  const counted = new Set(); // reports already counted (exact reposts are not)
   const hits = new Map();
   const allow = (key) => {
     const t = now();
@@ -229,7 +242,7 @@ function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days 
   };
   const counts = () => {
     const since = now() - days * 86400 * 1000;
-    while (seen.length && seen[0].at < since) seen.shift();
+    while (seen.length && seen[0].at < since) counted.delete(seen.shift().key);
     const out = {};
     const daily = new Map();
     for (const s of seen) {
@@ -251,7 +264,7 @@ function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days 
   return {
     get(_req, res) {
       const { byResource, byDay } = counts();
-      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed. A check that could not complete is check_unavailable (detail: ${UNAVAILABLE_CHECKS.join(', ')}), not a verdict on the seller. Never put the buyer's limits, budgets or other policy values in detail; price_above_limit's detail, if any, is ${LIMIT_KINDS.join(', ')}.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, by_resource: byResource, by_day: byDay } });
+      res.set('Cache-Control', 'public, max-age=60').json({ extension: 'refusal', version: VERSION, spec: ISSUE, how: `POST a report here (JSON, see schema) when you decide not to pay one of ${ownHost}'s 402s. Answered 204. Best effort: never wait for it. A ${[...SIGNED_ONLY].join(' or ')} report must be signed. A check that could not complete is check_unavailable (detail: ${UNAVAILABLE_CHECKS.join(', ')}), not a verdict on the seller. Never put the buyer's limits, budgets or other policy values in detail; price_above_limit's detail, if any, is ${LIMIT_KINDS.join(', ')}.`, reasons: REASONS, schema: REPORT_SCHEMA, received: { days, since_restart: true, counted_by: 'route the seller declares (other: none matched); exact reposts count once', by_resource: byResource, by_day: byDay } });
     },
     async post(req, res) {
       if (!allow(req.ip)) return res.status(429).json({ error: 'too many refusals from this address; try again later' });
@@ -260,10 +273,15 @@ function createRefusalRoutes({ publicUrl, record = () => {}, perHour = 30, days 
       const raw = req.body;
       const signer = raw.signature ? await signedBy(raw) : null;
       if (signer === false) return res.status(400).json({ error: 'the signature does not match signer for this report' });
-      seen.push({ at: now(), resource: parsed.report.resource, reason: parsed.report.reason, signed: Boolean(signer) });
-      if (seen.length > 50000) seen.shift();
-      res.locals.refusal = { reason: parsed.report.reason, signed: Boolean(signer), resource: new URL(parsed.report.resource).pathname };
-      try { record(parsed.report, { signer }); } catch { /* recording never fails the report */ }
+      const route = routeOf(new URL(parsed.report.resource)) || 'other';
+      const r = parsed.report;
+      const key = crypto.createHash('sha256').update(JSON.stringify([r.resource, r.offer.hash, r.offer.acceptIndex ?? null, r.reason, r.detail ?? null, r.checkedAt, signer || null])).digest('hex');
+      if (counted.has(key)) return res.status(204).end();
+      counted.add(key);
+      seen.push({ at: now(), key, resource: route, reason: r.reason, signed: Boolean(signer) });
+      if (seen.length > 50000) counted.delete(seen.shift().key);
+      res.locals.refusal = { reason: r.reason, signed: Boolean(signer), resource: route };
+      try { record({ ...r, resource: route }, { signer }); } catch { /* recording never fails the report */ }
       res.status(204).end();
     },
   };
