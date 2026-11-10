@@ -24,19 +24,21 @@ test("the offer hash matches x402-doctor's (the same canonical JSON)", () => {
 test("the endpoint takes a report about presign-guard and refuses one about another seller", async () => {
   const routes = createRefusalRoutes({ publicUrl: "https://presign-guard.fizzl.eu", routes: ["/v1/check"] });
   const app = express();
+  app.set("trust proxy", 1); // as behind Render: the address is the one its proxy hop supplies
   app.get(PATH, routes.get);
   app.post(PATH, express.json(), routes.post);
   const server = await new Promise((ok) => { const s = app.listen(0, "127.0.0.1", () => ok(s)); });
   const url = `http://127.0.0.1:${server.address().port}${PATH}`;
   const accept = x402Routes(EVM, "eip155:8453")["POST /v1/check"].accepts[0];
-  const post = (body) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  // `from`: the sending address as the proxy hop supplies it (unsigned reports count once per address a day).
+  const post = (body, from) => fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(from ? { "x-forwarded-for": from } : {}) }, body: JSON.stringify(body) });
   try {
     assert.equal((await post(refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check", accept, acceptIndex: 0, reason: "price_above_limit" }))).status, 204);
     assert.equal((await post(refusalReport({ resource: "https://other.example/v1/check", accept, reason: "price_above_limit" }))).status, 400);
     // Lucian's report: the buyer's query or path never reaches the public counts, and a repost counts once.
     const marked = refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check?wallet=marker-3e9a", accept, reason: "price_above_limit" });
-    assert.equal((await post(marked)).status, 204);
-    assert.equal((await post(marked)).status, 204);
+    assert.equal((await post(marked, "203.0.113.2")).status, 204);
+    assert.equal((await post(marked, "203.0.113.2")).status, 204);
     assert.equal((await post(refusalReport({ resource: "https://presign-guard.fizzl.eu/u/marker-77b1", accept, reason: "price_above_limit" }))).status, 204);
     const text = await (await fetch(url)).text();
     assert.ok(!text.includes("marker-"), "no buyer input in the public counts");
@@ -44,6 +46,18 @@ test("the endpoint takes a report about presign-guard and refuses one about anot
     assert.equal(JSON.parse(text).received.by_resource["/v1/check"].total, 2);
     const info = await (await fetch(url)).json();
     assert.deepEqual(info.received.by_resource["/v1/check"], { total: 2, signed: 0, reasons: { price_above_limit: 2 } });
+
+    // Lucian's counting policy: one address varying checkedAt and detail counts once per day, route and reason.
+    const t = Date.now();
+    for (let i = 1; i <= 5; i++) {
+      const r = refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check", accept, reason: "trust_low", detail: i % 2 ? "score" : "unknown", now: new Date(t - i * 60000) });
+      assert.equal((await post(r, "198.51.100.7")).status, 204);
+    }
+    assert.equal((await post(refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check", accept, reason: "trust_low" }), "198.51.100.8")).status, 204);
+    const capped = await (await fetch(url)).json();
+    assert.equal(capped.received.by_resource["/v1/check"].reasons.trust_low, 2, "one per address, not five");
+    assert.match(capped.received.counted_by, /capped at one per sending address, UTC day, route and reason/);
+    assert.ok(!JSON.stringify(capped).includes("198.51.100"), "no address in the public counts");
   } finally {
     server.close();
   }
