@@ -12,7 +12,9 @@ A pre-sign risk check for AI agents. Before an agent signs a transaction, approv
 
 Part of [Fizzl](https://fizzl.eu).
 
-## NEAR HACKATHON (track: AI Security & Defense)
+## NEAR HACKATHON (tracks: AI Security & Defense, Agent Economy, Unstoppable DeFi)
+
+**Demo video (2 min):** [watch on YouTube](https://youtu.be/TsTTRbaKNiA) · [demo post on X](https://x.com/x402fizzl/status/2120458980019601513). It shows a real run of `near/demo.mjs`: two transactions signed, four refused.
 
 **The problem.** On NEAR an AI agent can be given a function-call key: it can only call the methods it names on one contract, without a deposit, within a gas allowance. That is the right sandbox for an agent with money. But the transactions and NEAR Intents messages an agent signs can take that sandbox apart: a full-access key added, the account deleted, code deployed over the wallet, a key added to NEAR Intents, a swap that gives far more than it gets, a deposit into a look-alike of `intents.near`. An agent reading a tool result or a web page can be talked into signing any of them.
 
@@ -20,6 +22,7 @@ Part of [Fizzl](https://fizzl.eu).
 
 - **NEAR transactions** (`type: "near"`): base64 borsh (unsigned or signed), wallet-selector JSON or several transactions; every action judged, meta transactions by their inner actions. Red for a full-access key added, the account deleted, code deployed over the wallet, the last full-access key deleted (read from the account), `add_public_key` on intents.near, a forced `storage_unregister`, fake USDC/USDT/wNEAR (`ft_metadata`), look-alike accounts. Details: [NEAR transactions](#near-transactions).
 - **NEAR Intents messages** (`nep413`): the message an agent signs to trade, also inside `execute_intents`. Red for a `token_diff` that only gives, or gives back less than half its value at NEAR Intents' own 1Click prices (orange under 90%), a key added, fake tokens received, look-alike receivers; orange for another verifier than intents.near or a deadline days away.
+- **For trading agents (Unstoppable DeFi):** an agent that settles swaps through NEAR Intents signs a NEP-413 message, not a transaction. The price check above compares what it gives with what it gets at 1Click's own prices, so a bad quote, a tampered quote or a slipped-in key is refused before the agent signs.
 - Every party screened against the OFAC SDN list; the same rules over MCP (`presign_check`, `presign_quick_check`).
 
 The NEAR code: [src/near-tx.js](src/near-tx.js), [test/near-tx.test.mjs](test/near-tx.test.mjs), [near/demo.mjs](near/demo.mjs), and the wiring in src/presign-guard.js, src/mcp.js and src/discovery.js. Pull requests [#259](https://github.com/Fizzl13/presign-guard/pull/259), [#260](https://github.com/Fizzl13/presign-guard/pull/260) and [#261](https://github.com/Fizzl13/presign-guard/pull/261); everything before them is the existing product (baseline). Libraries: `@near-js/transactions` and `@near-js/utils` (decoding only), FastNEAR's public RPC, NEAR Intents' 1Click API (dry quotes and token prices).
