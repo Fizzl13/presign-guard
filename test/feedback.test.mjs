@@ -101,3 +101,20 @@ test('feedback: the MCP call records via mcp and marks errors', () => {
 test('feedback: parseFeedback trims and drops empty optional fields', () => {
   assert.deepEqual(parseFeedback({ type: ' bug ', message: '  broken  ', endpoint: '', contact: '  ' }).value, { type: 'bug', message: 'broken' });
 });
+
+test('feedback: a report may name the payment it is about (tx with its network, or a receipt id); a malformed one is refused', () => {
+  const tx = `0x${'ab'.repeat(32)}`;
+  assert.deepEqual(parseFeedback({ message: 'Paid but got a 502', payment: { tx, network: 'eip155:8453' } }).value.payment, { tx, network: 'eip155:8453' });
+  assert.deepEqual(parseFeedback({ message: 'By its receipt', payment: { receipt: 'pu_abc-123' } }).value.payment, { receipt: 'pu_abc-123' });
+  assert.match(parseFeedback({ message: 'abc', payment: { tx: '<script>' } }).error, /payment\.tx/);
+  assert.match(parseFeedback({ message: 'abc', payment: { network: 'eip155:8453' } }).error, /needs tx/);
+  assert.match(parseFeedback({ message: 'abc', payment: { tx, amount: 1 } }).error, /no field amount/);
+  assert.match(parseFeedback({ message: 'abc', payment: 'yes' }).error, /payment must be an object/);
+  const events = [];
+  const fb = createFeedback({ service: 'test-service', record: (e) => events.push(e), log: { log() {}, error() {} } });
+  const out = fb.submit({ type: 'bug', message: 'Paid but got a 502', payment: { tx, network: 'eip155:8453' } }, { ip: '1.2.3.4' });
+  assert.equal(out.status, 202);
+  assert.equal(events[0].input.payment, 'eip155:8453', 'the usage line names the network');
+  assert.equal(events[0].feedback.payment.tx, tx, 'the report itself keeps the transaction, for the person who reads it');
+  assert.ok(fb.mcpTool.inputSchema.properties.payment, 'the MCP tool lists it');
+});
