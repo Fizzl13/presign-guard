@@ -62,3 +62,49 @@ test("the endpoint takes a report about presign-guard and refuses one about anot
     server.close();
   }
 });
+
+test("the counts survive a restart: counted reports go to their own log and are read back at the start", async () => {
+  const { createRefusalLog } = await import("../src/refusal-log.js");
+  const accept = x402Routes(EVM, "eip155:8453")["POST /v1/check"].accepts[0];
+  const written = [];
+  const lines = [];
+  const asked = [];
+  const reader = { configured: true, load: async ({ service } = {}) => { asked.push(service); return { events: lines }; } };
+  const serve = async (log) => {
+    const routes = createRefusalRoutes({ publicUrl: "https://presign-guard.fizzl.eu", routes: ["/v1/check"], record: log.record, history: log.history });
+    await routes.ready;
+    const app = express();
+    app.set("trust proxy", 1);
+    app.get(PATH, routes.get);
+    app.post(PATH, express.json(), routes.post);
+    const server = await new Promise((ok) => { const s = app.listen(0, "127.0.0.1", () => ok(s)); });
+    const url = `http://127.0.0.1:${server.address().port}${PATH}`;
+    const post = (body, from) => fetch(url, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": from }, body: JSON.stringify(body) });
+    return { server, url, post };
+  };
+  // First process: one report counted, written to the log without the URL as sent.
+  const first = await serve(createRefusalLog({ service: "presign-refusals", log: { record: (e) => written.push(e) }, reader: { configured: false } }));
+  const report = refusalReport({ resource: "https://presign-guard.fizzl.eu/v1/check?wallet=marker-71c0", accept, reason: "price_above_limit" });
+  try {
+    assert.equal((await first.post(report, "203.0.113.4")).status, 204);
+    assert.equal((await (await fetch(first.url)).json()).received.since_restart, true);
+  } finally { first.server.close(); }
+  assert.equal(written.length, 1);
+  assert.deepEqual(Object.keys(written[0].input).sort(), ["key", "reason", "route", "signed"]);
+  assert.equal(written[0].input.route, "/v1/check");
+  assert.ok(!JSON.stringify(written).includes("marker-71c0"));
+  // After a restart the log is read back: the count is there, and the same report posted again still counts once.
+  lines.push({ t: new Date(Date.now() - 60000).toISOString(), service: "presign-refusals", ...written[0] });
+  const second = await serve(createRefusalLog({ service: "presign-refusals", log: { record: (e) => written.push(e) }, reader }));
+  try {
+    let info = await (await fetch(second.url)).json();
+    assert.deepEqual(asked, ["presign-refusals"]);
+    assert.equal(info.received.since_restart, false);
+    assert.equal(info.received.by_resource["/v1/check"].total, 1);
+    assert.equal((await second.post(report, "203.0.113.5")).status, 204);
+    info = await (await fetch(second.url)).json();
+    assert.equal(info.received.by_resource["/v1/check"].total, 1, "a restored report still counts once");
+    assert.equal(written.length, 1);
+  } finally { second.server.close(); }
+  assert.throws(() => createRefusalLog({}), /service/);
+});
