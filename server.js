@@ -1,6 +1,7 @@
 import { createPassVerifier, limitKeyOf } from "./src/fizzl-pass.js";
 import { createVault, redisVault } from "./src/fizzl-vault.js";
 import { createRefusalRoutes, PATH as REFUSAL_PATH } from "./src/refusal.js";
+import { createRefusalLog } from "./src/refusal-log.js";
 import { createErrorReporter } from "./src/error-report.js";
 import express from "express";
 import { securityHeaders } from "./src/security-headers.js";
@@ -311,8 +312,11 @@ app.use(usageLog.middleware((req, res, body) => {
   if (d && req.fizzlCredits) return { ...d, via: "credits", credits: req.fizzlCredits.cost };
   return d;
 }));
-// Refusals of presign-guard's own 402s (src/refusal.js, draft x402-foundation/x402#4087): why a buyer didn't pay.
-const refusalRoutes = createRefusalRoutes({ publicUrl: PUBLIC_URL, routes: [...new Set([...Object.keys(PAYWALL_ROUTES).map((k) => k.split(" ").pop()), "/mcp"])] });
+// Refusals of presign-guard's own 402s (src/refusal.js, draft x402-foundation/x402#4087): why a buyer didn't pay. The
+// counts survive a restart: each counted report also goes to a small log of its own (events/presign-refusals/), read
+// back at the start (src/refusal-log.js).
+const refusalLog = createRefusalLog({ service: "presign-refusals" });
+const refusalRoutes = createRefusalRoutes({ publicUrl: PUBLIC_URL, routes: [...new Set([...Object.keys(PAYWALL_ROUTES).map((k) => k.split(" ").pop()), "/mcp"])], record: refusalLog.record, history: refusalLog.history });
 app.get(REFUSAL_PATH, (req, res) => { res.set("Access-Control-Allow-Origin", "*"); refusalRoutes.get(req, res); });
 app.post(REFUSAL_PATH, express.json({ limit: "4kb" }), (req, res) => { res.set("Access-Control-Allow-Origin", "*"); return refusalRoutes.post(req, res); });
 // After the usage log, so reads of the registration are logged.
