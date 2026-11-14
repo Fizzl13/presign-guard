@@ -3,8 +3,8 @@
 on the model remembering them (the same idea as x402-safe-fetch: the check sits in the payment path, not in the model).
 
 It reads the hook's JSON on stdin and answers with a permission decision:
-  deny  never allowed, whatever was said in the chat (wallet and agent keys, paying tools, Render writes, Sentry
-        issue changes);
+  deny  never allowed, whatever was said in the chat (wallet and agent keys, paying tools, Render and Railway writes,
+        Sentry issue changes);
   ask   allowed only after Frits approves the prompt himself (the paying workflows index-payment, spot-buy and
         buy-check, npm publish, paid Higgsfield generation);
   (no output) everything else goes on as usual.
@@ -40,6 +40,15 @@ COINBASE_READ = re.compile(
     r"^mcp__Coinbase__coinbase_(balance|fees|products_|orders_(get|list|fills|preview|edit_preview)|portfolios_(get|list)"
     r"|settlements_list|convert_(get|quote)|x402_resources|feedback_submit)"
 )
+# Railway: reading status, logs, metrics, deploys and docs is fine; anything that deploys, changes, creates or deletes
+# is Frits's. Variables and bucket credentials can carry secret values, so they are not read either.
+RAILWAY_READ = re.compile(
+    r"^mcp__Railway__(whoami|list-(projects|services|deployments|domains|workspaces|webhooks|feature-flags|tcp-proxies|traces"
+    r"|beta-features|cloud-agent-models|cloud-agent-tasks)|get-(status|logs|staged-changes|service-config|service-metrics"
+    r"|deployment-diagnosis|trace|tracing|tracing-coverage|feature-flag|function-source-code|cloud-agent-transcript)"
+    r"|describe-(environment|service|template)|environment-status|domain-status|http-(error-rate|requests|response-time)"
+    r"|search-(docs|templates)|fetch-docs|check-cloud-agent-task)$"
+)
 SENTRY_CHANGE = re.compile(r"^mcp__Sentry__(update_|delete_|link_issue|unlink_issue|add_issue_note)")
 SENTRY_CREATE = re.compile(r"^mcp__Sentry__create_")
 PAYING_TOOL = re.compile(r"(pay_x402|x402_pay|x402_buy|safe_buy|paypal_.*pay|coinbase_transfer)", re.I)
@@ -71,6 +80,8 @@ def decide(tool, inp):
         return "deny", "Fizzl rule: Claude never pays. This tool pays or moves money."
     if tool.startswith("mcp__Render__") and not RENDER_READ.match(tool):
         return "deny", "Fizzl rule: Render is read-only for Claude (no env changes, deploys or new services). Frits does those himself."
+    if tool.startswith("mcp__Railway__") and not RAILWAY_READ.match(tool):
+        return "deny", "Fizzl rule: Railway is read-only for Claude (no deploys, variables, new or deleted services). Frits does those himself."
     if tool.startswith("mcp__Coinbase__") and not COINBASE_READ.match(tool):
         return "deny", "Fizzl rule: never trade, transfer or pay with the Coinbase tools."
     if SENTRY_CHANGE.match(tool):
