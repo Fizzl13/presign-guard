@@ -49,6 +49,12 @@ RAILWAY_READ = re.compile(
     r"|describe-(environment|service|template)|environment-status|domain-status|http-(error-rate|requests|response-time)"
     r"|search-(docs|templates)|fetch-docs|check-cloud-agent-task)$"
 )
+# Railway set-up steps Frits may approve one by one (14 Nov 2026: "Doe jij het klikwerk maar"): a project, a service,
+# its source, settings and domain, and deploying it. Variables, credentials and deleting stay his.
+RAILWAY_SETUP = re.compile(
+    r"^mcp__Railway__(create-project|create-service|create-deployment|connect-service-source|update-service|generate-domain"
+    r"|accept-deploy|redeploy|restart-service)$"
+)
 SENTRY_CHANGE = re.compile(r"^mcp__Sentry__(update_|delete_|link_issue|unlink_issue|add_issue_note)")
 SENTRY_CREATE = re.compile(r"^mcp__Sentry__create_")
 PAYING_TOOL = re.compile(r"(pay_x402|x402_pay|x402_buy|safe_buy|paypal_.*pay|coinbase_transfer)", re.I)
@@ -80,6 +86,8 @@ def decide(tool, inp):
         return "deny", "Fizzl rule: Claude never pays. This tool pays or moves money."
     if tool.startswith("mcp__Render__") and not RENDER_READ.match(tool):
         return "deny", "Fizzl rule: Render is read-only for Claude (no env changes, deploys or new services). Frits does those himself."
+    if RAILWAY_SETUP.match(tool):
+        return "ask", "Railway set-up step (project, service, source, settings, domain or deploy): only when Frits approves this one."
     if tool.startswith("mcp__Railway__") and not RAILWAY_READ.match(tool):
         return "deny", "Fizzl rule: Railway is read-only for Claude (no deploys, variables, new or deleted services). Frits does those himself."
     if tool.startswith("mcp__Coinbase__") and not COINBASE_READ.match(tool):
