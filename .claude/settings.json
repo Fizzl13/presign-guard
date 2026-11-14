@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$CLAUDE_PROJECT_DIR/.claude/hooks/fizzl-guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Fizzl guard"
+          }
+        ]
+      }
+    ]
+  }
+}
