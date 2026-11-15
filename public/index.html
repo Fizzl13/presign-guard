@@ -79,7 +79,7 @@
   .by-fizzl a { display: inline-flex; align-items: center; gap: 6px; color: var(--soft); text-decoration: none; }
   .by-fizzl a:hover { color: var(--text); }
   .by-fizzl svg { height: 20px; width: auto; display: block; } .by-fizzl .b { fill: var(--mint); }
-  @media (max-width: 560px) { .live { display: none; } .topbar { margin-bottom: 32px; } }
+  @media (max-width: 560px) { .live { display: none; } .topbar { margin-bottom: 32px; } .top-right { flex-wrap: wrap; justify-content: flex-end; gap: 6px; } }
 </style>
 <style>
   .presets { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -211,7 +211,7 @@
 <div class="wrap">
   <header class="topbar">
     <a class="brand" href="/"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect x="1.5" y="1.5" width="125" height="125" rx="29" fill="#020708" stroke="#61f5c3" stroke-opacity=".4" stroke-width="3"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#f4f8f7" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#f4f8f7" stroke-width="16" stroke-linecap="round"/><g fill="#61f5c3"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>presign-guard</b><small>by <em>fizzl</em> · pay-per-call tools for AI agents</small></span></a>
-    <span class="top-right"><a class="wallet-link" href="https://wallet.fizzl.eu/" title="Fizzl Agent Wallet: spending limits and approvals for your agents">Agent Wallet ↗</a><span class="live">ONLINE · 10 NETWORKS</span></span>
+    <span class="top-right"><a class="wallet-link" href="https://wallet.fizzl.eu/" title="Fizzl Agent Wallet: spending limits and approvals for your agents">Agent Wallet ↗</a><a class="wallet-link" href="https://forge.fizzl.eu/" title="x402 Forge: ready-made x402 tools for AI agents, or one built to order">Forge ↗</a><span class="live">ONLINE · 10 NETWORKS</span></span>
   </header>
   <div class="eyebrow"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>x402 · MPP · 10 networks · for AI agents</div>
   <h1>Check it <em>before</em> your agent signs it.</h1>
