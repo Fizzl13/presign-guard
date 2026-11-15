@@ -29,7 +29,7 @@ import { createAfuel } from "./src/afuel.js";
 import { createHolders } from "./src/afuel-holders.js";
 import { createPaymentRetry } from "./src/payment-retry.js";
 import { owsPaymentRequired } from "./src/ows.js";
-import { agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
+import { agentCard, agentRegistration, CONTACT, mirrorChallengeIntoBody, openApi, wellKnown } from "./src/discovery.js";
 import { createUsageLog, agentOf, describePresignCall, setTokenPrice } from "./src/usage.js";
 import feedbackModule from "./src/feedback.cjs";
 import facilitatorStartModule from "./src/facilitator-start.cjs";
@@ -321,6 +321,7 @@ app.get(REFUSAL_PATH, (req, res) => { res.set("Access-Control-Allow-Origin", "*"
 app.post(REFUSAL_PATH, express.json({ limit: "4kb" }), (req, res) => { res.set("Access-Control-Allow-Origin", "*"); return refusalRoutes.post(req, res); });
 // After the usage log, so reads of the registration are logged.
 app.get("/.well-known/agent-registration.json", (_req, res) => res.json(agentRegistration(PUBLIC_URL)));
+app.get("/.well-known/agent-card.json", (_req, res) => res.set("cache-control", "public, max-age=300").set("access-control-allow-origin", "*").json(agentCard(PUBLIC_URL)));
 // Free, open data: every digital currency address on the OFAC SDN list with its entry, for anyone who wants to screen
 // locally (presign-guard-payer-screen does). The same list GET /v1/screen and the checks use. After the usage log, so who
 // downloads it is counted.

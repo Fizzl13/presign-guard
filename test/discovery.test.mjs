@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { x402Routes } from "../src/presign-guard.js";
-import { agentRegistration, openApi, wellKnown } from "../src/discovery.js";
+import { agentCard, agentRegistration, openApi, wellKnown } from "../src/discovery.js";
 
 const PAY_TO = "0x6B0F4651eD42893ab58139938175E4a69f175F25";
 const SOLANA = { network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp", payTo: "ATWJ82T8nRdQwZnaysB68N5EpaSvLRsQP4h6eWmaJBH9" };
@@ -233,4 +233,17 @@ test("payee delegations in the registration file: signed by the agent wallet for
     });
     assert.equal(signer.toLowerCase(), m.agentWallet.toLowerCase(), p.network);
   }
+});
+
+test("A2A agent card: every paid route as a skill, the free quick check, openapi and MCP", async () => {
+  const c = agentCard("https://presign-guard.fizzl.eu");
+  assert.equal(c.protocolVersion, "0.3.0");
+  assert.equal(c.name, "presign-guard");
+  assert.deepEqual(c.skills.map((s) => s.id), ["check", "check-explain", "token", "approvals", "screen", "injection", "check-quick"]);
+  assert.equal(c.skills[0].examples[0], "POST https://presign-guard.fizzl.eu/v1/check");
+  assert.ok(c.skills.every((s) => s.name && s.description && s.examples.length === 1));
+  assert.equal(c.skills[2].examples[0], "GET https://presign-guard.fizzl.eu/v1/token?chain=solana&address=DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+  assert.deepEqual(c.additionalInterfaces.map((x) => x.url), ["https://presign-guard.fizzl.eu/openapi.json", "https://presign-guard.fizzl.eu/mcp"]);
+  const { describePresignCall } = await import("../src/usage.js");
+  assert.deepEqual(describePresignCall({ method: "GET", path: "/.well-known/agent-card.json", query: {}, get: () => undefined }, { statusCode: 200 }, {}), { route: "agent card", via: "discovery", input: {}, result: { status: 200 } });
 });
