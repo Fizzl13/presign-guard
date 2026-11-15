@@ -718,6 +718,46 @@ export function wellKnown(origin, { credits = false } = {}) {
   };
 }
 
+// A2A Agent Card (protocol 0.3.0): what this agent does, for A2A clients and agent directories, as Ichimoku Signal
+// serves its own. No A2A task endpoint: the skills are the paid routes (called over x402, MPP or MCP) plus the free
+// quick check. Not pinned on chain.
+const SKILL_IDS = { "/v1/check": "check", "/v1/check/explain": "check-explain" };
+export function agentCard(origin) {
+  const q = (o) => new URLSearchParams(o).toString();
+  const example = {
+    [TOKEN_ROUTE.path]: `GET ${origin}${TOKEN_ROUTE.path}?${q(TOKEN_INPUT_EXAMPLE)}`,
+    [APPROVALS_ROUTE.path]: `GET ${origin}${APPROVALS_ROUTE.path}?${q(APPROVALS_INPUT_EXAMPLE)}`,
+    [SCREEN_ROUTE.path]: `GET ${origin}${SCREEN_ROUTE.path}?${q(SCREEN_INPUT_EXAMPLE)}`,
+  };
+  return {
+    protocolVersion: "0.3.0",
+    name: "presign-guard",
+    description: wellKnown(origin).description,
+    url: `${origin}/`,
+    version: "1.0.0",
+    provider: { organization: "Fizzl", url: "https://fizzl.eu" },
+    iconUrl: `${origin}/media/icon.png`,
+    documentationUrl: `${origin}/llms.txt`,
+    capabilities: { streaming: false, pushNotifications: false },
+    defaultInputModes: ["application/json"],
+    defaultOutputModes: ["application/json"],
+    skills: [
+      ...DISCOVERY_RESOURCES.map(([p, method, name, description]) => ({
+        id: SKILL_IDS[p] ?? p.split("/").filter(Boolean).pop(),
+        name,
+        description,
+        tags: ["wallet-security", "agents", "x402"],
+        examples: [example[p] ?? `${method} ${origin}${p}`],
+      })),
+      { id: "check-quick", name: "Quick check (free)", description: "Free: the green/orange/red verdict of a transaction, approval or signature, without the reasons; a few an hour.", tags: ["free", "wallet-security"], examples: [`POST ${origin}/v1/check/quick`] },
+    ],
+    additionalInterfaces: [
+      { transport: "HTTP+JSON", url: `${origin}/openapi.json` },
+      { transport: "MCP", url: `${origin}/mcp` },
+    ],
+  };
+}
+
 // The payees that aren't the agent wallet, each with the payee delegation the agent wallet (0x6B0F…5F25) signed on
 // 30 Oct 2026 for a year (draft ERC "x402 Payee Verification for ERC-8004 Agents", ethereum/ERCs#2132).
 export const PAYEE_DELEGATIONS = JSON.parse(readFileSync(new URL("./payee-delegations.json", import.meta.url), "utf8"));

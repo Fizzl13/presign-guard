@@ -152,6 +152,7 @@ function describeScreenCall(req, body) {
 export function describePresignCall(req, _res, body) {
   // Who reads the EIP-8004 registration (e.g. agent registries such as Metaplex).
   if (req.method === "GET" && req.path === "/.well-known/agent-registration.json") return { route: "agent registration", via: "discovery", input: {}, result: { status: _res.statusCode } };
+  if (req.method === "GET" && req.path === "/.well-known/agent-card.json") return { route: "agent card", via: "discovery", input: {}, result: { status: _res.statusCode } };
   // Who reads the MCP server card (directories such as Smithery).
   if (req.method === "GET" && req.path === "/.well-known/mcp/server-card.json") return { route: "mcp server card", via: "discovery", input: {}, result: { status: _res.statusCode } };
   if (req.method === "POST" && (req.path === "/mcp" || req.path === "/mcp/free")) return describeMcpCall(req, body);
