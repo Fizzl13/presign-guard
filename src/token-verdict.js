@@ -130,14 +130,15 @@ async function getJson(url, source, { notFoundOk = false } = {}) {
   return body;
 }
 
-function getMarket(chain, address) {
+// Exported for POST /v1/token/verdict's sell check (src/sell-check.js): the same cached answer, no second request.
+export function getMarket(chain, address) {
   return cached(`dex:${chain}:${address}`, async () => {
     const body = await getJson(`${DEXSCREENER_BASE}/tokens/v1/${TOKEN_CHAINS[chain].dexscreener}/${address}`, "DexScreener");
     return Array.isArray(body) ? body : Array.isArray(body?.pairs) ? body.pairs : [];
   }, MARKET_TTL_MS);
 }
 
-function getSolanaSecurity(mint) {
+export function getSolanaSecurity(mint) {
   return cached(`sol-token:${mint}`, async () => {
     const { result, partial } = await goplus(`/solana/token_security?contract_addresses=${mint}`);
     const data = result?.[mint];
@@ -407,9 +408,13 @@ const PHRASES = {
   TOP_HOLDERS_CONCENTRATED: (d) => `top holder ${d.top1Pct}%, top 10 ${d.top10Pct}%`,
 };
 
+// One reason as a short phrase (also used by the take of POST /v1/token/verdict, src/token-verdict-card.js).
+export const reasonPhrase = (r) => PHRASES[r.code]?.(r.details ?? {}) ?? r.code.toLowerCase().replace(/_/g, " ");
+export { usd as formatUsd, age as formatAge };
+
 export function oneLiner({ grade, reasons, market }) {
   const serious = reasons.filter((r) => r.severity !== "info");
-  const phrases = serious.map((r) => PHRASES[r.code]?.(r.details ?? {}) ?? r.code.toLowerCase().replace(/_/g, " "));
+  const phrases = serious.map(reasonPhrase);
   const stable = reasons.find((r) => r.code === "KNOWN_STABLECOIN");
   if (!phrases.length && reasons.some((r) => r.code === "ISSUER_IS_RIPPLE")) {
     phrases.push("no red flags, Ripple's RLUSD");

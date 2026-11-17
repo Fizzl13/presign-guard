@@ -40,6 +40,8 @@ import { createMcpRouter, createRateLimiter, FREE_CALLS_PER_HOUR } from "./src/m
 import { createTokenQuickRouter } from "./src/token-quick.js";
 import { fizzlCors } from "./src/fizzl-cors.js";
 import { createTokenRouter, validateTokenQuery } from "./src/token-verdict.js";
+import { createTokenVerdictRouter, validateTokenVerdictBody } from "./src/token-verdict-card.js";
+import { createShareRouter } from "./src/token-share.js";
 import { createApprovalsRouter, validateApprovalsQuery } from "./src/approvals.js";
 import { createScreenRouter, validateScreenQuery } from "./src/screen.js";
 import { createInjectionRouter } from "./src/injection.js";
@@ -354,12 +356,15 @@ app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solan
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: allowFreeQuick }));
+// Share links of POST /v1/token/verdict (src/token-share.js): a page and a card, free, rendered from the signed link.
+app.use(createShareRouter({ signer: SIGNER, publicUrl: PUBLIC_URL }));
 app.use("/v1/injection/quick", fizzlCors);
 app.use(createInjectionQuickRouter({ allowFree: allowFreeQuick }));
 app.use("/v1/check/quick", fizzlCors);
 app.use(createCheckQuickRouter({ allowFree: allowFreeQuick }));
 
 app.use(validateTokenQuery);
+app.use(validateTokenVerdictBody);
 app.use(validateApprovalsQuery);
 app.use(validateScreenQuery);
 app.use(mirrorChallengeIntoBody);
@@ -393,6 +398,7 @@ app.use((req, res, next) => (req.fizzlCredits || req.mppPaid ? next() : paywall(
 app.use(signPaidResponses(SIGNER, Object.keys(ROUTES)));
 app.use(createCheckRouter());
 app.use(createTokenRouter());
+app.use(createTokenVerdictRouter({ signer: SIGNER, publicUrl: PUBLIC_URL }));
 app.use(createApprovalsRouter());
 app.use(createScreenRouter());
 app.use(createInjectionRouter());

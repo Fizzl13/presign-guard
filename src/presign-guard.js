@@ -25,7 +25,7 @@ import express from "express";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
   approvalsBazaarExtension, approvalsServiceMetadata, SCREEN_ROUTE, screenBazaarExtension, screenServiceMetadata,
-  INJECTION_ROUTE, injectionBazaarExtension, injectionServiceMetadata,
+  INJECTION_ROUTE, injectionBazaarExtension, injectionServiceMetadata, TOKEN_VERDICT_ROUTE, tokenVerdictBazaarExtension,
 } from "./discovery.js";
 import { builderCodeExtension, merchantExtension } from "./merchant.js";
 import { extraEvmAccept } from "./extra-evm.js";
@@ -1697,6 +1697,24 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       mimeType: "application/json",
       ...tokenServiceMetadata,
       extensions: { ...tokenBazaarExtension(), ...sellerExtensions },
+    },
+    // The same token verdict as a POST with a JSON body, plus decision, take, sell check and share link
+    // (src/token-verdict-card.js): the same price and networks.
+    [`POST ${TOKEN_VERDICT_ROUTE.path}`]: {
+      accepts: [
+        { scheme: "exact", price: tokenPrice, network, payTo },
+        ...(solana?.payTo ? [{ scheme: "exact", price: tokenPrice, network: solana.network, payTo: solana.payTo }] : []),
+        ...xrplAccept(xrpl, tokenPrice, `POST ${TOKEN_VERDICT_ROUTE.path}`),
+        ...algorandAccept(algorand, tokenPrice),
+        ...stellarAccept(stellar, tokenPrice),
+        ...xlayerAccept(xlayer, tokenPrice),
+        ...monadAccept(monad, tokenPrice),
+        ...extraEvmAccept(extraEvm, tokenPrice),
+      ],
+      description: "Should I buy this token? A risk check for Base, Solana and other EVM tokens with one answer to act on: decision (buy, small_only, do_not_buy), a plain-language take, a sell check (honeypot, sell tax, freeze and pause powers, liquidity; on Base a sell transfer simulated on chain), the grade, reasons and market data, and a signed share link with a card image. Body: { tokenAddress, chain }. Synchronous, no polling",
+      mimeType: "application/json",
+      ...tokenServiceMetadata,
+      extensions: { ...tokenVerdictBazaarExtension(), ...sellerExtensions },
     },
     [`GET ${APPROVALS_ROUTE.path}`]: {
       accepts: [

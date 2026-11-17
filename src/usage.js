@@ -115,6 +115,34 @@ function describeTokenCall(req, body) {
   };
 }
 
+// POST /v1/token/verdict: which token, the verdict, grade and decision, whether it can be sold and whether a sell was
+// simulated. Not the requestKey (the buyer's own id).
+function describeTokenVerdictCall(req, body) {
+  const input = req.body || {};
+  const b = body || {};
+  const sell = b.sell_check || {};
+  return {
+    route: "token_verdict",
+    via: "api",
+    input: { chain: typeof input.chain === "string" ? input.chain.slice(0, 16) : "base", target: typeof input.tokenAddress === "string" ? input.tokenAddress.slice(0, 64) : undefined },
+    result: {
+      verdict: b.verdict === null ? "none" : b.verdict,
+      grade: b.grade,
+      decision: b.decision,
+      canSell: sell.can_sell,
+      simulated: sell.simulated,
+      reasons: Array.isArray(b.reasons) ? b.reasons.filter((r) => r.severity !== "info").map((r) => r.code).join(", ") || undefined : undefined,
+      error: b.error,
+      ...tollOf(b),
+    },
+  };
+}
+
+// GET /v/token/…: a share page or card of POST /v1/token/verdict was opened (never the link itself).
+function describeShareView(req, res) {
+  return { route: "token_share", via: "web", input: { kind: req.path.endsWith("/card.svg") ? "card" : "page" }, result: { status: res.statusCode } };
+}
+
 // GET /v1/approvals: which wallet, the verdict and grade, and the risky codes.
 function describeApprovalsCall(req, body) {
   const q = req.query || {};
@@ -157,6 +185,8 @@ export function describePresignCall(req, _res, body) {
   if (req.method === "GET" && req.path === "/.well-known/mcp/server-card.json") return { route: "mcp server card", via: "discovery", input: {}, result: { status: _res.statusCode } };
   if (req.method === "POST" && (req.path === "/mcp" || req.path === "/mcp/free")) return describeMcpCall(req, body);
   if (req.method === "GET" && req.path === "/v1/token") return describeTokenCall(req, body);
+  if (req.method === "POST" && req.path === "/v1/token/verdict") return describeTokenVerdictCall(req, body);
+  if (req.method === "GET" && req.path.startsWith("/v/token/")) return describeShareView(req, _res);
   if (req.method === "GET" && req.path === "/v1/token/quick") {
     const q = req.query || {};
     const b = body || {};
