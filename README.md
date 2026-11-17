@@ -55,6 +55,8 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `POST /v1/check` | $0.01 USDC | Verdict, reason codes, decoded subject |
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC | Token verdict: grade, reason codes, one-line summary, market data (see below) |
+| `POST /v1/token/verdict` | $0.01 USDC | The same token verdict for agents, as a JSON body: plus `decision`, a plain-language `take`, a `sell_check` (simulated on Base) and a signed `share` link (see [below](#token-verdict-for-agents-post-v1tokenverdict)) |
+| `GET /v/token/<link>`, `…/card.svg` | free | The page and 1200x630 card of a share link, rendered from the signed link itself |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `POST /v1/injection` | $0.01 USDC | Prompt-injection check: is a text your agent received (page, email, tool result, API answer, another agent's message) a trap? (see below) |
@@ -76,7 +78,7 @@ USDC on Polygon (`eip155:137`), Arbitrum (`eip155:42161`) and Avalanche C-Chain 
 
 ## Credit packs
 
-Agents that call presign-guard often can prepay: one x402 payment of **$0.80 for 100 credits** or **$7.00 for 1000 credits** (20% and 30% off), valid for a year. A credit is $0.01 of checks: `POST /v1/check`, `GET /v1/token`, `GET /v1/screen` and `POST /v1/injection` cost 1, `GET /v1/approvals` 2, `POST /v1/check/explain` 3.
+Agents that call presign-guard often can prepay: one x402 payment of **$0.80 for 100 credits** or **$7.00 for 1000 credits** (20% and 30% off), valid for a year. A credit is $0.01 of checks: `POST /v1/check`, `GET /v1/token`, `POST /v1/token/verdict`, `GET /v1/screen` and `POST /v1/injection` cost 1, `GET /v1/approvals` 2, `POST /v1/check/explain` 3.
 
 ```bash
 # 1. Buy a pack (any x402 client); the answer holds your key
@@ -229,6 +231,61 @@ For a proxy token (USDC, cbBTC, EURC on Base) GoPlus reports no pause or blackli
 **Launch facts from Toll** (Robinhood Chain, Solana and BSC): the answer carries a `toll` object from [Toll](https://t0ll.xyz) ("source: Toll", with a link to the token's page): who launched the coin and the dev's earlier launches, the first buyers (snipers, wallets that moved together) and Toll's findings, each labelled `good`, `note` or `against`. Information only: it never changes the verdict or the grade; at most it adds the info reason `TOLL_FINDINGS`. If Toll is slow or unavailable the verdict comes without it (`toll.error` says why). The free verdict-only checks don't ask Toll. `TOLL_PASS` sets the server's Toll key, `TOLL=off` turns the source off.
 
 On a token on the GoPlus trust list (USDC, USDT), the issuer's powers (mint, freeze, change balances) are info: the issuer keeps them on purpose. Missing data never makes a token red. If GoPlus or DexScreener is down there is no verdict (503, not charged); if RugCheck is down the verdict comes without it and says so.
+
+## Token verdict for agents: POST /v1/token/verdict
+
+The same verdict as `GET /v1/token` (the same code, price, credits and payment networks), for an agent that wants one answer to act on. The body is JSON, and the answer comes back in the same call: no operation id, no polling.
+
+```bash
+curl -X POST https://presign-guard.fizzl.eu/v1/token/verdict \
+  -H 'content-type: application/json' \
+  -d '{"tokenAddress": "0x4ed4e862860bed51a9570b96d89af5e1b0efefed", "chain": "base", "requestKey": "my-id-1"}'
+# -> 402 with the payment terms; pay with any x402 client and send it again
+```
+
+- `tokenAddress` (required): an EVM token contract (`0x…`), a Solana mint, an XRPL `CURRENCY.rIssuer` or an Algorand asset id.
+- `chain`: any chain `GET /v1/token` takes; `base` when left out.
+- `requestKey`: your own id (up to 128 characters), sent back as is. It is not logged.
+
+On top of everything `GET /v1/token` returns:
+
+- `decision`: `buy` (grade SAFE), `small_only` (CAUTION) or `do_not_buy` (RISKY or AVOID); `null` without a verdict.
+- `take`: one or two plain sentences for someone about to buy, built from the reasons and the market data by fixed rules (no LLM). `one_liner` stays as it is.
+- `sell_check`: can a holder sell it back? `can_sell` is `yes`, `limited`, `no` or `unknown`, with one entry per check and its source: GoPlus (honeypot, cannot sell all, sell tax, pausable, blacklist, cooldown; on Solana non-transferable, freeze authority, transfer hook and fee), the chain itself (a token paused right now, Token ACL), the XRP Ledger or Algorand node (freeze, clawback, required authorisation) and DexScreener (liquidity to sell into). **On Base the sale is also simulated** with `eth_simulateV1` on the latest block: a new wallet gets 0.01% of the token's deepest pool, then sends half of it back into that pool a block and five minutes later, which is the token movement of a sell and where honeypots block it. The answer gives the measured buy and sell tax; a sell transfer that reverts makes `can_sell` `no`. The router swap itself (price impact) is not simulated. `simulated: true` only when that sell transfer actually ran; when it can't (no pool with a contract address, such as a Uniswap v4-only token, no RPC answer, a pool transfer that already fails), `simulation.why` says so and nothing else changes. Missing data is `unknown`, never `no`. The sell check doesn't change the grade or the decision; the `take` mentions a failed simulated sell.
+- `share`: `{ url, image_url }`, a link to a page and a 1200x630 SVG card for this verdict (`null` when the server has no receipt signer).
+
+```json
+{
+  "verdict": "green",
+  "grade": "SAFE",
+  "decision": "buy",
+  "take": "No known red flags ($203k liquidity, 2.9 years old). Nothing found that should stop a buy, but this says nothing about where the price goes.",
+  "one_liner": "SAFE: no red flags, $203k liquidity, 2.9 years old",
+  "reasons": [],
+  "token": { "chain": "base", "address": "0x4ed4e862860bed51a9570b96d89af5e1b0efefed", "name": "Degen", "symbol": "DEGEN" },
+  "market": { "priceUsd": 0.0007, "liquidityUsd": 202772, "…": "…" },
+  "sell_check": {
+    "can_sell": "yes",
+    "simulated": true,
+    "checks": [
+      { "check": "honeypot", "result": "pass", "source": "GoPlus" },
+      { "check": "sell_all", "result": "pass", "source": "GoPlus" },
+      { "check": "sell_tax", "result": "pass", "value": 0, "source": "GoPlus" },
+      { "check": "liquidity", "result": "pass", "value": 202772, "source": "DexScreener" },
+      { "check": "simulated_sell", "result": "pass", "value": 0, "source": "simulation (public RPC)" }
+    ],
+    "simulation": { "ran": true, "ok": true, "method": "eth_simulateV1", "pool": "0xc9034c3e…", "buy_tax_pct": 0, "sell_tax_pct": 0, "…": "…" },
+    "note": "…"
+  },
+  "share": { "url": "https://presign-guard.fizzl.eu/v/token/eyJ…", "image_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg" },
+  "requestKey": "my-id-1",
+  "receipt": { "request_id": "…", "…": "…" }
+}
+```
+
+**The share link is stateless.** presign-guard stores nothing: the link is the verdict. `/v/token/<payload>.<signature>`: the payload is base64url canonical JSON (the same canonicalisation as the receipts) of the chain, address, name, symbol, verdict, grade, decision, take, top reason codes, a few market numbers, `checked_at` and the receipt's `request_id`; the signature is an EIP-191 `personal_sign` by the receipt signer over `presign-guard token share v1\n` followed by that JSON, as base64url. To verify one yourself, decode both parts, recover the signer (for example viem's `recoverMessageAddress`) and compare it with [`/.well-known/presign-guard-signer.json`](https://presign-guard.fizzl.eu/.well-known/presign-guard-signer.json). The server does the same on every view: a link that doesn't verify (one changed character, another signer, not canonical, over 2,400 characters) is a 400 and is never rendered. The page has no scripts, escapes every token-supplied string (names and symbols are chosen by whoever launched the token) and points its Open Graph and Twitter tags at the card. The card is SVG; there is no PNG version, and some sites don't show SVG previews.
+
+A risk check from public data, not financial advice: `buy` means no known red flags were found, not that the price will hold.
 
 ## Wallet approval audit
 
