@@ -145,7 +145,28 @@ export function createSimulator({ env = process.env, fetch: fetchImpl, timeoutMs
     return null;
   }
 
-  return { enabled, simulate };
+  // Any JSON-RPC body (one request or a batch) to the first source that answers it without an RPC error: the token
+  // sell check of POST /v1/token/verdict (src/sell-check.js). { answer, source }, or null when off, the chain isn't
+  // covered or no source answered.
+  async function send(chainId, body) {
+    if (!enabled || !PUBLIC[chainId]) return null;
+    for (const { url, source } of urls(chainId)) {
+      try {
+        const answer = await rpc(url, body);
+        const failed = (a) => !a || a.error || a.result === undefined;
+        if (Array.isArray(answer) ? !answer.length || answer.some(failed) : failed(answer)) {
+          log.warn?.(`[simulate] ${source} chain ${chainId}: ${(Array.isArray(answer) ? answer.find(failed) : answer)?.error?.message ?? "no result"}`);
+          continue;
+        }
+        return { answer, source };
+      } catch (err) {
+        log.warn?.(`[simulate] ${source} chain ${chainId}: ${err.name}: ${err.message}`);
+      }
+    }
+    return null;
+  }
+
+  return { enabled, simulate, send };
 }
 
 // Reason codes from a simulation, for the sender `from`. kind is the decoded call's kind (presign-guard.js).

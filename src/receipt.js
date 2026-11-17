@@ -23,6 +23,8 @@ import { keccak256, stringToBytes, recoverMessageAddress, isAddress, getAddress 
 import { privateKeyToAccount } from "viem/accounts";
 import { bindingFor } from "./binding.js";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export const ALGORITHM = "EIP-191 personal_sign over canonical JSON of the response without receipt.signature";
 
 // Canonical JSON: sorted keys, compact, ASCII only. undefined members are dropped
@@ -170,13 +172,14 @@ export function createSigner(env = process.env) {
     address: account.address,
     certificate: () => certificate,
     signers: [{ address: account.address, status: "current", valid_from: env.RECEIPT_SIGNER_SINCE || null, valid_until: null }, ...retired.map((r) => ({ ...r, status: "retired" }))],
-    // Returns the body with a signed receipt added; the verdict fields are untouched.
-    async sign(body, { route, input, payment = null }) {
+    // Returns the body with a signed receipt added; the verdict fields are untouched. requestId: one the route already
+    // put in its answer (the share link of POST /v1/token/verdict names it); a fresh one otherwise.
+    async sign(body, { route, input, payment = null, requestId = null }) {
       const cert = await certificate;
       // A transaction check is bound to the exact transaction and valid only for a short time (see binding.js).
       const binding = /(^POST \/v1\/check(\/explain)?$)|(^mcp presign_check(_explain)?$)/.test(route) ? bindingFor(input) : null;
       const receipt = {
-        request_id: randomUUID(),
+        request_id: typeof requestId === "string" && UUID.test(requestId) ? requestId : randomUUID(),
         route,
         input_sha256: inputHash(route, input),
         ...(binding && { binding }),
@@ -189,6 +192,11 @@ export function createSigner(env = process.env) {
       const unsigned = { ...body, receipt };
       const signature = await account.signMessage({ message: canonicalJson(unsigned) });
       return { ...body, receipt: { ...receipt, signature } };
+    },
+    // EIP-191 personal_sign over a text by the same key: the share links of POST /v1/token/verdict (src/token-share.js),
+    // which carry their own prefix so a share signature never reads as a receipt.
+    signText(text) {
+      return account.signMessage({ message: text });
     },
   };
 }
@@ -232,7 +240,7 @@ export function signPaidResponses(signer, paidRoutes) {
     res.json = (body) => {
       if (res.statusCode !== 200 || !body || typeof body !== "object" || Array.isArray(body)) return json(body);
       const input = req.method === "GET" ? { ...req.query } : req.body;
-      signer.sign(body, { route, input, payment: paymentFromHeaders(req.headers) }).then(json, (err) => {
+      signer.sign(body, { route, input, payment: paymentFromHeaders(req.headers), requestId: res.locals.receiptRequestId }).then(json, (err) => {
         console.warn(`receipt signing failed on ${route}: ${err.message}`);
         json(body); // an unsigned verdict beats no verdict
       });

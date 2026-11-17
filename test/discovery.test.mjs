@@ -45,18 +45,21 @@ test("token verdict: $0.01 on Base, plus Solana only when a Solana wallet is set
 
 test("openapi and well-known list all paid routes", () => {
   const spec = openApi("https://example.test", "eip155:8453", ["eip155:8453", SOLANA.network]);
-  assert.deepEqual(Object.keys(spec.paths), ["/v1/check", "/v1/check/explain", "/v1/token", "/v1/approvals", "/v1/screen", "/v1/injection", "/v1/sanctions"]);
+  assert.deepEqual(Object.keys(spec.paths), ["/v1/check", "/v1/check/explain", "/v1/token", "/v1/token/verdict", "/v1/approvals", "/v1/screen", "/v1/injection", "/v1/sanctions"]);
   assert.deepEqual(spec.paths["/v1/check"].post["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/token"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/token"].get.parameters.map((p) => p.name), ["chain", "address"]);
+  assert.deepEqual(spec.paths["/v1/token/verdict"].post["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
+  assert.equal(spec.paths["/v1/token/verdict"].post["x-payment-info"].price.amount, "0.01");
+  assert.deepEqual(spec.paths["/v1/token/verdict"].post.requestBody.content["application/json"].schema.required, ["tokenAddress"]);
   assert.deepEqual(spec.paths["/v1/approvals"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/approvals"].get.parameters.map((p) => p.name), ["chain", "address"]);
   assert.deepEqual(spec.paths["/v1/screen"].get["x-payment-info"].networks, ["eip155:8453", SOLANA.network]);
   assert.deepEqual(spec.paths["/v1/screen"].get.parameters.map((p) => p.name), ["address"]);
   const resources = wellKnown("https://example.test").resources;
   assert.deepEqual(resources.map((r) => r.url),
-    ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token", "https://example.test/v1/approvals", "https://example.test/v1/screen", "https://example.test/v1/injection"]);
-  assert.deepEqual(resources.map((r) => r.method), ["POST", "POST", "GET", "GET", "GET", "POST"]);
+    ["https://example.test/v1/check", "https://example.test/v1/check/explain", "https://example.test/v1/token", "https://example.test/v1/token/verdict", "https://example.test/v1/approvals", "https://example.test/v1/screen", "https://example.test/v1/injection"]);
+  assert.deepEqual(resources.map((r) => r.method), ["POST", "POST", "GET", "POST", "GET", "GET", "POST"]);
   // The XRPL AI Hub lists each resource by its name and description, and the service by the top-level name.
   assert.equal(new Set(resources.map((r) => r.name)).size, resources.length, "names are unique");
   for (const r of resources) {
@@ -75,6 +78,15 @@ test("every operation summary fits pay.sh: 63 characters or fewer, starting with
   }
 });
 
+test("token verdict for agents (POST /v1/token/verdict): the price and networks of GET /v1/token, a JSON body in the Bazaar", () => {
+  const both = x402Routes(PAY_TO, "eip155:8453", SOLANA);
+  const post = both["POST /v1/token/verdict"];
+  assert.deepEqual(post.accepts.map((a) => [a.network, a.price]), both["GET /v1/token"].accepts.map((a) => [a.network, a.price]));
+  assert.equal(post.extensions.bazaar.info.input.method, "POST");
+  assert.deepEqual(post.extensions.bazaar.info.input.body, { tokenAddress: "0x4ed4e862860bed51a9570b96d89af5e1b0efefed", chain: "base" });
+  assert.equal(post.serviceName, "presign-guard");
+});
+
 test("wallet approvals: $0.02 on Base, plus Solana when a Solana wallet is set, with GET query metadata", () => {
   const baseOnly = x402Routes(PAY_TO, "eip155:8453")["GET /v1/approvals"];
   assert.deepEqual(baseOnly.accepts.map((a) => [a.network, a.price]), [["eip155:8453", "$0.02"]]);
@@ -89,6 +101,7 @@ test("signed verdicts are advertised: receipt in every paid response schema, gui
     spec.paths["/v1/check"].post.responses[200].content["application/json"].schema,
     spec.paths["/v1/check/explain"].post.responses[200].content["application/json"].schema,
     spec.paths["/v1/token"].get.responses[200].content["application/json"].schema,
+    spec.paths["/v1/token/verdict"].post.responses[200].content["application/json"].schema,
     spec.paths["/v1/approvals"].get.responses[200].content["application/json"].schema,
   ];
   for (const s of schemas) {
@@ -239,10 +252,11 @@ test("A2A agent card: every paid route as a skill, the free quick check, openapi
   const c = agentCard("https://presign-guard.fizzl.eu");
   assert.equal(c.protocolVersion, "0.3.0");
   assert.equal(c.name, "presign-guard");
-  assert.deepEqual(c.skills.map((s) => s.id), ["check", "check-explain", "token", "approvals", "screen", "injection", "check-quick"]);
+  assert.deepEqual(c.skills.map((s) => s.id), ["check", "check-explain", "token", "token-verdict", "approvals", "screen", "injection", "check-quick"]);
   assert.equal(c.skills[0].examples[0], "POST https://presign-guard.fizzl.eu/v1/check");
   assert.ok(c.skills.every((s) => s.name && s.description && s.examples.length === 1));
   assert.equal(c.skills[2].examples[0], "GET https://presign-guard.fizzl.eu/v1/token?chain=solana&address=DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
+  assert.equal(c.skills[3].examples[0], 'POST https://presign-guard.fizzl.eu/v1/token/verdict {"tokenAddress":"0x4ed4e862860bed51a9570b96d89af5e1b0efefed","chain":"base"}');
   assert.deepEqual(c.additionalInterfaces.map((x) => x.url), ["https://presign-guard.fizzl.eu/openapi.json", "https://presign-guard.fizzl.eu/mcp"]);
   const { describePresignCall } = await import("../src/usage.js");
   assert.deepEqual(describePresignCall({ method: "GET", path: "/.well-known/agent-card.json", query: {}, get: () => undefined }, { statusCode: 200 }, {}), { route: "agent card", via: "discovery", input: {}, result: { status: 200 } });
