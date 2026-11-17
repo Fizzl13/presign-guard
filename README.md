@@ -594,6 +594,38 @@ Set it as `RECEIPT_SIGNER_CERT` (`YYYY-MM-DD:0x<signature>`; the page `/sign-rec
 
 The signing key comes from `RECEIPT_SIGNER_SECRET` (any long random string; it holds no funds and signs nothing but receipts). Without it, answers are unsigned.
 
+### Bound to the transaction
+
+A green verdict only counts for the transaction that was checked. The receipt of an EVM transaction check (`type: "transaction"` on `POST /v1/check`, `/v1/check/explain` and MCP `presign_check`) also carries a `binding`, inside the signature:
+
+```json
+"binding": {
+  "scope": "evm-tx-v1",
+  "tx": { "chainId": 8453, "from": "0x…", "to": "0x…", "value": "0", "data": "0x…" },
+  "tx_sha256": "…",
+  "valid_until": "2026-11-17T20:02:00.000Z"
+}
+```
+
+`tx` holds the checked fields, normalised: addresses and data lowercase, value as a decimal string, `from` null when you sent none. `tx_sha256` is the SHA-256 of `tx` as canonical JSON (the same profile as above). `valid_until` is 2 minutes after the check for a swap and 10 minutes for anything else.
+
+Right before signing, the wallet compares the transaction it is about to sign with the binding, offline. `checkBinding` in [`src/binding.js`](src/binding.js) answers:
+
+| Result | Meaning | Do |
+|---|---|---|
+| `MATCH` | Same transaction, still valid, signed by presign-guard | Sign if the verdict is green (`sign_ok: true`) |
+| `CHANGED` | A field changed since the check; `changed` names it: `to`, `value`, `chainId`, `from`, or from the decoded call `spender`, `amount`, `recipient`, `amountOutMin`, `path`, `deadline`, `operator`, … (`data` when the call can't be decoded) | Don't sign: check the changed transaction again |
+| `EXPIRED` | Older than `valid_until` | Ask for a fresh verdict |
+| `UNTRUSTED` | Not signed by a presign-guard signer, changed after signing, or no binding (only EVM transaction checks carry one) | Don't sign |
+
+```js
+import { checkBinding } from "./src/binding.js";
+const r = await checkBinding(txAboutToBeSigned, answer, { signers }); // signers from /.well-known/presign-guard-signer.json
+if (!r.sign_ok) throw new Error(`${r.result} ${r.changed.join(",")}`);
+```
+
+Normal wallet fields (`gas`, `nonce`, `maxFeePerGas`, `type`) are ignored, not refused: they don't change what the transaction does. `MATCH` alone is never permission to sign: only `MATCH` with a green verdict is.
+
 ### Not covered
 
 The simulation of signatures (only transactions are simulated), and what a site does with a signed plain message. Treat a green verdict as "no known risk signals", not as a guarantee.
