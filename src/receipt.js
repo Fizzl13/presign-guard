@@ -21,6 +21,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { keccak256, stringToBytes, recoverMessageAddress, isAddress, getAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { bindingFor } from "./binding.js";
 
 export const ALGORITHM = "EIP-191 personal_sign over canonical JSON of the response without receipt.signature";
 
@@ -172,10 +173,13 @@ export function createSigner(env = process.env) {
     // Returns the body with a signed receipt added; the verdict fields are untouched.
     async sign(body, { route, input, payment = null }) {
       const cert = await certificate;
+      // A transaction check is bound to the exact transaction and valid only for a short time (see binding.js).
+      const binding = /(^POST \/v1\/check(\/explain)?$)|(^mcp presign_check(_explain)?$)/.test(route) ? bindingFor(input) : null;
       const receipt = {
         request_id: randomUUID(),
         route,
         input_sha256: inputHash(route, input),
+        ...(binding && { binding }),
         ...(payment && { payment }),
         ...(cert && { cert }),
         signed_at: new Date().toISOString(),
