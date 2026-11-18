@@ -56,7 +56,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `POST /v1/token/verdict` | $0.01 USDC | The same token verdict for agents, as a JSON body: plus `decision`, a plain-language `take`, a `sell_check` (simulated on Base) and a signed `share` link (see [below](#token-verdict-for-agents-post-v1tokenverdict)) |
-| `GET /v/token/<link>`, `…/card.svg` | free | The page and 1200x630 card of a share link, rendered from the signed link itself |
+| `GET /v/token/<link>`, `…/card.png`, `…/card.svg` | free | The page and 1200x630 card (PNG and SVG) of a share link, rendered from the signed link itself |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `POST /v1/injection` | $0.01 USDC | Prompt-injection check: is a text your agent received (page, email, tool result, API answer, another agent's message) a trap? (see below) |
@@ -178,6 +178,7 @@ Using Claude Code for trading agents? See [Pre-trade checks for Claude Code agen
 | `token_quick_verdict` | free, shares the 10 calls/hour | The token verdict and grade only |
 | `injection_quick_check` | free, shares the 10 calls/hour | The prompt-injection verdict only, for texts up to 8,000 characters |
 | `token_verdict` | $0.01 USDC via x402 | The full token verdict, as `GET /v1/token` |
+| `token_check` | $0.01 USDC via x402 | The token verdict for agents about to buy, as `POST /v1/token/verdict`: plus decision, take, sell check and share link (`tokenAddress`, `chain` default base) |
 | `wallet_approvals` | $0.02 USDC via x402 | The wallet approval audit, as `GET /v1/approvals` |
 | `screen_wallet` | $0.01 USDC via x402 | The wallet sanctions screen, as `GET /v1/screen` |
 | `injection_check` | $0.01 USDC via x402 | The prompt-injection check, as `POST /v1/injection` |
@@ -252,7 +253,9 @@ On top of everything `GET /v1/token` returns:
 - `decision`: `buy` (grade SAFE), `small_only` (CAUTION) or `do_not_buy` (RISKY or AVOID); `null` without a verdict.
 - `take`: one or two plain sentences for someone about to buy, built from the reasons and the market data by fixed rules (no LLM). `one_liner` stays as it is.
 - `sell_check`: can a holder sell it back? `can_sell` is `yes`, `limited`, `no` or `unknown`, with one entry per check and its source: GoPlus (honeypot, cannot sell all, sell tax, pausable, blacklist, cooldown; on Solana non-transferable, freeze authority, transfer hook and fee), the chain itself (a token paused right now, Token ACL), the XRP Ledger or Algorand node (freeze, clawback, required authorisation) and DexScreener (liquidity to sell into). **On Base the sale is also simulated** with `eth_simulateV1` on the latest block: a new wallet gets 0.01% of the token's deepest pool, then sends half of it back into that pool a block and five minutes later, which is the token movement of a sell and where honeypots block it. The answer gives the measured buy and sell tax; a sell transfer that reverts makes `can_sell` `no`. The router swap itself (price impact) is not simulated. `simulated: true` only when that sell transfer actually ran; when it can't (no pool with a contract address, such as a Uniswap v4-only token, no RPC answer, a pool transfer that already fails), `simulation.why` says so and nothing else changes. Missing data is `unknown`, never `no`. The sell check doesn't change the grade or the decision; the `take` mentions a failed simulated sell.
-- `share`: `{ url, image_url }`, a link to a page and a 1200x630 SVG card for this verdict (`null` when the server has no receipt signer).
+- `share`: `{ url, image_url, png_url }`, a link to a page and a 1200x630 card for this verdict, as SVG (`image_url`) and PNG (`png_url`), `null` when the server has no receipt signer. The page's `og:image` and `twitter:image` are the PNG, because X and many chat apps don't preview SVG; it is rendered from the SVG with resvg (WebAssembly, no native dependency) in Inter (`assets/fonts`, OFL), Latin characters only, and the last 200 are kept in memory.
+
+The MCP tool `token_check` ($0.01) gives the same answer for `{ "tokenAddress": "0x…", "chain": "base" }`.
 
 ```json
 {
@@ -277,7 +280,7 @@ On top of everything `GET /v1/token` returns:
     "simulation": { "ran": true, "ok": true, "method": "eth_simulateV1", "pool": "0xc9034c3e…", "buy_tax_pct": 0, "sell_tax_pct": 0, "…": "…" },
     "note": "…"
   },
-  "share": { "url": "https://presign-guard.fizzl.eu/v/token/eyJ…", "image_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg" },
+  "share": { "url": "https://presign-guard.fizzl.eu/v/token/eyJ…", "image_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg", "png_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.png" },
   "requestKey": "my-id-1",
   "receipt": { "request_id": "…", "…": "…" }
 }

@@ -16,6 +16,7 @@ import { validateTokenQuery, createTokenRouter } from "../src/token-verdict.js";
 import { createTokenVerdictRouter, validateTokenVerdictBody, parseVerdictBody, decisionOf, takeOf } from "../src/token-verdict-card.js";
 import { sellCheck, poolOf, SIM_HOLDER } from "../src/sell-check.js";
 import { createShareRouter, readShare, signShare, sharePayload, shareCard, sharePage, wrap, SHARE_PREFIX, MAX_SHARE_CHARS } from "../src/token-share.js";
+import { createLru, createPngCards } from "../src/token-card-png.js";
 import { createSigner, signPaidResponses, verifyReceipt, canonicalJson } from "../src/receipt.js";
 import { describePresignCall } from "../src/usage.js";
 
@@ -120,7 +121,7 @@ const SIGNER = createSigner({ RECEIPT_SIGNER_SECRET: "test-secret-for-share-link
 const ORIGIN = "https://pg.test";
 
 // The routes as server.js mounts them, behind the real x402 paywall.
-async function boot() {
+async function boot({ png } = {}) {
   let settled = 0;
   const facilitator = {
     getSupported: async () => ({ kinds: [{ x402Version: 2, scheme: "exact", network: BASE }], extensions: [], signers: {} }),
@@ -131,7 +132,7 @@ async function boot() {
   const all = x402Routes(PAY_TO, BASE);
   const routes = { "GET /v1/token": all["GET /v1/token"], "POST /v1/token/verdict": all["POST /v1/token/verdict"] };
   const app = express();
-  app.use(createShareRouter({ signer: SIGNER, publicUrl: ORIGIN }));
+  app.use(createShareRouter({ signer: SIGNER, publicUrl: ORIGIN, ...(png && { png }) }));
   app.use(validateTokenQuery);
   app.use(validateTokenVerdictBody);
   app.use(paymentMiddleware(routes, resourceServer));
@@ -193,6 +194,7 @@ test("paid: GET /v1/token's answer plus decision, take, sell check, share link a
     assert.equal(a.sell_check.simulation.sell_tax_pct, 0);
     assert.match(a.share.url, /^https:\/\/pg\.test\/v\/token\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{87}$/);
     assert.equal(a.share.image_url, `${a.share.url}/card.svg`);
+    assert.equal(a.share.png_url, `${a.share.url}/card.png`);
     // The receipt covers the whole answer and has the request id the share link names.
     const v = await verifyReceipt(a, { signers: SIGNER.signers, route: "POST /v1/token/verdict", input: body });
     assert.equal(v.valid, true);
@@ -292,7 +294,7 @@ test("share link: page and card render from a signed link; a changed link, anoth
     assert.match(page.headers.get("content-security-policy"), /default-src 'none'/);
     const html = await page.text();
     assert.doesNotMatch(html, /<script/i);
-    for (const s of ["Good Token (GOOD)", "SAFE", "No red flags found", a.take.replace(/'/g, "&#39;"), "$2.0M", SIGNER.address, a.receipt.request_id, `<meta property="og:image" content="${a.share.image_url}">`, "summary_large_image", "not financial advice"]) {
+    for (const s of ["Good Token (GOOD)", "SAFE", "No red flags found", a.take.replace(/'/g, "&#39;"), "$2.0M", SIGNER.address, a.receipt.request_id, `<meta property="og:image" content="${a.share.png_url}">`, `<meta name="twitter:image" content="${a.share.png_url}">`, "summary_large_image", "not financial advice"]) {
       assert.ok(html.includes(s), s);
     }
     const card = await fetch(`${s.base}${path}/card.svg`);
@@ -310,10 +312,11 @@ test("share link: page and card render from a signed link; a changed link, anoth
     const stranger = createSigner({ RECEIPT_SIGNER_SECRET: "another-secret-that-is-not-presign-guard-0000" });
     const foreign = await signShare(stranger, json);
     for (const bad of [`${tampered}.${sig}`, `${payload}.${flippedSig}`, foreign, `${payload}x.${sig}`, "nope", "a".repeat(MAX_SHARE_CHARS + 1)]) {
-      for (const suffix of ["", "/card.svg"]) {
+      for (const suffix of ["", "/card.svg", "/card.png"]) {
         const r = await fetch(`${s.base}/v/token/${bad}${suffix}`);
         assert.equal(r.status, 400, `${bad.slice(0, 20)}${suffix}`);
-        assert.doesNotMatch(await r.text(), /<html|<svg/);
+        assert.match(r.headers.get("content-type"), /text\/plain/);
+        assert.doesNotMatch(await r.text(), /<html|<svg|PNG/);
       }
     }
     // Not canonical (the same content with a space) doesn't render either, even with a valid signature over it.
@@ -365,10 +368,66 @@ test("share payload: compact, capped, and the rendering helpers stay inside the 
   assert.ok(sharePage(p, { url: `${ORIGIN}/v/token/${token}`, imageUrl: `${ORIGIN}/v/token/${token}/card.svg`, signer: SIGNER.address, signature: "0x", origin: ORIGIN }).includes("can be sold, with limits"));
 });
 
+// The width and height of a PNG, from its IHDR chunk (right after the 8-byte signature).
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const pngSize = (b) => (b.subarray(12, 16).toString("latin1") === "IHDR" ? [b.readUInt32BE(16), b.readUInt32BE(20)] : null);
+
+test("PNG card: the same verified link rendered by resvg to a 1200x630 PNG, cached headers as the SVG; a changed link is a 400", async () => {
+  const s = await boot();
+  try {
+    const a = await (await paidPost(`${s.base}/v1/token/verdict`, { tokenAddress: HOSTILE })).json();
+    const path = sharePath(a.share.png_url);
+    const r = await fetch(`${s.base}${path}`);
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("content-type"), "image/png");
+    const svg = await fetch(`${s.base}${sharePath(a.share.image_url)}`);
+    for (const h of ["cache-control", "content-security-policy"]) assert.equal(r.headers.get(h), svg.headers.get(h), h);
+    const png = Buffer.from(await r.arrayBuffer());
+    assert.ok(png.subarray(0, 8).equals(PNG_SIGNATURE), "starts with the PNG signature");
+    assert.deepEqual(pngSize(png), [1200, 630]);
+    assert.ok(png.length > 10000 && png.length < 300000, `${png.length} bytes`);
+    const again = Buffer.from(await (await fetch(`${s.base}${path}`)).arrayBuffer());
+    assert.ok(again.equals(png), "the same bytes from the cache");
+
+    const [payload, sig] = path.split("/")[3].split(".");
+    const tampered = Buffer.from(canonicalJson({ ...JSON.parse(Buffer.from(payload, "base64url").toString()), grade: "AVOID", verdict: "red" })).toString("base64url");
+    const bad = await fetch(`${s.base}/v/token/${tampered}.${sig}/card.png`);
+    assert.equal(bad.status, 400);
+    assert.equal(bad.headers.get("cache-control"), "no-store");
+  } finally { s.close(); }
+});
+
+test("PNG card: a render that fails is a 500 that says nothing about why, and is logged", async () => {
+  const s = await boot({ png: async () => { throw new Error("wasm exploded at /srv/secret/path"); } });
+  const logged = [];
+  const realError = console.error;
+  console.error = (...args) => logged.push(args.join(" "));
+  try {
+    const a = await (await paidPost(`${s.base}/v1/token/verdict`, { tokenAddress: GOOD })).json();
+    const r = await fetch(`${s.base}${sharePath(a.share.png_url)}`);
+    assert.equal(r.status, 500);
+    assert.equal(r.headers.get("cache-control"), "no-store");
+    const body = await r.text();
+    assert.doesNotMatch(body, /wasm|secret|exploded/);
+    assert.ok(logged.some((l) => l.includes("PNG card failed") && l.includes("wasm exploded")));
+  } finally { console.error = realError; s.close(); }
+});
+
+test("PNG cache: least recently used out first, a hit doesn't render again", async () => {
+  const lru = createLru(2);
+  lru.set("a", 1); lru.set("b", 2); lru.get("a"); lru.set("c", 3);
+  assert.deepEqual([lru.get("a"), lru.get("b"), lru.get("c"), lru.size], [1, undefined, 3, 2]);
+  let renders = 0;
+  const cards = createPngCards({ render: async (svg) => (renders++, Buffer.from(svg)), max: 2 });
+  for (const key of ["x", "x", "y", "x", "z", "y"]) await cards(key, `<svg>${key}</svg>`);
+  assert.equal(renders, 4, "x once, y twice (pushed out by z), z once");
+});
+
 test("usage log: the POST is logged with its decision and sell check, never the requestKey; share views by kind", () => {
   const req = { method: "POST", path: "/v1/token/verdict", body: { tokenAddress: GOOD, requestKey: "secret-ish" }, get: () => undefined };
   const d = describePresignCall(req, { statusCode: 200 }, { verdict: "green", grade: "SAFE", decision: "buy", reasons: [], sell_check: { can_sell: "yes", simulated: true } });
   assert.deepEqual(d, { route: "token_verdict", via: "api", input: { chain: "base", target: GOOD }, result: { verdict: "green", grade: "SAFE", decision: "buy", canSell: "yes", simulated: true, reasons: undefined, error: undefined } });
   assert.doesNotMatch(JSON.stringify(d), /secret-ish/);
   assert.deepEqual(describePresignCall({ method: "GET", path: "/v/token/abc.def/card.svg" }, { statusCode: 200 }, null), { route: "token_share", via: "web", input: { kind: "card" }, result: { status: 200 } });
+  assert.deepEqual(describePresignCall({ method: "GET", path: "/v/token/abc.def/card.png" }, { statusCode: 200 }, null).input, { kind: "card_png" });
 });

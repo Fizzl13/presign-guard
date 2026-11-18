@@ -153,7 +153,7 @@ const TOKEN_VERDICT_OUTPUT_SCHEMA = {
     share: {
       type: ["object", "null"],
       description: "A stateless link to a page and a 1200x630 card for this verdict, signed by the receipt signer; verify without asking us",
-      properties: { url: { type: "string" }, image_url: { type: "string" } },
+      properties: { url: { type: "string" }, image_url: { type: "string", description: "The card as SVG" }, png_url: { type: "string", description: "The card as PNG (the page's og:image)" } },
     },
     requestKey: { type: "string" },
   },
@@ -170,7 +170,7 @@ const TOKEN_VERDICT_OUTPUT_EXAMPLE = {
   token: { chain: "base", address: TOKEN_VERDICT_INPUT_EXAMPLE.tokenAddress, name: "Degen", symbol: "DEGEN" },
   market: { priceUsd: 0.0007, liquidityUsd: 203000, marketCapUsd: 26000000, volume24hUsd: 44000, ageSeconds: 91000000 },
   sell_check: { can_sell: "yes", simulated: true, checks: [{ check: "honeypot", result: "pass", source: "GoPlus" }, { check: "simulated_sell", result: "pass", value: 0, source: "simulation (public RPC)" }] },
-  share: { url: "https://presign-guard.fizzl.eu/v/token/eyJ…", image_url: "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg" },
+  share: { url: "https://presign-guard.fizzl.eu/v/token/eyJ…", image_url: "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg", png_url: "https://presign-guard.fizzl.eu/v/token/eyJ…/card.png" },
 };
 
 export const tokenVerdictBazaarExtension = () => declareDiscoveryExtension({

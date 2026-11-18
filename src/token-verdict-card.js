@@ -7,7 +7,7 @@
 // - decision: buy | small_only | do_not_buy, from the grade (SAFE, CAUTION, RISKY or AVOID); null without a verdict.
 // - take: one or two plain sentences for someone about to buy, built from the reasons and market data (no LLM).
 // - sell_check: can a holder sell it back (src/sell-check.js), on Base with a simulated sell transfer.
-// - share: { url, image_url }, a stateless signed link to a page and a card (src/token-share.js); null when the
+// - share: { url, image_url, png_url }, a stateless signed link to a page and a card, SVG and PNG (src/token-share.js); null when the
 //   service has no receipt signer.
 // Same price, credits and payment networks as GET /v1/token, and the same rule: an invalid body (400) or a data source
 // that is down (503) is answered with verdict null and nothing is charged.
@@ -82,29 +82,36 @@ export function validateTokenVerdictBody(req, res, next) {
   });
 }
 
+// The whole answer for one parsed request (without requestKey): GET /v1/token's answer, decision, take, sell check and
+// share link. Shared by this route and the MCP tool token_check (src/mcp.js). requestId: the id the receipt on this
+// answer will carry, so the share link names it; share is null without a signer or when signing fails.
+export async function tokenVerdictAnswer(request, { signer = null, publicUrl, requestId = randomUUID(), verdict = tokenVerdict, sell = sellCheck } = {}) {
+  const result = await verdict(request);
+  const sellResult = await sell(request, result).catch((err) => {
+    console.warn(`[token-verdict-card] sell check failed: ${err.message}`);
+    return { can_sell: "unknown", simulated: false, checks: [], sources: [], note: "The sell check could not run; nothing about selling is known." };
+  });
+  const { version, verdict: v, grade, one_liner: oneLiner, ...rest } = result;
+  const answer = { version, verdict: v, grade, decision: decisionOf(grade), take: takeOf(result, sellResult), one_liner: oneLiner, ...rest, sell_check: sellResult };
+  const share = signer
+    ? await signShare(signer, sharePayload(answer, requestId)).then((token) => shareLinks(publicUrl, token), (err) => {
+      console.warn(`[token-verdict-card] share link not signed: ${err.message}`);
+      return null;
+    })
+    : null;
+  return { ...answer, share };
+}
+
 export function createTokenVerdictRouter({ signer = null, publicUrl, verdict = tokenVerdict, sell = sellCheck } = {}) {
   const router = express.Router();
   router.post(TOKEN_VERDICT_PATH, express.json({ limit: "4kb" }), async (req, res) => {
     try {
       const { requestKey, ...request } = req.tokenVerdictRequest ?? parseVerdictBody(req.body);
-      const result = await verdict(request);
-      const sellResult = await sell(request, result).catch((err) => {
-        console.warn(`[token-verdict-card] sell check failed: ${err.message}`);
-        return { can_sell: "unknown", simulated: false, checks: [], sources: [], note: "The sell check could not run; nothing about selling is known." };
-      });
-      const { version, verdict: v, grade, one_liner: oneLiner, ...rest } = result;
-      const answer = { version, verdict: v, grade, decision: decisionOf(grade), take: takeOf(result, sellResult), one_liner: oneLiner, ...rest, sell_check: sellResult };
-      let share = null;
-      if (signer) {
-        // The receipt signed onto this answer gets the same request id (src/receipt.js), so the link names it.
-        const requestId = randomUUID();
-        res.locals.receiptRequestId = requestId;
-        share = await signShare(signer, sharePayload(answer, requestId)).then((token) => shareLinks(publicUrl, token), (err) => {
-          console.warn(`[token-verdict-card] share link not signed: ${err.message}`);
-          return null;
-        });
-      }
-      res.set("Cache-Control", "no-store").json({ ...answer, share, ...(requestKey !== undefined && { requestKey }) });
+      // The receipt signed onto this answer gets the same request id (src/receipt.js), so the link names it.
+      const requestId = randomUUID();
+      if (signer) res.locals.receiptRequestId = requestId;
+      const answer = await tokenVerdictAnswer(request, { signer, publicUrl, requestId, verdict, sell });
+      res.set("Cache-Control", "no-store").json({ ...answer, ...(requestKey !== undefined && { requestKey }) });
     } catch (err) {
       const status = err.status ?? 500;
       if (status >= 500) console.error("[token-verdict-card]", err);

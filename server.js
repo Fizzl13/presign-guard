@@ -352,7 +352,7 @@ app.use((req, res, next) => { if (req.path.startsWith("/v1/credits/")) res.local
 app.use(vault.creditBack());
 app.get("/v1/vault", vault.balanceHandler());
 const allowFreeQuick = async (ip, req) => { const { key, factor } = await limitKeyOf(passVerifier, req, ip); return freeLimiter(key, factor); };
-app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, xlayer: XLAYER, monad: MONAD, extraEvm: EXTRA_EVM, signer: SIGNER, limiter: freeLimiter, feedback, pass: passVerifier, vault }));
+app.use(createMcpRouter({ resourceServer, network: NETWORK, payTo: PAY_TO, solana: SOLANA, xrpl: XRPL, algorand: ALGORAND, stellar: STELLAR, xlayer: XLAYER, monad: MONAD, extraEvm: EXTRA_EVM, signer: SIGNER, publicUrl: PUBLIC_URL, limiter: freeLimiter, feedback, pass: passVerifier, vault }));
 // Free token verdict over HTTP, also for the live demo on fizzl.eu (CORS), before the paywall.
 app.use("/v1/token/quick", fizzlCors);
 app.use(createTokenQuickRouter({ allowFree: allowFreeQuick }));
