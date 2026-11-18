@@ -18,6 +18,7 @@ import { x402Client } from "@x402/core/client";
 import { ExactEvmScheme } from "@x402/evm/exact/client";
 import { createMcpRouter, FREE_CALLS_PER_HOUR, isAnthropicIp } from "../src/mcp.js";
 import { createSigner, verifyReceipt } from "../src/receipt.js";
+import { readShare } from "../src/token-share.js";
 import feedbackModule from "../src/feedback.cjs";
 import crypto from "node:crypto";
 import { createPassVerifier } from "../src/fizzl-pass.js";
@@ -157,8 +158,13 @@ test("feedback tool: free, answers with an id and records the report via mcp", a
 test("lists the free quick checks and the paid tools with their prices", async () => {
   const client = await mcpClient();
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((t) => t.name).sort(), ["feedback", "injection_check", "injection_quick_check", "presign_check", "presign_check_explain", "presign_quick_check", "screen_wallet", "token_quick_verdict", "token_verdict", "wallet_approvals"]);
+  assert.deepEqual(tools.map((t) => t.name).sort(), ["feedback", "injection_check", "injection_quick_check", "presign_check", "presign_check_explain", "presign_quick_check", "screen_wallet", "token_check", "token_quick_verdict", "token_verdict", "wallet_approvals"]);
   assert.match(tools.find((t) => t.name === "token_verdict").description, /\$0\.01/);
+  const tokenCheck = tools.find((t) => t.name === "token_check");
+  assert.match(tokenCheck.description, /\$0\.01/);
+  assert.match(tokenCheck.description, /before your agent buys, holds or accepts a token/);
+  assert.deepEqual(tokenCheck.inputSchema.required, ["tokenAddress"], "chain defaults to base");
+  assert.ok(["decision", "take", "sell_check", "share"].every((k) => k in tokenCheck.outputSchema.properties));
   assert.match(tools.find((t) => t.name === "wallet_approvals").description, /\$0\.02/);
   assert.deepEqual(tools.find((t) => t.name === "wallet_approvals").inputSchema.required.sort(), ["address", "chain"]);
   assert.match(tools.find((t) => t.name === "screen_wallet").description, /\$0\.01/);
@@ -344,6 +350,44 @@ test("token_verdict without payment: $0.01 on Base or Solana, nothing looked up 
   const invalid = await client.callTool({ name: "token_verdict", arguments: { chain: "solana", address: "0xnot-a-mint" } });
   assert.ok(invalid.isError);
   assert.doesNotMatch(invalid.content[0].text, /accepts/);
+  await client.close();
+});
+
+test("token_check without payment: $0.01 like POST /v1/token/verdict, invalid input refused before the price", async () => {
+  const client = await mcpClient();
+  const result = await client.callTool({ name: "token_check", arguments: { tokenAddress: USDC } });
+  assert.ok(result.isError);
+  const challenge = result.structuredContent || JSON.parse(result.content[0].text);
+  assert.deepEqual(challenge.accepts.map((a) => [a.network, a.amount, a.payTo]), [[BASE, "10000", PAY_TO], [SOLANA, "10000", PAY_TO_SOLANA]]);
+  assert.equal(challenge.extensions.bazaar.info.input.toolName, "token_check");
+  assert.deepEqual([state.goplus, state.dex], [0, 0]);
+  for (const args of [{ tokenAddress: "nope" }, { tokenAddress: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" }]) {
+    const invalid = await client.callTool({ name: "token_check", arguments: args });
+    assert.ok(invalid.isError, JSON.stringify(args));
+    assert.doesNotMatch(invalid.content[0].text, /accepts/);
+  }
+  await client.close();
+});
+
+test("token_check: a real signed Base payment returns decision, take, sell check and a share link the receipt names", async () => {
+  const account = privateKeyToAccount(generatePrivateKey());
+  const payments = new x402Client((_v, accepts) => accepts.find((a) => a.network === BASE)).register(BASE, new ExactEvmScheme(account));
+  const client = wrapMCPClientWithPayment(new Client({ name: "paying-agent", version: "1.0.0" }), payments, { autoPayment: true });
+  await client.connect(new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)));
+  const args = { tokenAddress: USDC, chain: "base" };
+  const result = await client.callTool("token_check", args);
+  assert.ok(!result.isError, JSON.stringify(result.content));
+  const data = JSON.parse(result.content[0].text);
+  assert.deepEqual([data.verdict, data.grade, data.decision], ["green", "SAFE", "buy"]);
+  assert.equal(typeof data.take, "string");
+  assert.ok(["yes", "limited", "no", "unknown"].includes(data.sell_check.can_sell));
+  assert.match(data.share.url, /^https:\/\/presign-guard\.fizzl\.eu\/v\/token\/[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{87}$/);
+  assert.equal(data.share.png_url, `${data.share.url}/card.png`);
+  const shared = await readShare(data.share.url.split("/").pop(), SIGNER.signers);
+  assert.equal(shared.payload.request_id, data.receipt.request_id);
+  const v = await verifyReceipt(data, { signers: SIGNER.signers, route: "mcp token_check", input: args });
+  assert.equal(v.valid, true);
+  assert.deepEqual([state.verify, state.settle], [1, 1]);
   await client.close();
 });
 

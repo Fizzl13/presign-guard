@@ -61,6 +61,7 @@ When the quick answer is not enough, the same servers offer paid tools, paid per
 | Tool | Price | Returns |
 |---|---|---|
 | `token_verdict` | $0.01 | the reasons, a one-line summary and market data (price, liquidity, age) |
+| `token_check` | $0.01 | the same, plus a decision (buy, small_only, do_not_buy), a plain take, whether you can sell it back (simulated on Base) and a share link |
 | `ichimoku_signal` | $0.02 | the full signal on any timeframe (1m to 1M) with every line value |
 | `price_levels` | $0.05 | support/resistance, ATR, pivots, Fibonacci and a long/short plan |
 | `confluence_signal` | $0.15 | six indicators with votes and a combined signal |

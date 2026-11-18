@@ -21,6 +21,7 @@ Add the remote MCP server `https://presign-guard.fizzl.eu/mcp` (Streamable HTTP)
 | `token_quick_verdict` | free, shares the 10/hour | The token verdict and grade only |
 | `injection_quick_check` | free, shares the 10/hour | The prompt-injection verdict only (texts up to 8,000 characters) |
 | `token_verdict` | $0.01 | The full token verdict |
+| `token_check` | $0.01 | Before buying: the token verdict plus a decision (buy, small_only, do_not_buy), a plain-language take, a sell check and a share link, as `POST /v1/token/verdict` |
 | `wallet_approvals` | $0.02 | Every open approval of a wallet (EVM chains or Solana) and which to revoke |
 | `screen_wallet` | $0.01 | Is this wallet sanctioned? Any chain's address against the OFAC SDN list |
 | `injection_check` | $0.01 | Is this text a trap for your agent? A page, email, tool result or message that tries to steer it |

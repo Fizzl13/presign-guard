@@ -78,10 +78,16 @@ function describeMcpCall(req, body) {
         ? { source: typeof a.source === "string" ? a.source.slice(0, 16) : undefined, chars: a.text.length }
         : a.address
         ? { chain: a.chain, target: a.address }
+        : typeof a.tokenAddress === "string" // token_check, as POST /v1/token/verdict
+        ? { chain: typeof a.chain === "string" ? a.chain.slice(0, 16) : "base", target: a.tokenAddress.slice(0, 64) }
         : { type: a.type, chainId: a.chainId, ...xrplInput(a), ...algorandInput(a, parsed), ...stellarInput(a, parsed), ...nearInput(a, parsed), target: a.to || a.token || undefined, spender: a.spender || undefined, lang: a.lang }),
       ...(req.path === "/mcp/free" ? { endpoint: "free" } : {}),
     },
-    result: { verdict: parsed && parsed.verdict, grade: parsed && parsed.grade, error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined, ...tollOf(parsed) },
+    result: {
+      verdict: parsed && parsed.verdict, grade: parsed && parsed.grade,
+      ...(parsed && parsed.sell_check ? { decision: parsed.decision, canSell: parsed.sell_check.can_sell, simulated: parsed.sell_check.simulated } : {}),
+      error: reply.result && reply.result.isError ? String(text).slice(0, 200) : undefined, ...tollOf(parsed),
+    },
     payment: usageLog.mcpPayment(req.body, body),
   };
 }

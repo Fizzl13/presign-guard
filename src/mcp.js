@@ -1,19 +1,21 @@
 // MCP server (Streamable HTTP, stateless) on POST /mcp, so MCP clients (Claude,
 // Cursor, agent frameworks) and MCP directories can find and use presign-guard.
 //
-// Seven tools:
+// Eight tools:
 // - presign_quick_check, token_quick_verdict and injection_quick_check (free, rate-limited together):
 //   the verdict only, green/orange/red.
 // - presign_check ($0.01) and presign_check_explain ($0.03), via x402: the same
 //   as POST /v1/check and /v1/check/explain, paid inside the MCP call
 //   (_meta["x402/payment"]) at the same price and to the same payout wallet.
 // - token_verdict ($0.01): the same as GET /v1/token.
+// - token_check ($0.01): the same as POST /v1/token/verdict (decision, take, sell check, share link).
 // - wallet_approvals ($0.02): the same as GET /v1/approvals (EVM allowances or Solana delegations).
 // - screen_wallet ($0.01): the same as GET /v1/screen.
 // - injection_check ($0.01): the same as POST /v1/injection.
 //
 // Invalid input is refused before payment; a failed check is not charged.
 
+import { randomUUID } from "node:crypto";
 import { limitKeyOf } from "./fizzl-pass.js";
 import express from "express";
 import { z } from "zod";
@@ -34,6 +36,7 @@ import { xlayerAccept } from "./xlayer.js";
 import { monadAccept } from "./monad.js";
 import { extraEvmAccept } from "./extra-evm.js";
 import { tokenVerdict, parseTokenRequest } from "./token-verdict.js";
+import { parseVerdictBody, tokenVerdictAnswer } from "./token-verdict-card.js";
 import { walletApprovals, parseApprovalsRequest } from "./approvals.js";
 import { screenAddress, parseScreenRequest } from "./screen.js";
 import { checkText, parseInjectionRequest, SOURCES, MAX_TEXT_CHARS, QUICK_MAX_CHARS } from "./injection.js";
@@ -45,6 +48,7 @@ import {
   APPROVALS_INPUT_SCHEMA, APPROVALS_INPUT_EXAMPLE, serviceMetadata, tokenServiceMetadata, approvalsServiceMetadata,
   SCREEN_ROUTE, SCREEN_INPUT_SCHEMA, SCREEN_INPUT_EXAMPLE, screenServiceMetadata,
   INJECTION_ROUTE, INJECTION_INPUT_SCHEMA, INJECTION_INPUT_EXAMPLE, injectionServiceMetadata,
+  TOKEN_VERDICT_ROUTE, TOKEN_VERDICT_INPUT_SCHEMA, TOKEN_VERDICT_INPUT_EXAMPLE,
 } from "./discovery.js";
 
 export const VERSION = "1.9.0";
@@ -54,6 +58,8 @@ export const FREE_CALLS_PER_HOUR = 10;
 // caller's 10 an hour; they share a larger pool instead.
 const ANTHROPIC_OUTBOUND = [["160.79.104.0", 21]];
 export const SHARED_FREE_CALLS_PER_HOUR = 300;
+// Where token_check's share links point (server.js passes its PUBLIC_URL).
+const PUBLIC_URL = "https://presign-guard.fizzl.eu";
 
 function ipv4Number(ip) {
   const m = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(String(ip || ""));
@@ -101,6 +107,13 @@ const TOKEN_INPUT = {
   chain: z.enum(TOKEN_INPUT_SCHEMA.properties.chain.enum).describe("Chain the token lives on"),
   address: z.string().describe("Solana mint address (base58), EVM token contract (0x...), XRPL token as CURRENCY.rIssuer, or Algorand asset id (e.g. 31566704)"),
 };
+
+// POST /v1/token/verdict's body, without requestKey (an MCP call has its own id).
+const TOKEN_CHECK_INPUT = {
+  tokenAddress: z.string().describe(TOKEN_VERDICT_INPUT_SCHEMA.properties.tokenAddress.description),
+  chain: z.enum(TOKEN_INPUT_SCHEMA.properties.chain.enum).optional().describe("Chain the token lives on (default base)"),
+};
+const { requestKey: _requestKey, ...TOKEN_CHECK_PROPERTIES } = TOKEN_VERDICT_INPUT_SCHEMA.properties;
 
 const APPROVALS_INPUT = {
   chain: z.enum(APPROVALS_INPUT_SCHEMA.properties.chain.enum).describe(APPROVALS_INPUT_SCHEMA.properties.chain.description),
@@ -152,6 +165,19 @@ const OUTPUT = {
     explanation: z.object({ lang: z.string(), text: z.string() }).nullable().optional().describe("Plain-language explanation for a person"),
   }),
   token_verdict: obj({ ...PAID, grade: GRADE.nullable().optional(), one_liner: z.string().nullable().optional().describe("One-line summary") }),
+  token_check: obj({
+    ...PAID,
+    grade: GRADE.nullable().optional(),
+    decision: z.enum(["buy", "small_only", "do_not_buy"]).nullable().optional().describe("From the grade: SAFE buy, CAUTION small_only, RISKY or AVOID do_not_buy"),
+    take: z.string().nullable().optional().describe("One or two plain sentences for someone about to buy"),
+    one_liner: z.string().nullable().optional().describe("One-line summary"),
+    sell_check: z.object({
+      can_sell: z.enum(["yes", "limited", "no", "unknown"]).optional(),
+      simulated: z.boolean().optional().describe("true only when a sell transfer into the token's pool was simulated on chain"),
+    }).passthrough().nullable().optional().describe("Can a holder sell it back? One entry per check, with its source"),
+    share: z.object({ url: z.string(), image_url: z.string().optional(), png_url: z.string().optional() }).passthrough().nullable().optional()
+      .describe("A signed link to a page and a 1200x630 card for this verdict (null without a receipt signer)"),
+  }),
   wallet_approvals: obj({
     ...PAID,
     grade: GRADE.nullable().optional(),
@@ -207,6 +233,14 @@ export { validate as validateCheckArgs, check as runCheck };
 function validateToken(args) {
   try {
     return { request: parseTokenRequest(args) };
+  } catch (err) {
+    return { error: err.message || "invalid request" };
+  }
+}
+
+function validateTokenCheck(args) {
+  try {
+    return { request: parseVerdictBody({ tokenAddress: args.tokenAddress, chain: args.chain }) };
   } catch (err) {
     return { error: err.message || "invalid request" };
   }
@@ -291,6 +325,20 @@ const PAID_TOOLS = [
     run: (request) => tokenVerdict(request),
   },
   {
+    name: "token_check",
+    route: TOKEN_VERDICT_ROUTE.path,
+    title: "Token check before buying",
+    input: TOKEN_CHECK_INPUT,
+    validate: validateTokenCheck,
+    discovery: { inputSchema: { ...TOKEN_VERDICT_INPUT_SCHEMA, properties: TOKEN_CHECK_PROPERTIES }, example: TOKEN_VERDICT_INPUT_EXAMPLE },
+    metadata: tokenServiceMetadata,
+    solana: true,
+    summary: "Should your agent buy this token? A decision (buy, small_only, do_not_buy), a plain-language take, whether a holder can sell it back (simulated on Base) and a signed share link.",
+    description: (price) =>
+      `Paid (${price} via x402 in USDC on Base, Solana, Monad, Polygon, Arbitrum, Avalanche, Algorand or Stellar, in RLUSD on the XRP Ledger or in USD₮0 on X Layer): call this before your agent buys, holds or accepts a token, when it needs one answer to act on. Send tokenAddress (an EVM token contract 0x..., a Solana mint, an XRPL CURRENCY.rIssuer or an Algorand asset id) and chain (default base). Get back everything token_verdict returns (green/orange/red, grade SAFE/CAUTION/RISKY/AVOID, reason codes, one-line summary, market data), plus decision (buy, small_only or do_not_buy, from the grade), take (one or two plain sentences for whoever is about to buy), sell_check (can_sell yes, limited, no or unknown, one entry per check with its source; on Base a sell transfer into the token's pool is simulated on chain, simulated true only when it ran; missing data is unknown, never no) and share (a signed link to a page and a 1200x630 card, to show a person). Do not buy on do_not_buy or when can_sell is no. Same as POST /v1/token/verdict.`,
+    run: (request, _args, { signer, publicUrl, requestId }) => tokenVerdictAnswer(request, { signer, publicUrl, requestId }),
+  },
+  {
     name: "wallet_approvals",
     route: APPROVALS_ROUTE.path,
     title: "Wallet approval audit",
@@ -334,7 +382,7 @@ const PAID_TOOLS = [
   },
 ];
 
-const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [APPROVALS_ROUTE.path]: APPROVALS_ROUTE, [SCREEN_ROUTE.path]: SCREEN_ROUTE, [INJECTION_ROUTE.path]: INJECTION_ROUTE };
+const OTHER_ROUTES = { [TOKEN_ROUTE.path]: TOKEN_ROUTE, [TOKEN_VERDICT_ROUTE.path]: TOKEN_VERDICT_ROUTE, [APPROVALS_ROUTE.path]: APPROVALS_ROUTE, [SCREEN_ROUTE.path]: SCREEN_ROUTE, [INJECTION_ROUTE.path]: INJECTION_ROUTE };
 const priceOf = (tool) => `$${(OTHER_ROUTES[tool.route] ?? ROUTES[tool.route]).price}`;
 
 // accepts[] from the supported kinds the HTTP paywall fetched at start. Only when those aren't
@@ -392,7 +440,7 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
 
 // free: only the free tools, for directories whose clients don't pay (POST /mcp/free, e.g. Claude's connectors
 // directory): no paid tool, no feedback tool, and descriptions and answers that don't point to paid tools.
-function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, caller = {}, free = false, vault = null }) {
+function buildServer({ paidWrappers, allowFree, signer = null, publicUrl = PUBLIC_URL, feedback = null, caller = {}, free = false, vault = null }) {
   const server = new McpServer({ name: "presign-guard", version: VERSION, title: "presign-guard", websiteUrl: "https://presign-guard.fizzl.eu", icons: [{ src: "https://presign-guard.fizzl.eu/media/icon.png", mimeType: "image/png", sizes: ["512x512"] }] });
   const limitReached = (paid) => toolError(free ? "Free limit reached for this hour. Try again later." : `Free limit reached (${FREE_CALLS_PER_HOUR}/hour). Use ${paid}.`);
 
@@ -494,12 +542,15 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
           return toolError(`payments unavailable: ${err.message}`);
         }
         const offered = extra && extra._meta && extra._meta["x402/payment"];
+        // The receipt's request id, known before the run, so token_check's share link can name it.
+        const requestId = randomUUID();
+        const ctx = { signer, publicUrl, requestId };
         // No payment, but a Fizzl Pass proof on the request with enough credit: paid from the pass's vault.
         const fromVault = !offered && vault ? await vault.take(caller.req, Number(price.replace("$", ""))).catch(() => null) : null;
         if (fromVault) {
           try {
-            const result = await tool.run(checked.request, args);
-            const out = json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment: null }) : result);
+            const result = await tool.run(checked.request, args, ctx);
+            const out = json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment: null, requestId }) : result);
             if (out && out.isError) { fromVault.refund(); return out; }
             return { ...out, _meta: { ...(out._meta || {}), "fizzl/vault": { paid: true, usd: fromVault.usd, balance_usd: fromVault.balance_usd } } };
           } catch (err) {
@@ -509,10 +560,10 @@ function buildServer({ paidWrappers, allowFree, signer = null, feedback = null, 
         }
         const out = await paid(async () => {
           try {
-            const result = await tool.run(checked.request, args);
+            const result = await tool.run(checked.request, args, ctx);
             // Signed like the HTTP answers (receipt.js): route "mcp <tool>", input = the tool arguments.
             const payment = paymentOf(offered);
-            return json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment }) : result);
+            return json(signer && result && typeof result === "object" ? await signer.sign(result, { route: `mcp ${tool.name}`, input: args, payment, requestId }) : result);
           } catch (err) {
             return toolError(`could not check: ${err.message}`); // not charged
           }
@@ -567,7 +618,7 @@ export async function serverCard(server) {
 }
 
 // Express router for POST /mcp (stateless: a server and transport per request).
-export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, xlayer = null, monad = null, extraEvm = [], signer = null, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null, vault = null }) {
+export function createMcpRouter({ resourceServer, network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, xlayer = null, monad = null, extraEvm = [], signer = null, publicUrl = PUBLIC_URL, limiter = createRateLimiter(FREE_CALLS_PER_HOUR, 60 * 60 * 1000), shared = createRateLimiter(SHARED_FREE_CALLS_PER_HOUR, 60 * 60 * 1000), feedback = null, pass = null, vault = null }) {
   const router = express.Router();
   const paidWrappers = Object.fromEntries(PAID_TOOLS.map((tool) => [tool.name, paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algorand, stellar, xlayer, monad, extraEvm, tool })]));
   const allowFreeFor = (ip) => () => (isAnthropicIp(ip) ? shared("anthropic") : limiter(ip));
@@ -576,7 +627,7 @@ export function createMcpRouter({ resourceServer, network, payTo, solana = null,
   const handle = (free) => async (req, res) => {
     // A Fizzl Pass (X-Fizzl-Pass) counts per pass, with the tier's higher limit (src/fizzl-pass.js).
     const held = await limitKeyOf(pass, req);
-    const server = buildServer({ paidWrappers, allowFree: held.claims ? () => limiter(held.key, held.factor) : allowFreeFor(req.ip), signer, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"], req }, free, vault });
+    const server = buildServer({ paidWrappers, allowFree: held.claims ? () => limiter(held.key, held.factor) : allowFreeFor(req.ip), signer, publicUrl, feedback, caller: { ip: req.ip, userAgent: req.headers["user-agent"], req }, free, vault });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on("close", () => {
       transport.close();
@@ -597,7 +648,7 @@ export function createMcpRouter({ resourceServer, network, payTo, solana = null,
   let card = null;
   router.get("/.well-known/mcp/server-card.json", async (_req, res) => {
     try {
-      card ??= serverCard(buildServer({ paidWrappers, allowFree: () => false, signer, feedback })).catch((err) => { card = null; throw err; });
+      card ??= serverCard(buildServer({ paidWrappers, allowFree: () => false, signer, publicUrl, feedback })).catch((err) => { card = null; throw err; });
       res.set("Access-Control-Allow-Origin", "*").set("Cache-Control", "public, max-age=3600").json(await card);
     } catch (err) {
       console.error("[mcp] server card:", err);
