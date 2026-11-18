@@ -56,7 +56,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `POST /v1/check/explain` | $0.03 USDC | The same, plus a plain-language explanation (`lang: "nl"` or `"en"`) |
 | `GET /v1/token?chain=…&address=…` | $0.01 USDC | Token verdict: grade, reason codes, one-line summary, market data (see below) |
 | `POST /v1/token/verdict` | $0.01 USDC | The same token verdict for agents, as a JSON body: plus `decision`, a plain-language `take`, a `sell_check` (simulated on Base) and a signed `share` link (see [below](#token-verdict-for-agents-post-v1tokenverdict)) |
-| `GET /v/token/<link>`, `…/card.svg` | free | The page and 1200x630 card of a share link, rendered from the signed link itself |
+| `GET /v/token/<link>`, `…/card.png`, `…/card.svg` | free | The page and 1200x630 card (PNG and SVG) of a share link, rendered from the signed link itself |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
 | `POST /v1/injection` | $0.01 USDC | Prompt-injection check: is a text your agent received (page, email, tool result, API answer, another agent's message) a trap? (see below) |
@@ -277,7 +277,7 @@ On top of everything `GET /v1/token` returns:
     "simulation": { "ran": true, "ok": true, "method": "eth_simulateV1", "pool": "0xc9034c3e…", "buy_tax_pct": 0, "sell_tax_pct": 0, "…": "…" },
     "note": "…"
   },
-  "share": { "url": "https://presign-guard.fizzl.eu/v/token/eyJ…", "image_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg" },
+  "share": { "url": "https://presign-guard.fizzl.eu/v/token/eyJ…", "image_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.svg", "png_url": "https://presign-guard.fizzl.eu/v/token/eyJ…/card.png" },
   "requestKey": "my-id-1",
   "receipt": { "request_id": "…", "…": "…" }
 }

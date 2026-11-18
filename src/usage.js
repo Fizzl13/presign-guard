@@ -140,7 +140,7 @@ function describeTokenVerdictCall(req, body) {
 
 // GET /v/token/…: a share page or card of POST /v1/token/verdict was opened (never the link itself).
 function describeShareView(req, res) {
-  return { route: "token_share", via: "web", input: { kind: req.path.endsWith("/card.svg") ? "card" : "page" }, result: { status: res.statusCode } };
+  return { route: "token_share", via: "web", input: { kind: req.path.endsWith("/card.svg") ? "card" : req.path.endsWith("/card.png") ? "card_png" : "page" }, result: { status: res.statusCode } };
 }
 
 // GET /v1/approvals: which wallet, the verdict and grade, and the risky codes.

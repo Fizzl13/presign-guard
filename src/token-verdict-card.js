@@ -7,7 +7,7 @@
 // - decision: buy | small_only | do_not_buy, from the grade (SAFE, CAUTION, RISKY or AVOID); null without a verdict.
 // - take: one or two plain sentences for someone about to buy, built from the reasons and market data (no LLM).
 // - sell_check: can a holder sell it back (src/sell-check.js), on Base with a simulated sell transfer.
-// - share: { url, image_url }, a stateless signed link to a page and a card (src/token-share.js); null when the
+// - share: { url, image_url, png_url }, a stateless signed link to a page and a card, SVG and PNG (src/token-share.js); null when the
 //   service has no receipt signer.
 // Same price, credits and payment networks as GET /v1/token, and the same rule: an invalid body (400) or a data source
 // that is down (503) is answered with verdict null and nothing is charged.

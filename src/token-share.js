@@ -8,6 +8,8 @@
 //
 //   GET /v/token/<payload>.<signature>            an HTML page (no scripts, OG/Twitter tags pointing at the card)
 //   GET /v/token/<payload>.<signature>/card.svg   the card
+//   GET /v/token/<payload>.<signature>/card.png   the same card as a PNG (src/token-card-png.js), which the og:image
+//                                                 and twitter:image point at: X and many chat apps don't preview SVG
 //
 // Names and symbols come from DexScreener and so from whoever launched the token: every string is escaped.
 
@@ -15,6 +17,7 @@ import express from "express";
 import { recoverMessageAddress } from "viem";
 import { canonicalJson } from "./receipt.js";
 import { formatUsd, formatAge } from "./token-verdict.js";
+import { createPngCards } from "./token-card-png.js";
 
 export const SHARE_PREFIX = "presign-guard token share v1\n";
 export const SHARE_PATH = "/v/token";
@@ -65,7 +68,7 @@ export async function signShare(signer, payload) {
 
 export function shareLinks(origin, token) {
   const url = `${origin}${SHARE_PATH}/${token}`;
-  return { url, image_url: `${url}/card.svg` };
+  return { url, image_url: `${url}/card.svg`, png_url: `${url}/card.png` };
 }
 
 // { payload, signer, signature } when the link verifies against one of `signers`, else { error }.
@@ -128,6 +131,7 @@ export function sharePage(p, { url, imageUrl, signer, signature, origin }) {
 <meta property="og:description" content="${esc(description)}">
 <meta property="og:url" content="${esc(url)}">
 <meta property="og:image" content="${esc(imageUrl)}">
+<meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
@@ -206,21 +210,35 @@ ${text(72, 598, 22, "#6b7280", `Checked ${checkedAt(p.checked_at)} · signed, ve
 const PAGE_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const CARD_CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
 
-export function createShareRouter({ signer, publicUrl }) {
+// png: (key, svg) -> PNG bytes; the default renders with resvg and keeps the last 200 cards.
+export function createShareRouter({ signer, publicUrl, png = createPngCards() }) {
   const router = express.Router();
+  const CACHE = "public, max-age=86400";
   const signers = () => (signer ? signer.signers : []);
   const refuse = (res, error) => res.status(400).set("Cache-Control", "no-store").type("text/plain; charset=utf-8").send(`Not a valid presign-guard share link: ${error}.`);
   router.get(`${SHARE_PATH}/:share`, async (req, res) => {
     const r = await readShare(req.params.share, signers());
     if (r.error) return refuse(res, r.error);
-    const { url, image_url: imageUrl } = shareLinks(publicUrl, req.params.share);
-    res.set({ "Content-Security-Policy": PAGE_CSP, "Cache-Control": "public, max-age=86400" }).type("html")
+    const { url, png_url: imageUrl } = shareLinks(publicUrl, req.params.share);
+    res.set({ "Content-Security-Policy": PAGE_CSP, "Cache-Control": CACHE }).type("html")
       .send(sharePage(r.payload, { url, imageUrl, signer: r.signer, signature: r.signature, origin: publicUrl }));
   });
   router.get(`${SHARE_PATH}/:share/card.svg`, async (req, res) => {
     const r = await readShare(req.params.share, signers());
     if (r.error) return refuse(res, r.error);
-    res.set({ "Content-Security-Policy": CARD_CSP, "Cache-Control": "public, max-age=86400" }).type("image/svg+xml").send(shareCard(r.payload));
+    res.set({ "Content-Security-Policy": CARD_CSP, "Cache-Control": CACHE }).type("image/svg+xml").send(shareCard(r.payload));
+  });
+  router.get(`${SHARE_PATH}/:share/card.png`, async (req, res) => {
+    const r = await readShare(req.params.share, signers());
+    if (r.error) return refuse(res, r.error);
+    let body;
+    try {
+      body = await png(req.params.share, shareCard(r.payload));
+    } catch (err) {
+      console.error(`[token-share] PNG card failed: ${err.message}`);
+      return res.status(500).set("Cache-Control", "no-store").type("text/plain; charset=utf-8").send("The card could not be rendered; the SVG card is at card.svg.");
+    }
+    res.set({ "Content-Security-Policy": CARD_CSP, "Cache-Control": CACHE }).type("image/png").send(body);
   });
   return router;
 }

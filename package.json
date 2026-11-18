@@ -20,6 +20,7 @@
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@near-js/transactions": "2.5.1",
     "@near-js/utils": "2.5.1",
+    "@resvg/resvg-wasm": "2.6.2",
     "@solana/kit": "^8.6.0",
     "@stellar/stellar-sdk": "^16.4.1",
     "@x402/avm": "^2.29.0",
