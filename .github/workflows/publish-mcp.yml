@@ -13,7 +13,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       # The registry probes nothing, but a sleeping Render instance makes the
       # listing look dead to the first visitors; wake it and check /mcp.
       - name: Check the live MCP endpoint
