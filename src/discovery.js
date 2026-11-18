@@ -841,6 +841,13 @@ export function agentCard(origin) {
       { transport: "HTTP+JSON", url: `${origin}/openapi.json` },
       { transport: "MCP", url: `${origin}/mcp` },
     ],
+    // A2A 1.0 (a2a-protocol.org/latest/specification, 4.4.6 and 5.8): the interfaces this agent really serves. It has
+    // no A2A message:send endpoint, so it names its two ways in as custom bindings by URI, not as JSONRPC or HTTP+JSON:
+    // MCP (Streamable HTTP) and the paid HTTP API described by its OpenAPI file (x402 and MPP).
+    supportedInterfaces: [
+      { url: `${origin}/mcp`, protocolBinding: "https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http", protocolVersion: "1.0" },
+      { url: `${origin}/openapi.json`, protocolBinding: "https://www.x402.org/", protocolVersion: "1.0" },
+    ],
   };
 }
 

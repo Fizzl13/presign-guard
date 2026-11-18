@@ -258,6 +258,9 @@ test("A2A agent card: every paid route as a skill, the free quick check, openapi
   assert.equal(c.skills[2].examples[0], "GET https://presign-guard.fizzl.eu/v1/token?chain=solana&address=DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263");
   assert.equal(c.skills[3].examples[0], 'POST https://presign-guard.fizzl.eu/v1/token/verdict {"tokenAddress":"0x4ed4e862860bed51a9570b96d89af5e1b0efefed","chain":"base"}');
   assert.deepEqual(c.additionalInterfaces.map((x) => x.url), ["https://presign-guard.fizzl.eu/openapi.json", "https://presign-guard.fizzl.eu/mcp"]);
+  // A2A 1.0: supportedInterfaces, custom bindings named by URI (no A2A message:send here), each with a protocolVersion.
+  assert.deepEqual(c.supportedInterfaces.map((x) => [x.url, x.protocolVersion]), [["https://presign-guard.fizzl.eu/mcp", "1.0"], ["https://presign-guard.fizzl.eu/openapi.json", "1.0"]]);
+  assert.ok(c.supportedInterfaces.every((x) => /^https:\/\//.test(x.protocolBinding)));
   const { describePresignCall } = await import("../src/usage.js");
   assert.deepEqual(describePresignCall({ method: "GET", path: "/.well-known/agent-card.json", query: {}, get: () => undefined }, { statusCode: 200 }, {}), { route: "agent card", via: "discovery", input: {}, result: { status: 200 } });
 });
