@@ -98,5 +98,25 @@
    },
    "signature": "0xec06c4cd1d8d32cc5c9960f3b3a2d6ca31c9fd1f7eb751044560ef7ab43b6c5a4f553b76bdf2e9ef66a68f906392c4e455fee28b107081a0fdf7cc04e663d8101b"
   }
+ },
+ {
+  "network": "near:mainnet",
+  "payTo": "x402fizzl.near",
+  "delegation": {
+   "message": {
+    "chainId": "8453",
+    "registry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    "agentId": "97520",
+    "agentWallet": "0x6b0f4651ed42893ab58139938175e4a69f175f25",
+    "network": "near:mainnet",
+    "payTo": "x402fizzl.near",
+    "asset": "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1",
+    "origin": "https://presign-guard.fizzl.eu",
+    "validAfter": "1795091527",
+    "validUntil": "1826627467",
+    "nonce": "0xcf9fcf6b83a93cc0c2cf44ddc0642c97a99e1822756cefe246d0b5188f2987e4"
+   },
+   "signature": "0x5f660662fd4faf361fd88629808b74b77e643ac8abf9e94cc68fcff60dc733780f90660591d413a7e765f1e3699868845c847c9b60ea071b24f31b096e6ae16c1c"
+  }
  }
 ]
