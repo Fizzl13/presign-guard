@@ -504,35 +504,13 @@ const OUTPUT_EXAMPLE = {
 };
 
 // The bazaar extension rides in the 402's PAYMENT-REQUIRED header, next to the accepts for every network; Node
-// clients refuse headers over 16 KB. So the header carries the same fields, types and enums with short
-// descriptions; openapi.json has the full ones (reason codes, simulation, what each type needs).
-const SHORT = {
-  type: "What is about to be signed",
-  address: "authorization: the contract the wallet is delegated to (EIP-7702)",
-  authorizationChainId: "authorization, optional: the chain id inside it (0 = every chain)",
-  nep413: "near: a NEAR Intents message { message, recipient, nonce }",
-  transaction: "solana: base64 wire tx; algorand: base64 msgpack tx; stellar: base64 XDR envelope",
-  transactions: "algorand: an atomic group, each base64 msgpack",
-  method: "message: personal_sign (default) or eth_sign",
-  message: "message: the text or 0x-hex to be signed",
-  chainId: "EVM chain; required for approval, transaction and signature",
-  network: "xrpl: xrpl:0 (default) or xrpl:1; stellar: stellar:pubnet (default) or stellar:testnet",
-  tx: "xrpl: the unsigned transaction JSON",
-  token: "approval: token contract",
-  spender: "approval: who gets the allowance",
-  amount: "approval: amount in base units (0 = revoke)",
-  to: "transaction: target contract",
-  data: "transaction: 0x-prefixed calldata",
-  value: "transaction: native value in wei",
-  from: "optional: your wallet; an EVM transaction is then simulated",
-  typedData: "signature: the eth_signTypedData_v4 payload",
-  origin: "optional: the site asking (URL or hostname)",
-  intent: "optional: what the agent means to do, in one sentence",
-  x402: "optional, EIP-3009 payments: the x402 accepts entry being paid",
-  mandate: "optional, EIP-3009 payments: the spending mandate paid under",
-  lang: "explain only: en or nl",
-};
-const shorten = (props) => Object.fromEntries(Object.entries(props).map(([k, v]) => [k, { ...v, description: SHORT[k] ?? String(v.description ?? "").slice(0, 80) }]));
+// clients refuse headers over 16 KB (with USDC on NEAR the /v1/check 402 reached 15.2 KB on 19 Nov 2026). So the
+// header carries the same fields, types, enums and limits, and only the description of "type"; openapi.json and the
+// MCP tool keep every description (reason codes, simulation, what each type needs). x402 Doctor does the same.
+const shorten = (props) => Object.fromEntries(Object.entries(props).map(([k, v]) => {
+  const { description, ...rest } = v;
+  return [k, k === "type" ? { ...rest, description: "What is about to be signed" } : rest];
+}));
 export const BAZAAR_INPUT_SCHEMA = { ...INPUT_SCHEMA, properties: shorten(INPUT_SCHEMA.properties) };
 const BAZAAR_OUTPUT_SCHEMA = headerOutput(OUTPUT_SCHEMA);
 
