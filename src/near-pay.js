@@ -42,7 +42,11 @@ export function nearFacilitator(env = process.env, { scheme } = {}) {
   // The library's settle is idempotent: the same signed delegate again returns its cached success (spec §10), so a
   // replayed payment header would buy a second answer. Each signed delegate settles once here; a failed settle frees
   // it for a retry. A day is far past its max_block_height window (maxTimeoutSeconds blocks of ~1 s).
+  // The relayer's transaction nonce is read from the chain per settle, so two settles at the same moment would take
+  // the same nonce and one would fail: the chain part of each settle waits for the one before it.
   const settled = new Map();
+  let queue = Promise.resolve();
+  const oneAtATime = (fn) => { const run = queue.then(fn); queue = run.catch(() => {}); return run; };
   const keyOf = (payload) => String(payload?.payload?.signedDelegateAction || "");
   const prune = (t) => { for (const [k, until] of settled) if (until <= t) settled.delete(k); };
   return {
@@ -55,7 +59,7 @@ export function nearFacilitator(env = process.env, { scheme } = {}) {
       if (!key || settled.has(key)) return { success: false, transaction: "", network: requirements?.network || NEAR_NETWORK, payer: "", errorReason: "duplicate_settlement" };
       settled.set(key, t + DAY_MS);
       try {
-        const result = await facilitator.settle(payload, requirements);
+        const result = await oneAtATime(() => facilitator.settle(payload, requirements));
         if (!result?.success) settled.delete(key);
         return result;
       } catch (err) {
