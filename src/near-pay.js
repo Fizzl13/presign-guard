@@ -1,7 +1,7 @@
 // USDC on NEAR (NEP-141 17208628…a1, 6 decimals) as one more way to pay, with the official @x402/near "exact"
 // scheme: the buyer signs a NEP-366 SignedDelegate for exactly one ft_transfer to payTo, and a relayer of ours
-// submits it and pays the NEAR gas, so the buyer needs no NEAR. No public facilitator lists near:mainnet yet
-// (PayAI, x402.org and Doctor's board, 19 Nov 2026), so it settles in-process here, like the XRPL payments.
+// submits it and pays the NEAR gas, so the buyer needs no NEAR. It settles in-process here with our own relayer,
+// like the XRPL payments (public NEAR facilitators exist too: Doctor's, Ultravioleta DAO, FastNEAR's reference one).
 //
 // On only when NEAR_RELAYER_ACCOUNT and NEAR_RELAYER_KEY are set (a dedicated account with a little NEAR for gas,
 // set by Frits in Render; never a wallet that holds anything else). NEAR_PAY_TO overrides the payout account
