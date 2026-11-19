@@ -10,6 +10,7 @@
 // buy credits that would vanish on a restart. Only a SHA-256 of each key is
 // stored, never the key itself.
 import { createHash, randomBytes } from "node:crypto";
+import { nearAccept } from "./near-pay.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
 import { stellarAccept } from "./stellar.js";
@@ -126,7 +127,7 @@ export async function redisStore(rawUrl, { timeoutMs = 10_000 } = {}) {
 }
 
 // The x402 routes that sell the packs.
-export function packRoutes(network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, xlayer = null, monad = null, extraEvm = []) {
+export function packRoutes(network, payTo, solana = null, xrpl = null, algorand = null, stellar = null, xlayer = null, monad = null, extraEvm = [], near = null) {
   const routes = {};
   for (const [size, pack] of Object.entries(PACKS)) {
     routes[`GET /v1/credits/${size}`] = {
@@ -139,6 +140,7 @@ export function packRoutes(network, payTo, solana = null, xrpl = null, algorand 
         ...xlayerAccept(xlayer, `$${pack.price}`),
         ...monadAccept(monad, `$${pack.price}`),
         ...extraEvmAccept(extraEvm, `$${pack.price}`),
+        ...nearAccept(near, `$${pack.price}`),
       ],
       description: `${pack.credits} prepaid presign-guard credits (1 credit = $0.01 of checks), valid ${CREDIT_TTL_DAYS} days. Returns a credit key for the ${CREDIT_HEADER} header.`,
       mimeType: "application/json",

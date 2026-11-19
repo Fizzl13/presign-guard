@@ -20,6 +20,8 @@ import { ExactAvmScheme } from "@x402/avm/exact/server";
 import { algorandConfig, ALGORAND_NETWORK, ALGORAND_FACILITATOR } from "./src/algorand.js";
 import { ExactStellarScheme } from "@x402/stellar/exact/server";
 import { stellarConfig, stellarFacilitator, STELLAR_NETWORK } from "./src/stellar.js";
+import { ExactNearScheme } from "@x402/near/exact/server";
+import { nearConfig, nearFacilitator, nearStatus, NEAR_NETWORK } from "./src/near-pay.js";
 import { xlayerConfig, xlayerFacilitator, XLAYER_NETWORK } from "./src/xlayer.js";
 import { monadConfig, monadFacilitator, MONAD_NETWORK } from "./src/monad.js";
 import { extraEvmConfig, EXTRA_EVM_FACILITATOR } from "./src/extra-evm.js";
@@ -88,6 +90,9 @@ const XRPL = MAINNET && XRPL_PAY_TO ? { network: XRPL_NETWORK, payTo: XRPL_PAY_T
 const ALGORAND = MAINNET ? algorandConfig() : null;
 // Optional: USDC on Stellar (src/stellar.js), mainnet only, when a Stellar facilitator is configured (STELLAR_FACILITATOR_KEY).
 const STELLAR = MAINNET ? stellarConfig() : null;
+// Optional: USDC on NEAR (src/near-pay.js), mainnet only, when a relayer is configured (NEAR_RELAYER_ACCOUNT/KEY);
+// settled in-process, our relayer pays the NEAR gas.
+const NEAR = MAINNET ? nearConfig() : null;
 // USD₮0 on X Layer (src/xlayer.js), mainnet only, to PAY_TO unless XLAYER_PAY_TO says otherwise; PayAI settles it.
 const XLAYER = MAINNET ? xlayerConfig(process.env, PAY_TO) : null;
 // USDC on Monad (src/monad.js), mainnet only, to PAY_TO unless MONAD_PAY_TO says otherwise; CDP settles it where it
@@ -133,6 +138,7 @@ const facilitators = MAINNET
     // After CDP too: PayAI settles Polygon, Arbitrum and Avalanche where CDP doesn't list them.
     ...(EXTRA_EVM.length ? [onlyNetworks(new HTTPFacilitatorClient({ url: process.env.EXTRA_EVM_FACILITATOR_URL || EXTRA_EVM_FACILITATOR }), (n) => EXTRA_EVM_NETWORKS.includes(n))] : []),
     ...(xrplFacilitator ? [xrplFacilitator] : []),
+    ...(NEAR ? [onlyNetworks(nearFacilitator(), (n) => n === NEAR_NETWORK)] : []),
   ]
   : [new HTTPFacilitatorClient({ url: process.env.FACILITATOR_URL ?? "https://x402.org/facilitator" })];
 
@@ -146,8 +152,9 @@ if (STELLAR) resourceServer.register(STELLAR_NETWORK, new ExactStellarScheme());
 if (XLAYER) resourceServer.register(XLAYER_NETWORK, new ExactEvmScheme());
 if (MONAD) resourceServer.register(MONAD_NETWORK, new ExactEvmScheme());
 for (const n of EXTRA_EVM_NETWORKS) resourceServer.register(n, new ExactEvmScheme());
-facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : []), ...(MONAD ? [MONAD_NETWORK] : []), ...EXTRA_EVM_NETWORKS]);
-const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR, XLAYER, MONAD, EXTRA_EVM);
+if (NEAR) resourceServer.register(NEAR_NETWORK, new ExactNearScheme());
+facilitatorStart.attach(resourceServer, [NETWORK, ...(SOLANA ? [SOLANA_NETWORK] : []), ...(XRPL ? [XRPL_NETWORK] : []), ...(ALGORAND ? [ALGORAND_NETWORK] : []), ...(STELLAR ? [STELLAR_NETWORK] : []), ...(XLAYER ? [XLAYER_NETWORK] : []), ...(MONAD ? [MONAD_NETWORK] : []), ...EXTRA_EVM_NETWORKS, ...(NEAR ? [NEAR_NETWORK] : [])]);
+const ROUTES = x402Routes(PAY_TO, NETWORK, SOLANA, XRPL, ALGORAND, process.env.BUILDER_CODE, STELLAR, XLAYER, MONAD, EXTRA_EVM, NEAR);
 // Prepaid credit packs (src/credits.js): only sold when balances persist in Redis.
 let creditStore = null;
 if (process.env.CREDITS_REDIS_URL) {
@@ -158,7 +165,7 @@ const CREDIT_COSTS = creditCosts(ROUTES);
 // $AFUEL (src/afuel.js): with AFUEL_PAYMENTS=on, every USDC-on-Solana option also gets an AFUEL option, discounted.
 const afuel = createAfuel();
 if (afuel.enabled && SOLANA) afuel.attach(resourceServer);
-const PAYWALL_ROUTES = (afuel.enabled && SOLANA ? afuel.withAfuel : (r) => r)(creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD, EXTRA_EVM) } : ROUTES);
+const PAYWALL_ROUTES = (afuel.enabled && SOLANA ? afuel.withAfuel : (r) => r)(creditStore ? { ...withCreditsHint(ROUTES), ...packRoutes(NETWORK, PAY_TO, SOLANA, XRPL, ALGORAND, STELLAR, XLAYER, MONAD, EXTRA_EVM, NEAR) } : ROUTES);
 if (afuel.enabled && SOLANA) afuel.ensurePrice().catch(() => {});
 // $AFUEL holders (src/afuel-holders.js): a wallet that signs and holds Bronze or more gets a few paid calls a day free.
 const holders = createHolders();
@@ -215,7 +222,18 @@ app.use(nohumansClaim());
 
 // Free routes first, so they never hit the paywall
 // pg1Key: whether PG1 accepts PG1_API_KEY (its license status, never the key itself).
-app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus(), afuel: afuel.status(), afuel_holders: holders.status(), ...memoryStatus() }));
+// NEAR payments (src/near-pay.js): whether x402fizzl.near can receive USDC and the relayer's NEAR for gas, read every
+// 10 minutes (view calls only).
+let nearHealth = NEAR ? { network: NEAR.network, pay_to: NEAR.payTo, relayer: NEAR.relayer, pay_to_registered: null, relayer_near: null } : undefined;
+if (NEAR) {
+  const refreshNear = () => nearStatus(NEAR).then((s) => {
+    nearHealth = s;
+    if (s.pay_to_registered === false) console.warn(`[near] ${NEAR.payTo} is not registered on the USDC contract (storage_deposit): NEAR payments will fail`);
+  }).catch(() => {});
+  refreshNear();
+  setInterval(refreshNear, 10 * 60 * 1000).unref();
+}
+app.get("/health", (_req, res) => res.json({ ok: true, network: NETWORK, ...(nearHealth ? { near: nearHealth } : {}), pg1Key: pg1KeyStatusNow(), jev: jevStatus(), simulation: simulationStatus(), addressHistory: historyStatus(), ofac: ofacStatus(), afuel: afuel.status(), afuel_holders: holders.status(), ...memoryStatus() }));
 // Which $AFUEL holder tier a wallet has and how many free calls it has left today (free).
 app.get("/v1/afuel/holder", holders.statusHandler());
 jevSelfTest().catch(() => {});
