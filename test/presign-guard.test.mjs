@@ -553,6 +553,56 @@ test("unrecognized typed data is orange, not green", async () => {
   assert.ok(codes(r).includes("UNRECOGNIZED_SIGNATURE"));
 });
 
+// TapeRelay (TapeOut containers' relay servers): keys signed by the circuit holder's wallet (src/taperelay.js)
+const tapeRelay = (primaryType, message, chainId = 196) => ({
+  type: "signature", chainId,
+  typedData: { primaryType, domain: { name: "TapeRelay", version: "1", chainId }, message },
+});
+const SESSION_KEY = "0x3333333333333333333333333333333333333333";
+const nowSec = () => Math.floor(Date.now() / 1000);
+const delegation = (over = {}) => ({ account: "7.2.1.tape", sessionKey: SESSION_KEY, servers: ["relay1.taperelay.com:4246"], notBefore: nowSec(), expires: nowSec() + 3600, app: "", scopes: ["objects"], ...over });
+
+test("TapeRelay session key for an hour, objects only: green, with what it may do", async () => {
+  const r = await check(tapeRelay("ScopedDelegation", delegation()));
+  assert.equal(r.body.verdict, "green");
+  const k = r.body.reasons.find((x) => x.code === "TAPERELAY_SESSION_KEY");
+  assert.equal(k.severity, "info");
+  assert.equal(k.subject, SESSION_KEY);
+  assert.deepEqual(k.details.can, ["store and read files"]);
+  assert.ok(!codes(r).includes("UNRECOGNIZED_SIGNATURE"));
+});
+
+test("TapeRelay developer key with release: orange, with fixes", async () => {
+  const r = await check(tapeRelay("DeveloperKey", { ...delegation({ expires: nowSec() + 90 * 86400, scopes: ["objects", "release"] }), note: "ci" }));
+  assert.equal(r.body.verdict, "orange");
+  assert.ok(codes(r).includes("TAPERELAY_DEVELOPER_KEY"));
+  assert.ok(codes(r).includes("TAPERELAY_DELETE_SCOPE"));
+  const dk = r.body.reasons.find((x) => x.code === "TAPERELAY_DEVELOPER_KEY");
+  assert.equal(dk.details.note, "ci");
+  assert.equal(dk.details.days, 90);
+  assert.equal(dk.fix.retry, "ask");
+});
+
+test("TapeRelay session key: release, a week, or a circuit on another chain are orange", async () => {
+  const rel = await check(tapeRelay("ScopedDelegation", delegation({ scopes: ["objects", "release"] })));
+  assert.ok(codes(rel).includes("TAPERELAY_UNKNOWN_SCOPE"), "release is for developer keys only");
+  const week = await check(tapeRelay("ScopedDelegation", delegation({ expires: nowSec() + 7 * 86400 })));
+  assert.ok(codes(week).includes("TAPERELAY_LIFETIME"));
+  const bsc = await check(tapeRelay("ScopedDelegation", delegation({ account: "7.1.tape" })));
+  assert.ok(codes(bsc).includes("TAPERELAY_ACCOUNT_MISMATCH"), "7.1.tape is on BNB Smart Chain, signed for X Layer");
+  const ok = await check(tapeRelay("ScopedDelegation", delegation({ account: "7.1.tape" }), 56));
+  assert.ok(!codes(ok).includes("TAPERELAY_ACCOUNT_MISMATCH"));
+});
+
+test("TapeRelay revocation and a single request are info", async () => {
+  const rev = await check(tapeRelay("Revocation", { account: "7.2.1.tape", sessionKey: SESSION_KEY, revokedAt: nowSec() }));
+  assert.equal(rev.body.verdict, "green");
+  assert.ok(codes(rev).includes("TAPERELAY_REVOCATION"));
+  const req = await check(tapeRelay("Request", { account: "7.2.1.tape", server: "relay1.taperelay.com:4246", method: "POST", path: "/v1/objects", query: "", bodyHash: "0x" + "ab".repeat(32), timestamp: nowSec(), nonce: "0x" + "cd".repeat(16) }));
+  assert.equal(req.body.verdict, "green");
+  assert.ok(codes(req).includes("TAPERELAY_MESSAGE"));
+});
+
 test("typedData may be sent as a JSON string", async () => {
   const body = sig("Permit", { owner: USER, spender: GOOD, value: "1", nonce: 0, deadline: FAR }, { verifyingContract: TOKEN });
   body.typedData = JSON.stringify(body.typedData);

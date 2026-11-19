@@ -21,6 +21,7 @@
 // Fail-closed rule: every error returns a non-2xx status and verdict: null, never "green".
 // Verify in testing that your middleware version skips settlement on non-2xx responses.
 
+import { parseTapeRelay, tapeRelayReasons } from "./taperelay.js";
 import express from "express";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
@@ -568,6 +569,10 @@ function parseSignature(raw, chainId) {
     return verifying;
   };
   const base = { primaryType, target: verifying, grants: [], revoke: false, ...(typeof domain.name === "string" && domain.name && { domainName: domain.name.slice(0, 64) }), ...(typeof domain.version === "string" && domain.version && { domainVersion: domain.version.slice(0, 16) }) };
+
+  // TapeRelay (TapeOut containers' relay servers): session and developer keys, revocations, messages (taperelay.js)
+  const tapeRelay = parseTapeRelay(primaryType, domain, message);
+  if (tapeRelay) return { ...base, ...tapeRelay };
 
   // EIP-2612 permit, and DAI-style permit (holder/allowed/expiry)
   if (primaryType === "Permit") {
@@ -1476,6 +1481,7 @@ async function analyzeAny(req) {
     add("MARKETPLACE_ORDER", "orange", req.target, { offerCount: req.order.offerCount });
     if (req.order.offerCount > 0 && !req.order.paysOfferer) add("ORDER_PAYS_YOU_NOTHING", "red", req.order.offerer);
   }
+  if (req.kind.startsWith("taperelay_")) tapeRelayReasons(req, add, req.chainId, now);
   if (req.kind === "unknown_signature") add("UNRECOGNIZED_SIGNATURE", "orange", req.target, { primaryType: req.primaryType });
   if (req.kind === "contract_call") add("UNDECODED_CALL", "info", req.target, { selector: req.selector });
 
@@ -1582,6 +1588,8 @@ const KIND_TEXT = {
   approval_for_all: "approve an operator for ALL NFTs of a collection", permit: "sign a Permit (an allowance without a transaction)",
   permit2_allowance: "sign a Permit2 allowance", permit2_transfer: "sign a Permit2 transfer", transfer_authorization: "sign a token payment (EIP-3009, as in x402)",
   marketplace_order: "sign a marketplace listing (Seaport order)", unknown_signature: "sign an unrecognized message",
+  taperelay_delegation: "sign a TapeRelay key that acts for a TapeOut container", taperelay_revocation: "revoke a TapeRelay key",
+  taperelay_message: "sign one TapeRelay request or message",
 };
 export function effectsOf(req, tokenMeta = new Map()) {
   const sym = (t) => tokenMeta.get(t)?.symbol || null;
