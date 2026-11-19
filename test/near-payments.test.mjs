@@ -86,11 +86,11 @@ function chain({ registered = true, balance = 1_000_000n, slowMs = 0 } = {}) {
   return { state, signer, server };
 }
 
-async function pay({ registered = true, tamper } = {}) {
+async function pay({ registered = true, tamper, activity } = {}) {
   const { state, signer, server } = chain({ registered });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   try {
-    const facilitator = nearFacilitator(ENV, { scheme: new NearFacilitatorScheme(signer) });
+    const facilitator = nearFacilitator(ENV, { scheme: new NearFacilitatorScheme(signer), ...(activity ? { activity } : {}) });
     const resource = new x402ResourceServer([facilitator]).register(NEAR_NETWORK, new NearServer());
     await resource.initialize();
     const accept = x402Routes(EVM, "eip155:8453", null, null, null, null, null, null, null, [], NEAR)["POST /v1/check"].accepts.at(-1);
@@ -168,4 +168,15 @@ test("settles go one at a time (the relayer's nonce), and a payment sent twice a
   } finally {
     server.close();
   }
+});
+
+test("a settled NEAR payment is reported to NEAR Builders Activity as check.paid for the buyer; a refused one is not", async () => {
+  const sent = [];
+  const activity = { checkPaid: async (e) => { sent.push(e); throw new Error("Activity down"); } };
+  const { settle } = await pay({ activity });
+  const settled = await settle();
+  assert.equal(settled.success, true, "a failing report does not break the payment");
+  assert.deepEqual(sent, [{ payer: "buyer.near", payTo: "x402fizzl.near", transaction: "9rTxHashOnNear111", amount: "10000", asset: NEAR_USDC, network: NEAR_NETWORK }]);
+  await settle(); // the same payment again: refused, not reported
+  assert.equal(sent.length, 1);
 });

@@ -11,6 +11,7 @@
 import { x402Facilitator } from "@x402/core/facilitator";
 import { createFacilitatorNearSigner, NEAR_MAINNET_CAIP2, NEAR_RPC_URLS } from "@x402/near";
 import { ExactNearScheme } from "@x402/near/exact/facilitator";
+import { createActivityReporter } from "./activity.js";
 
 export const NEAR_NETWORK = NEAR_MAINNET_CAIP2;
 export const NEAR_USDC = "17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1";
@@ -34,7 +35,8 @@ export function nearConfig(env = process.env) {
 const rpcUrl = (env = process.env) => (env.NEAR_RPC_URL || "").trim() || NEAR_RPC_URLS[NEAR_NETWORK];
 
 // The in-process facilitator client (getSupported/verify/settle). The relayer key stays inside the signer.
-export function nearFacilitator(env = process.env, { scheme } = {}) {
+// Each settled payment is also reported to NEAR Builders Activity when ACTIVITY_API_KEY is set (src/activity.js).
+export function nearFacilitator(env = process.env, { scheme, activity = createActivityReporter({ env }) } = {}) {
   const facilitator = new x402Facilitator().register(NEAR_NETWORK, scheme || new ExactNearScheme(createFacilitatorNearSigner({
     relayers: [{ accountId: env.NEAR_RELAYER_ACCOUNT.trim(), secretKey: env.NEAR_RELAYER_KEY.trim() }],
     rpcUrls: { [NEAR_NETWORK]: rpcUrl(env) },
@@ -61,6 +63,7 @@ export function nearFacilitator(env = process.env, { scheme } = {}) {
       try {
         const result = await oneAtATime(() => facilitator.settle(payload, requirements));
         if (!result?.success) settled.delete(key);
+        else activity?.checkPaid?.({ payer: result.payer, payTo: requirements?.payTo, transaction: result.transaction, amount: requirements?.amount, asset: requirements?.asset, network: requirements?.network || NEAR_NETWORK })?.catch?.(() => {});
         return result;
       } catch (err) {
         settled.delete(key);
