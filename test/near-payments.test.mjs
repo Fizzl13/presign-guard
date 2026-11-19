@@ -50,8 +50,8 @@ test("usage log counts NEAR USDC in dollars (6 decimals)", () => {
 
 // A stand-in NEAR chain: the buyer's access key and balance, the payout account's USDC registration, and what the
 // relayer submitted.
-function chain({ registered = true, balance = 1_000_000n } = {}) {
-  const state = { height: 200_000_000n, nonce: 41n, submitted: [] };
+function chain({ registered = true, balance = 1_000_000n, slowMs = 0 } = {}) {
+  const state = { height: 200_000_000n, nonce: 41n, submitted: [], inFlight: 0, maxInFlight: 0 };
   const signer = {
     getRelayerIds: () => ["relay.x402fizzl.near"],
     getCurrentBlockHeight: async () => state.height,
@@ -60,8 +60,12 @@ function chain({ registered = true, balance = 1_000_000n } = {}) {
     ftBalanceOf: async () => balance,
     storageBalanceOf: async () => ({ supported: true, registered }),
     submitSignedDelegateAction: async (input) => {
+      state.inFlight++;
+      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+      await new Promise((r) => setTimeout(r, slowMs));
+      state.inFlight--;
       state.submitted.push(input);
-      return { transaction: "9rTxHashOnNear111", innerReceipt: { kind: "success", value: "" } };
+      return { transaction: state.submitted.length === 1 ? "9rTxHashOnNear111" : `9rTxHashOnNear${state.submitted.length}`, innerReceipt: { kind: "success", value: "" } };
     },
   };
   // The buyer's client reads its access key and the latest block over JSON-RPC: a local server answers.
@@ -140,4 +144,28 @@ test("nearStatus: reads the payout account's USDC registration and the relayer's
   assert.equal(down.pay_to_registered, null);
   assert.equal(down.relayer_near, null);
   assert.equal(await nearStatus(null), null);
+});
+
+test("settles go one at a time (the relayer's nonce), and a payment sent twice at once settles once", async () => {
+  const { state, signer, server } = chain({ slowMs: 40 });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const facilitator = nearFacilitator(ENV, { scheme: new NearFacilitatorScheme(signer) });
+    const resource = new x402ResourceServer([facilitator]).register(NEAR_NETWORK, new NearServer());
+    await resource.initialize();
+    const accept = x402Routes(EVM, "eip155:8453", null, null, null, null, null, null, null, [], NEAR)["POST /v1/check"].accepts.at(-1);
+    const [req] = await resource.buildPaymentRequirements(accept);
+    const rpcUrls = { [NEAR_NETWORK]: `http://127.0.0.1:${server.address().port}` };
+    const payloads = await Promise.all([1, 2, 3].map(async () => {
+      const buyer = createClientNearSigner({ accountId: "buyer.near", secretKey: KeyPair.fromRandom("ed25519").toString(), rpcUrls });
+      return { x402Version: 2, accepted: req, payload: (await new NearClient(buyer).createPaymentPayload(2, req)).payload };
+    }));
+    const outs = await Promise.all([...payloads, payloads[0]].map((p) => facilitator.settle(p, req)));
+    assert.deepEqual(outs.map((o) => o.success), [true, true, true, false]);
+    assert.equal(outs[3].errorReason, "duplicate_settlement");
+    assert.equal(state.submitted.length, 3);
+    assert.equal(state.maxInFlight, 1, "never two settles on the chain at once");
+  } finally {
+    server.close();
+  }
 });
