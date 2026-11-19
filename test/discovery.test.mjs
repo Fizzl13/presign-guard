@@ -203,17 +203,18 @@ test("openapi /v1/check: chainId required for the EVM types only, and the simula
   }
 });
 
-test("the bazaar schema in the 402 header: every field, type and enum of the full schema, short descriptions, small", async () => {
+test("the bazaar schema in the 402 header: every field, type and enum of the full schema, no field descriptions but type's, small", async () => {
   const { bazaarExtension, BAZAAR_INPUT_SCHEMA, INPUT_SCHEMA } = await import("../src/discovery.js");
   assert.deepEqual(Object.keys(BAZAAR_INPUT_SCHEMA.properties), Object.keys(INPUT_SCHEMA.properties));
   for (const [k, v] of Object.entries(INPUT_SCHEMA.properties)) {
     const b = BAZAAR_INPUT_SCHEMA.properties[k];
     assert.deepEqual({ ...b, description: undefined }, { ...v, description: undefined }, `${k}: same type, enum and limits`);
-    assert.ok(b.description.length <= 90, `${k}: short description`);
+    if (k === "type") assert.ok(b.description, "type keeps a short description");
+    else assert.equal(b.description, undefined, `${k}: no description in the header (openapi.json has it)`);
   }
   assert.deepEqual(BAZAAR_INPUT_SCHEMA.required, INPUT_SCHEMA.required);
-  // The whole 402 header (base64) stays well under Node's 16 KB limit: the bazaar part was 8 KB of it.
-  assert.ok(JSON.stringify(bazaarExtension()).length < 4500, `bazaar extension ${JSON.stringify(bazaarExtension()).length} characters`);
+  // The whole 402 header (base64) stays well under Node's 16 KB limit: the bazaar part was 8 KB of it, then 4.5 KB.
+  assert.ok(JSON.stringify(bazaarExtension()).length < 3000, `bazaar extension ${JSON.stringify(bazaarExtension()).length} characters`);
 });
 
 test("every route's 402 header names the receipt in one line (the full schema is in openapi.json), so the header stays small", async () => {
