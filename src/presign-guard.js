@@ -29,6 +29,7 @@ import {
 } from "./discovery.js";
 import { builderCodeExtension, merchantExtension } from "./merchant.js";
 import { extraEvmAccept } from "./extra-evm.js";
+import { nearAccept } from "./near-pay.js";
 import { refusalExtension } from "./refusal.js";
 import { paymentIdentifierExtension } from "./payment-retry.js";
 import { decodeFunctionData, encodeFunctionData, isAddress, isHex, parseAbi, zeroAddress } from "viem";
@@ -1652,7 +1653,7 @@ export async function explain(result, lang) {
 // builderCode: optional Base Builder Code (env BUILDER_CODE), so Base can attribute the payments to Fizzl.
 // stellar: optional { network, payTo }; every route can then also be paid in USDC on Stellar.
 // extraEvm: [{ network, payTo }] for USDC on Polygon, Arbitrum and Avalanche (src/extra-evm.js).
-export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null, stellar = null, xlayer = null, monad = null, extraEvm = []) {
+export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl = null, algorand = null, builderCode = null, stellar = null, xlayer = null, monad = null, extraEvm = [], near = null) {
   if (!payTo) throw new Error("PAY_TO address is required");
   // refusal (draft, src/refusal.js): where a buyer that doesn't pay can say why.
   const sellerExtensions = { ...merchantExtension, ...builderCodeExtension(builderCode), ...paymentIdentifierExtension, ...refusalExtension(process.env.PUBLIC_URL ?? "https://presign-guard.fizzl.eu") };
@@ -1667,6 +1668,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       ...xlayerAccept(xlayer, `$${ROUTES[path].price}`),
       ...monadAccept(monad, `$${ROUTES[path].price}`),
       ...extraEvmAccept(extraEvm, `$${ROUTES[path].price}`),
+      ...nearAccept(near, `$${ROUTES[path].price}`),
     ],
     description,
     mimeType: "application/json",
@@ -1692,6 +1694,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...xlayerAccept(xlayer, tokenPrice),
         ...monadAccept(monad, tokenPrice),
         ...extraEvmAccept(extraEvm, tokenPrice),
+        ...nearAccept(near, tokenPrice),
       ],
       description: "Honeypot and rug pull check for a token: is it safe to buy? Checks a Solana or EVM token before you buy, hold or accept it (mint or freeze authority still active, LP not locked, buy/sell tax, low liquidity, brand-new token, concentrated holders) and answers green/orange/red with a grade (SAFE/CAUTION/RISKY/AVOID), the reasons, a one-line summary and market data",
       mimeType: "application/json",
@@ -1710,6 +1713,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...xlayerAccept(xlayer, tokenPrice),
         ...monadAccept(monad, tokenPrice),
         ...extraEvmAccept(extraEvm, tokenPrice),
+        ...nearAccept(near, tokenPrice),
       ],
       description: "Should I buy this token? A risk check for Base, Solana and other EVM tokens with one answer to act on: decision (buy, small_only, do_not_buy), a plain-language take, a sell check (honeypot, sell tax, freeze and pause powers, liquidity; on Base a sell transfer simulated on chain), the grade, reasons and market data, and a signed share link with a card image. Body: { tokenAddress, chain }. Synchronous, no polling",
       mimeType: "application/json",
@@ -1726,6 +1730,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...xlayerAccept(xlayer, approvalsPrice),
         ...monadAccept(monad, approvalsPrice),
         ...extraEvmAccept(extraEvm, approvalsPrice),
+        ...nearAccept(near, approvalsPrice),
       ],
       description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
       mimeType: "application/json",
@@ -1742,6 +1747,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...xlayerAccept(xlayer, screenPrice),
         ...monadAccept(monad, screenPrice),
         ...extraEvmAccept(extraEvm, screenPrice),
+        ...nearAccept(near, screenPrice),
       ],
       description: "Sanctions screen for a wallet address: is it on the OFAC list? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
       mimeType: "application/json",
@@ -1758,6 +1764,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...xlayerAccept(xlayer, injectionPrice),
         ...monadAccept(monad, injectionPrice),
         ...extraEvmAccept(extraEvm, injectionPrice),
+        ...nearAccept(near, injectionPrice),
       ],
       description: "Prompt injection detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to make the agent ignore its instructions, pay or send money, hand over keys or private data, or obey a fake user, admin or support message? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
       mimeType: "application/json",
