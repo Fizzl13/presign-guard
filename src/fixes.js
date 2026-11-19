@@ -78,6 +78,13 @@ const FIXES = {
     : hookElsewhere(r, "a hook that can keep part of what you take out")),
   V4_HOOK_CAN_BLOCK_WITHDRAWAL: (r) => hookElsewhere(r, "a hook that can refuse your withdrawal (beforeRemoveLiquidity)"),
   V4_HOOK_UPGRADEABLE: (r) => hookElsewhere(r, "a hook its owner can change after you sign"),
+  // TapeRelay keys (taperelay.js)
+  TAPERELAY_DEVELOPER_KEY: (r) => ({ expected: "a session key for one day, or a developer key the user creates themselves", saw: `a developer key for ${r.details?.account || "a TapeOut container"}${r.details?.days ? `, valid ${r.details.days} days` : ""}, with: ${(r.details?.can || []).join(", ") || "no scopes"}`, change: "Ask the user before signing: a developer key acts for the container from any machine that holds it, until it expires or is revoked. For work in this session, sign a ScopedDelegation (at most one day) instead.", retry: "ask" }),
+  TAPERELAY_DELETE_SCOPE: (r) => ({ expected: "keys without the release scope, unless the user asked to delete files", saw: `a key that may delete the files of ${r.details?.account || "the container"}`, change: "Leave \"release\" out of scopes; add it only when the user asked for files to be deleted.", retry: "change", set: { scopes: "without release" } }),
+  TAPERELAY_UNKNOWN_SCOPE: (r) => ({ expected: "scopes from objects, send, inbox, pointers, admit (and release on a developer key)", saw: r.details?.scopes?.length ? `scopes the official client doesn't use: ${r.details.scopes.join(", ")}` : "no scopes", change: "Sign only the scopes the task needs, as the official client names them.", retry: "change" }),
+  TAPERELAY_LIFETIME: (r) => ({ expected: `a key that lasts at most ${r.details?.maxSeconds === 86400 ? "one day" : "366 days"}`, saw: r.details?.seconds > 0 ? `${Math.round(r.details.seconds / 86400)} days` : "no valid validity window", change: "Set notBefore to now and expires within the limit; relay servers refuse longer keys.", retry: "change" }),
+  TAPERELAY_ACCOUNT_MISMATCH: (r) => ({ expected: "the circuit the user means, on this chain", saw: r.details?.reason ? `${r.details.account}: ${r.details.reason}` : `${r.details?.account}, a circuit on chain ${r.details?.accountChainId}, signed for chain ${r.details?.chainId}`, change: "Check the circuit name (<id>.<area>.<processor>.tape) and sign on its own chain.", retry: "change" }),
+  TAPERELAY_MALFORMED: () => ({ expected: "a complete TapeRelay delegation", saw: "a delegation without a valid session key address", change: "Don't sign; build the delegation again with the official client.", retry: "change" }),
 };
 
 function swapLimit(r) {
