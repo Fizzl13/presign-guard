@@ -9,6 +9,9 @@
 //   controls it, and nobody can ever move either again (safeTransferFrom refuses this; plain transferFrom doesn't,
 //   checked with eth_simulateV1 on X Layer on 27 Oct 2026);
 // - an approval on a processor lets the operator take circuits, and with them their containers;
+// - apps that use TapeRelay (TapeOut, 19 Nov 2026) tie their management rights to the circuit NFT: whoever holds it
+//   manages the app, and the previous owner's authorization ends when it moves. So a transfer or an approval can also
+//   hand over control of an app (`details.appControl`);
 // - a call through a container (ERC-6551 execute) is judged by what it does from the container: a delegatecall
 //   runs foreign code as the container;
 // - SiteRegistry.setOperator lets another address rewrite the website; DomainBinding.bind pays a non-refundable fee
@@ -191,10 +194,12 @@ export async function tapeoutReasons({ chainId, to, data, value = 0n, from }, { 
     const [isCpuRaw, isContainerRaw] = await rpc(chainId, [call(c.factory, "isCPU", [target]), call(c.registry, "isOpenedContainer", [target])]);
 
     if (result("isCPU", isCpuRaw) === true) {
+      // TapeRelay ties an app's management rights to the circuit NFT (TapeOut, 19 Nov 2026), so this goes with it.
+      const appControl = "Apps that use TapeRelay give their management rights to whoever holds the circuit NFT: the new holder manages the app and the previous owner's authorization ends.";
       const [nameRaw] = await rpc(chainId, [call(target, "name")]);
       const processor = { processor: target, ...(result("name", nameRaw) && { processorName: result("name", nameRaw).slice(0, 64) }) };
       if (functionName === "setApprovalForAll") {
-        if (args[1]) add("TAPEOUT_ALL_CIRCUITS_APPROVAL", "orange", lower(args[0]), processor);
+        if (args[1]) add("TAPEOUT_ALL_CIRCUITS_APPROVAL", "orange", lower(args[0]), { ...processor, appControl });
         return reasons;
       }
       const tokenId = functionName === "approve" ? args[1] : args[2];
@@ -203,7 +208,7 @@ export async function tapeoutReasons({ chainId, to, data, value = 0n, from }, { 
       const { out, valuable } = holdings(h, c.currency, now);
       const circuit = { ...processor, circuitId: tokenId.toString(), ...out };
       if (functionName === "approve") {
-        if (lower(args[0]) !== "0x0000000000000000000000000000000000000000") add("TAPEOUT_CIRCUIT_APPROVAL", valuable ? "orange" : "info", lower(args[0]), circuit);
+        if (lower(args[0]) !== "0x0000000000000000000000000000000000000000") add("TAPEOUT_CIRCUIT_APPROVAL", valuable ? "orange" : "info", lower(args[0]), { ...circuit, appControl });
         return reasons;
       }
       // transferFrom / safeTransferFrom
@@ -211,7 +216,7 @@ export async function tapeoutReasons({ chainId, to, data, value = 0n, from }, { 
       if (recipient === h.container) {
         add("TAPEOUT_CIRCUIT_LOCKED_FOREVER", "red", recipient, { ...circuit, method: functionName });
       } else {
-        add("TAPEOUT_CIRCUIT_TRANSFER", valuable ? "orange" : "info", recipient, circuit);
+        add("TAPEOUT_CIRCUIT_TRANSFER", valuable ? "orange" : "info", recipient, { ...circuit, appControl });
       }
       return reasons;
     }
