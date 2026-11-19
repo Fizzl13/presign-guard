@@ -77,6 +77,7 @@ test("transferring a circuit whose container holds coins, a site or a paid name 
   assert.equal(rs[0].subject, BUYER);
   assert.equal(rs[0].details.siteFiles, 6);
   assert.equal(rs[0].details.namePaidUntil, "2026-11-26");
+  assert.match(rs[0].details.appControl, /TapeRelay/, "apps tied to the circuit by TapeRelay go along too");
 });
 
 test("transferring an empty circuit is only an info line", async () => {
@@ -91,6 +92,8 @@ test("an approval on a processor hands over containers: one circuit, or all of t
   assert.deepEqual(codes(one), ["TAPEOUT_CIRCUIT_APPROVAL:orange"]);
   const all = await tapeoutReasons({ chainId: 196, to: PROCESSOR, data: enc("setApprovalForAll", [SPENDER, true]) }, { rpc, now: NOW });
   assert.deepEqual(codes(all), ["TAPEOUT_ALL_CIRCUITS_APPROVAL:orange"]);
+  assert.match(one[0].details.appControl, /TapeRelay/);
+  assert.match(all[0].details.appControl, /TapeRelay/);
   const revoke = await tapeoutReasons({ chainId: 196, to: PROCESSOR, data: enc("setApprovalForAll", [SPENDER, false]) }, { rpc, now: NOW });
   assert.deepEqual(revoke, []);
 });
