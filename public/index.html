@@ -56,6 +56,8 @@
   .dots i:nth-child(1) { width: 9px; height: 9px; } .dots i:nth-child(2) { width: 6px; height: 6px; margin-bottom: 5px; } .dots i:nth-child(3) { width: 4px; height: 4px; margin-bottom: 10px; }
   .eyebrow { font: 600 13px/1 var(--mono); color: var(--mint); margin-bottom: 18px; letter-spacing: .02em; }
   h1 { font-size: clamp(34px, 7vw, 56px); line-height: 1.04; margin: 0 0 18px; letter-spacing: -.02em; font-weight: 700; font-family: var(--head); }
+  .hero-icon { float: right; width: 168px; height: 168px; margin: -6px -14px 6px 20px; filter: drop-shadow(0 18px 30px rgba(97, 245, 195, .16)); }
+  @media (max-width: 640px) { .hero-icon { width: 92px; height: 92px; margin: -2px -6px 2px 10px; } }
   h1 em { font-style: normal; color: var(--mint); }
   .lead { color: var(--soft); font-size: 18px; margin: 0 0 40px; max-width: 58ch; }
   h2 { font-size: 13px; letter-spacing: .08em; text-transform: uppercase; color: var(--text); margin: 52px 0 14px; display: flex; align-items: center; }
@@ -213,6 +215,7 @@
     <a class="brand" href="/"><svg class="mark" viewBox="0 0 128 128" aria-hidden="true"><rect x="1.5" y="1.5" width="125" height="125" rx="29" fill="#020708" stroke="#61f5c3" stroke-opacity=".4" stroke-width="3"/><path d="M78 30 A22 22 0 0 0 52 52 V104" fill="none" stroke="#f4f8f7" stroke-width="16" stroke-linecap="round"/><path d="M36 68 H72" stroke="#f4f8f7" stroke-width="16" stroke-linecap="round"/><g fill="#61f5c3"><circle cx="92" cy="72" r="8"/><circle cx="100" cy="52" r="5"/><circle cx="104" cy="38" r="3"/></g></svg><span><b>presign-guard</b><small>by <em>fizzl</em> · pay-per-call tools for AI agents</small></span></a>
     <span class="top-right"><a class="wallet-link" href="https://wallet.fizzl.eu/" title="Fizzl Agent Wallet: spending limits and approvals for your agents">Agent Wallet ↗</a><a class="wallet-link" href="https://forge.fizzl.eu/" title="x402 Forge: ready-made x402 tools for AI agents, or one built to order">Forge ↗</a><span class="live">ONLINE · 10 NETWORKS</span></span>
   </header>
+  <img class="hero-icon" src="/media/hero.webp" width="168" height="168" alt="" decoding="async" fetchpriority="low">
   <div class="eyebrow"><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>x402 · MPP · 10 networks · for AI agents</div>
   <h1>Check it <em>before</em> your agent signs it.</h1>
   <p class="lead">Send presign-guard the transaction, approval or signature your agent is about to sign. You get back green, orange or red, with the reasons, in under a second. EVM chains, Solana, the XRP Ledger, Algorand and Stellar. $0.01 per check in USDC via x402. No account, no API key.</p>
