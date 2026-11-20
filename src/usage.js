@@ -183,6 +183,21 @@ function describeScreenCall(req, body) {
   };
 }
 
+// GET /v1/screen/batch: how many addresses and the totals, never the addresses themselves (a list can be a customer list).
+function describeScreenBatchCall(req, body) {
+  const b = body || {};
+  return {
+    route: "screen_batch",
+    via: "api",
+    input: { count: b.count },
+    result: {
+      verdict: b.verdict === null ? "none" : b.verdict,
+      reasons: b.totals ? `${b.totals.red} red, ${b.totals.orange} orange, ${b.totals.green} green` : undefined,
+      error: b.error,
+    },
+  };
+}
+
 export function describePresignCall(req, _res, body) {
   // Who reads the EIP-8004 registration (e.g. agent registries such as Metaplex).
   if (req.method === "GET" && req.path === "/.well-known/agent-registration.json") return { route: "agent registration", via: "discovery", input: {}, result: { status: _res.statusCode } };
@@ -206,6 +221,7 @@ export function describePresignCall(req, _res, body) {
   }
   if (req.method === "GET" && req.path === "/v1/approvals") return describeApprovalsCall(req, body);
   if (req.method === "GET" && req.path === "/v1/screen") return describeScreenCall(req, body);
+  if (req.method === "GET" && req.path === "/v1/screen/batch") return describeScreenBatchCall(req, body);
   // The prompt-injection check (paid, or the free quick one): where the text came from and how long it was, never the text.
   if (req.method === "POST" && (req.path === "/v1/injection" || req.path === "/v1/injection/quick")) {
     const input = req.body || {};

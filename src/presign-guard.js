@@ -26,6 +26,7 @@ import express from "express";
 import {
   ROUTES, TOKEN_ROUTE, APPROVALS_ROUTE, bazaarExtension, serviceMetadata, tokenBazaarExtension, tokenServiceMetadata,
   approvalsBazaarExtension, approvalsServiceMetadata, SCREEN_ROUTE, screenBazaarExtension, screenServiceMetadata,
+  SCREEN_BATCH_ROUTE, screenBatchBazaarExtension,
   INJECTION_ROUTE, injectionBazaarExtension, injectionServiceMetadata, TOKEN_VERDICT_ROUTE, tokenVerdictBazaarExtension,
 } from "./discovery.js";
 import { builderCodeExtension, merchantExtension } from "./merchant.js";
@@ -1686,6 +1687,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
   const tokenPrice = `$${TOKEN_ROUTE.price}`;
   const approvalsPrice = `$${APPROVALS_ROUTE.price}`;
   const screenPrice = `$${SCREEN_ROUTE.price}`;
+  const screenBatchPrice = `$${SCREEN_BATCH_ROUTE.price}`;
   const injectionPrice = `$${INJECTION_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
@@ -1761,6 +1763,23 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
       mimeType: "application/json",
       ...screenServiceMetadata,
       extensions: { ...screenBazaarExtension(), ...sellerExtensions },
+    },
+    [`GET ${SCREEN_BATCH_ROUTE.path}`]: {
+      accepts: [
+        { scheme: "exact", price: screenBatchPrice, network, payTo },
+        ...(solana?.payTo ? [{ scheme: "exact", price: screenBatchPrice, network: solana.network, payTo: solana.payTo }] : []),
+        ...xrplAccept(xrpl, screenBatchPrice, `GET ${SCREEN_BATCH_ROUTE.path}`),
+        ...algorandAccept(algorand, screenBatchPrice),
+        ...stellarAccept(stellar, screenBatchPrice),
+        ...xlayerAccept(xlayer, screenBatchPrice),
+        ...monadAccept(monad, screenBatchPrice),
+        ...extraEvmAccept(extraEvm, screenBatchPrice),
+        ...nearAccept(near, screenBatchPrice),
+      ],
+      description: "Batch sanctions screen: up to 25 wallet addresses of any chain (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) in one payment, each against the OFAC SDN list plus theft, phishing and mixer reports for EVM addresses. Per address the same green/orange/red answer as /v1/screen, plus totals and the flagged addresses first. For sellers screening their payers and agents checking a list of recipients",
+      mimeType: "application/json",
+      ...screenServiceMetadata,
+      extensions: { ...screenBatchBazaarExtension(), ...sellerExtensions },
     },
     [`POST ${INJECTION_ROUTE.path}`]: {
       accepts: [

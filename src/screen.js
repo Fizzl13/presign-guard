@@ -159,15 +159,60 @@ export async function screenAddress({ address, format }, now = Date.now()) {
   };
 }
 
+// ---------- batch ----------
+// GET /v1/screen/batch?address=<a>&address=<b> (or address=<a>,<b>): up to SCREEN_BATCH_MAX addresses in one payment,
+// for a seller or agent with a list to check (one payment instead of one per address). Each address gets the same
+// answer GET /v1/screen gives; the totals say how many are green, orange and red. Duplicates are screened once.
+
+export const SCREEN_BATCH_MAX = 25;
+const GOPLUS_AT_ONCE = 5;
+
+export function parseScreenBatchRequest(query) {
+  const raw = [].concat(query?.address ?? []).flatMap((a) => String(a).split(",")).map((a) => a.trim()).filter(Boolean);
+  if (!raw.length) throw new ValidationError("address is required: repeat it (address=<a>&address=<b>) or separate addresses with commas");
+  const unique = [...new Set(raw)];
+  if (unique.length > SCREEN_BATCH_MAX) throw new ValidationError(`at most ${SCREEN_BATCH_MAX} addresses per batch (got ${unique.length})`);
+  return { addresses: unique.map((address) => parseScreenRequest({ address })) };
+}
+
+export async function screenBatch({ addresses }, now = Date.now()) {
+  const results = new Array(addresses.length);
+  let next = 0;
+  // A few at a time, so a batch of EVM addresses doesn't hit GoPlus 25 times at once.
+  const worker = async () => {
+    while (next < addresses.length) {
+      const i = next++;
+      results[i] = await screenAddress(addresses[i], now);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(GOPLUS_AT_ONCE, addresses.length) }, worker));
+  const totals = { green: 0, orange: 0, red: 0 };
+  for (const r of results) totals[r.verdict]++;
+  const verdict = totals.red ? "red" : totals.orange ? "orange" : "green";
+  const one_liner = `${addresses.length} screened: ${totals.red} red, ${totals.orange} orange, ${totals.green} green`;
+  return {
+    version: "1",
+    verdict,
+    one_liner,
+    count: addresses.length,
+    totals,
+    flagged: results.filter((r) => r.verdict !== "green").map((r) => ({ address: r.address.address, verdict: r.verdict, one_liner: r.one_liner })),
+    results,
+    checkedAt: new Date(now).toISOString(),
+    disclaimer: results[0]?.disclaimer,
+  };
+}
+
 // ---------- routes ----------
 
 // Mounted before the paywall, like /v1/approvals: an invalid query gets a 400 instead of a price; a bare
 // probe goes on to the 402.
 export function validateScreenQuery(req, res, next) {
-  if (req.method !== "GET" || req.path !== "/v1/screen") return next();
+  if (req.method !== "GET" || (req.path !== "/v1/screen" && req.path !== "/v1/screen/batch")) return next();
   if (req.query?.address === undefined) return next();
   try {
-    req.screenRequest = parseScreenRequest(req.query);
+    if (req.path === "/v1/screen/batch") req.screenBatchRequest = parseScreenBatchRequest(req.query);
+    else req.screenRequest = parseScreenRequest(req.query);
     next();
   } catch (err) {
     res.status(400).json({ error: "invalid_request", message: err.message, verdict: null });
@@ -183,6 +228,20 @@ export function createScreenRouter() {
     } catch (err) {
       const status = err.status ?? 500;
       if (status >= 500) console.error("[screen]", err);
+      res.status(status).json({
+        error: status === 400 ? "invalid_request" : status === 503 ? "upstream_unavailable" : "internal_error",
+        message: status === 500 ? "Internal error" : err.message,
+        verdict: null,
+      });
+    }
+  });
+  router.get("/v1/screen/batch", async (req, res) => {
+    try {
+      const result = await screenBatch(req.screenBatchRequest ?? parseScreenBatchRequest(req.query));
+      res.set("Cache-Control", "no-store").json(result);
+    } catch (err) {
+      const status = err.status ?? 500;
+      if (status >= 500) console.error("[screen batch]", err);
       res.status(status).json({
         error: status === 400 ? "invalid_request" : status === 503 ? "upstream_unavailable" : "internal_error",
         message: status === 500 ? "Internal error" : err.message,

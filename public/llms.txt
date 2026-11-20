@@ -18,6 +18,7 @@ On red: don't sign. On orange: tell the owner why before going on. Every orange 
 - `POST /v1/token/verdict` ($0.01): the same token verdict with a JSON body `{ "tokenAddress": "0x…", "chain": "base" }`, plus `decision` (buy, small_only, do_not_buy), a plain-language `take`, a `sell_check` (can a holder sell it back; on Base a sell transfer is simulated on chain) and a signed `share` link to a page and a card (PNG and SVG); also the MCP tool `token_check`
 - `GET /v1/approvals?chain=<chain>&address=<wallet>` ($0.02): every open approval of a wallet and which to revoke
 - `GET /v1/screen?address=<address>` ($0.01): is this wallet sanctioned? Any chain's address against the OFAC SDN list
+- `GET /v1/screen/batch?address=<a>,<b>` ($0.15): up to 25 addresses in one payment, each the same answer as /v1/screen, plus totals and the flagged ones
 - `POST /v1/injection` ($0.01): is this text a prompt-injection trap for your agent? A web page, email, tool result, API answer or another agent's message that tries to make it pay, leak keys or ignore its instructions
 - `GET /v1/credits`: prepaid credit packs (100 checks for $0.80, 1,000 for $7.00)
 
