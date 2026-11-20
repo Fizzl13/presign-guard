@@ -821,7 +821,7 @@ const DISCOVERY_RESOURCES = [
   [APPROVALS_ROUTE.path, "GET", "Wallet approval audit", "Every open token approval of a wallet: who the spender is, a grade, and which approvals to revoke."],
   [SCREEN_ROUTE.path, "GET", "Sanctions screen", "Is this wallet sanctioned? Any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM addresses."],
   [SCREEN_BATCH_ROUTE.path, "GET", "Sanctions screen, batch", "Up to 25 wallets of any chain in one payment ($0.15): each against the OFAC SDN list, with totals and the flagged ones first."],
-  [INJECTION_ROUTE.path, "POST", "Prompt-injection check", "Is this text a trap for your agent? A page, email, tool result or message that tries to make it pay, leak keys or ignore its instructions."],
+  [INJECTION_ROUTE.path, "POST", "Prompt-injection check", "Is this text a trap for your agent? A page, email, tool result or message that tries to turn it against its user: move money, reveal keys or override its rules."],
 ];
 
 export function wellKnown(origin, { credits = false } = {}) {

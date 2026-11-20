@@ -1793,7 +1793,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...extraEvmAccept(extraEvm, injectionPrice),
         ...nearAccept(near, injectionPrice),
       ],
-      description: "Prompt injection detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to make the agent ignore its instructions, pay or send money, hand over keys or private data, or obey a fake user, admin or support message? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
+      description: "Prompt injection detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to turn the agent against its user: override its rules, move money, reveal keys or private data, or pose as the user, an admin or support? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
       mimeType: "application/json",
       ...injectionServiceMetadata,
       extensions: { ...injectionBazaarExtension(), ...sellerExtensions },
