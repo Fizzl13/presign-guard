@@ -74,6 +74,7 @@ curl -s "https://presign-guard.fizzl.eu/v1/token/quick?chain=base&address=<token
 `GET https://presign-guard.fizzl.eu/v1/screen?address=<address>` costs $0.01.
 
 - **Any chain:** EVM, Solana, Tron, Bitcoin, XRP Ledger or Algorand.
+- **A list:** `GET https://presign-guard.fizzl.eu/v1/screen/batch?address=<a>,<b>` screens up to 25 addresses in one payment of $0.15.
 - **Red** when the address is on the OFAC SDN list, with the listing. For EVM addresses it is also red when reported for theft or phishing.
 
 ## 4. Cleaning up a wallet

@@ -59,6 +59,7 @@ await wallet.writeContract({ address: token, abi, functionName: "approve", args:
 | `GET /v/token/<link>`, `…/card.png`, `…/card.svg` | free | The page and 1200x630 card (PNG and SVG) of a share link, rendered from the signed link itself |
 | `GET /v1/approvals?chain=…&address=…` | $0.02 USDC | Wallet approval audit: every open token approval (EVM) or token delegation (Solana), its spender, and which to revoke (see below) |
 | `GET /v1/screen?address=…` | $0.01 USDC | Wallet screen: any chain's address against the OFAC SDN list, plus theft and phishing reports for EVM (see below) |
+| `GET /v1/screen/batch?address=…,…` | $0.15 USDC | Up to 25 addresses in one payment, each the same answer as `/v1/screen`, plus totals and the flagged ones first |
 | `POST /v1/injection` | $0.01 USDC | Prompt-injection check: is a text your agent received (page, email, tool result, API answer, another agent's message) a trap? (see below) |
 | `POST /v1/injection/quick` | free, shares the 10 calls/hour | The prompt-injection verdict only, for texts up to 8,000 characters |
 | `POST /v1/check/quick` | free, shares the 10 calls/hour | The pre-sign verdict only, for the same body as `POST /v1/check` (as the MCP tool `presign_quick_check`) |
@@ -360,6 +361,22 @@ The address is matched exactly against every digital currency address in the **O
 | info | `SANCTIONS_SCREENED` (not listed, with the list's publish date), `NO_REPORTS`, `REPUTATION_NOT_COVERED` (no scam data for this chain), `REPUTATION_UNAVAILABLE` (GoPlus down), `SANCTIONS_LIST_STALE` (no successful refresh for 3 days) |
 
 It is an exact match on the addresses OFAC publishes, not legal advice: it does not cover unlisted addresses of sanctioned persons or indirect exposure. Without any list (just started and the Treasury site down; PG1 stands in for EVM addresses) there is no verdict (503, not charged). `/health` shows the list's size and date under `ofac`.
+
+
+### Many addresses at once
+
+`GET /v1/screen/batch?address=<a>,<b>,…` (or repeat `address=`) screens up to 25 addresses in one payment of $0.15, instead of one $0.01 payment per address: for a seller going through its payers or an agent checking a list of recipients. Duplicates are screened once. Each address gets the same answer `GET /v1/screen` gives, in the order sent, and the batch adds `verdict` (the worst one), `totals` (how many green, orange and red) and `flagged` (the orange and red addresses with their one-liner). A bad address or more than 25 is a 400 before any payment; without the sanctions list there is no verdict for any of them (503, nothing charged).
+
+```json
+{
+  "verdict": "red",
+  "one_liner": "3 screened: 1 red, 0 orange, 2 green",
+  "count": 3,
+  "totals": { "green": 2, "orange": 0, "red": 1 },
+  "flagged": [{ "address": "TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81", "verdict": "red", "one_liner": "AVOID: on the OFAC SDN list (BANK MARKAZI JOMHOURI ISLAMI IRAN)" }],
+  "results": ["… one /v1/screen answer per address …"]
+}
+```
 
 ## Prompt-injection check
 

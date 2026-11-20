@@ -4,7 +4,7 @@ import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { parseSdnXml, loadSdn, screenOfac, addressKey, resetOfac, ofacStatus, sanctionsList } from "../src/ofac.js";
-import { parseScreenRequest, addressFormat, screenAddress, validateScreenQuery, createScreenRouter } from "../src/screen.js";
+import { parseScreenRequest, addressFormat, screenAddress, validateScreenQuery, createScreenRouter, parseScreenBatchRequest, screenBatch, SCREEN_BATCH_MAX } from "../src/screen.js";
 import { resetPg1 } from "../src/pg1.js";
 import { SDN_XML, TRON, SOL, XRP, ETH, BTC } from "./fixtures/sdn.mjs";
 
@@ -232,6 +232,57 @@ test("route: 400 before the paywall for a bad address, the screen behind it", as
     const ok = await fetch(`${base}/v1/screen?address=${TRON}`, { headers: { "x-paid": "1" } });
     assert.equal(ok.status, 200);
     assert.equal((await ok.json()).verdict, "red");
+  } finally {
+    server.close();
+  }
+});
+
+// ---------- GET /v1/screen/batch ----------
+
+test("batch: repeated or comma-separated addresses, duplicates screened once, at most 25", () => {
+  assert.deepEqual(parseScreenBatchRequest({ address: [CLEAN_EVM, THIEF] }).addresses.map((a) => a.address), [CLEAN_EVM, THIEF]);
+  assert.deepEqual(parseScreenBatchRequest({ address: `${CLEAN_EVM}, ${TRON},${CLEAN_EVM}` }).addresses.map((a) => a.format), ["evm", "tron"]);
+  assert.throws(() => parseScreenBatchRequest({}), /address is required/);
+  assert.throws(() => parseScreenBatchRequest({ address: `${CLEAN_EVM},nope` }), /wallet address/);
+  const many = Array.from({ length: SCREEN_BATCH_MAX + 1 }, (_, i) => `0x${(i + 1).toString(16).padStart(40, "0")}`);
+  assert.throws(() => parseScreenBatchRequest({ address: many }), /at most 25 addresses/);
+  assert.equal(parseScreenBatchRequest({ address: many.slice(0, SCREEN_BATCH_MAX) }).addresses.length, SCREEN_BATCH_MAX);
+});
+
+test("batch: each address gets the single screen's answer; totals, worst verdict and the flagged ones first", async () => {
+  await loadSdn();
+  const r = await screenBatch(parseScreenBatchRequest({ address: [CLEAN_EVM, TRON, MIXER, THIEF] }));
+  assert.equal(r.count, 4);
+  assert.deepEqual(r.totals, { green: 1, orange: 1, red: 2 });
+  assert.equal(r.verdict, "red");
+  assert.equal(r.one_liner, "4 screened: 2 red, 1 orange, 1 green");
+  assert.deepEqual(r.results.map((x) => x.address.address), [CLEAN_EVM, TRON, MIXER, THIEF], "in the order sent");
+  assert.deepEqual(r.flagged.map((x) => [x.address, x.verdict]), [[TRON, "red"], [MIXER, "orange"], [THIEF, "red"]]);
+  const single = await screen(TRON);
+  assert.deepEqual({ ...r.results[1], checkedAt: null }, { ...single, checkedAt: null });
+});
+
+test("batch: no sanctions list means no verdict for any address (503, nothing charged)", async () => {
+  treasuryDown = true;
+  await loadSdn().catch(() => {});
+  await assert.rejects(screenBatch(parseScreenBatchRequest({ address: [TRON, SOL] })), (e) => e.status === 503);
+});
+
+test("batch route: 400 before the paywall for a bad list, 200 with totals for a good one", async () => {
+  await loadSdn();
+  const app = express();
+  app.use(validateScreenQuery);
+  app.use(createScreenRouter());
+  const server = app.listen(0);
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    globalThis.fetch = (u, o) => (String(u).startsWith(base) ? realFetch(u, o) : fakeFetch(u, o));
+    const bad = await fetch(`${base}/v1/screen/batch?address=${CLEAN_EVM},nope`);
+    assert.equal(bad.status, 400);
+    const ok = await fetch(`${base}/v1/screen/batch?address=${CLEAN_EVM}&address=${TRON}`);
+    assert.equal(ok.status, 200);
+    const body = await ok.json();
+    assert.deepEqual(body.totals, { green: 1, orange: 0, red: 1 });
   } finally {
     server.close();
   }

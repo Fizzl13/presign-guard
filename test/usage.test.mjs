@@ -156,3 +156,10 @@ test("usage log: an MCP answer written as a Uint8Array is read (the verdict is l
   assert.equal(event.route, "token_quick_verdict");
   assert.deepEqual(event.result, { verdict: "green", grade: "SAFE" });
 });
+
+test("usage log: a batch screen is logged with its count and totals, never the addresses", () => {
+  const req = { method: "GET", path: "/v1/screen/batch", query: { address: "0x1000000000000000000000000000000000000001,TNiq9AXBp9EjUqhDhrwrfvAA8U3GUQZH81" }, get: () => undefined };
+  const d = describePresignCall(req, { statusCode: 200 }, { verdict: "red", count: 2, totals: { green: 1, orange: 0, red: 1 } });
+  assert.deepEqual(d, { route: "screen_batch", via: "api", input: { count: 2 }, result: { verdict: "red", reasons: "1 red, 0 orange, 1 green", error: undefined } });
+  assert.ok(!JSON.stringify(d).includes("TNiq9"), "no address in the log");
+});
