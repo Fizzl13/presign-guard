@@ -1691,7 +1691,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
   const injectionPrice = `$${INJECTION_ROUTE.price}`;
   return {
     "POST /v1/check": route("/v1/check",
-      "Is this transaction, token approval or signature safe to sign? Check it before your AI agent or wallet signs it: pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
+      "Transaction check before signing: is this transaction, approval or signature safe for your agent or wallet to sign? Pre-sign verdict (green/orange/red + reason codes) for EVM and Solana transactions, token approvals and Permit/Permit2/EIP-3009/Seaport signatures. Screens the spender or recipient wallet for OFAC sanctions and scam, phishing or theft reports, and flags unlimited allowances, plain-wallet spenders and risky tokens"),
     "POST /v1/check/explain": route("/v1/check/explain",
       "Is this transaction, approval or signature safe to sign, explained for a person? The same pre-sign verdict as /v1/check (green/orange/red + reason codes) plus a short plain-language explanation in English or Dutch, for an agent to show its user before asking for approval"),
     [`GET ${TOKEN_ROUTE.path}`]: {
@@ -1742,7 +1742,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...extraEvmAccept(extraEvm, approvalsPrice),
         ...nearAccept(near, approvalsPrice),
       ],
-      description: "Wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
+      description: "Token approval check and wallet approval audit (green/orange/red, grade, one-line summary): every open ERC-20 allowance of an EVM wallet with who the spender is (flagged, plain wallet, unverified, unlimited) and which ones to revoke",
       mimeType: "application/json",
       ...approvalsServiceMetadata,
       extensions: { ...approvalsBazaarExtension(), ...sellerExtensions },
@@ -1759,7 +1759,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...extraEvmAccept(extraEvm, screenPrice),
         ...nearAccept(near, screenPrice),
       ],
-      description: "Sanctions screen for a wallet address: is it on the OFAC list? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
+      description: "Sanctions screening for a wallet address (OFAC address screening): is it on the OFAC list? Screens any chain's address (EVM, Solana, Tron, Bitcoin, XRP Ledger, Algorand) against the OFAC SDN list, synced from the US Treasury, plus theft, phishing and mixer reports for EVM addresses. Green/orange/red with the SDN entry (name, programs) when listed. For sellers screening who pays them and agents checking who they pay",
       mimeType: "application/json",
       ...screenServiceMetadata,
       extensions: { ...screenBazaarExtension(), ...sellerExtensions },
@@ -1793,7 +1793,7 @@ export function x402Routes(payTo, network = "eip155:8453", solana = null, xrpl =
         ...extraEvmAccept(extraEvm, injectionPrice),
         ...nearAccept(near, injectionPrice),
       ],
-      description: "Prompt injection detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to turn the agent against its user: override its rules, move money, reveal keys or private data, or pose as the user, an admin or support? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
+      description: "Prompt injection check and detection: is this text a trap for your AI agent? Checks a web page, email, tool result, API answer or another agent's message before your agent acts on it: does it try to turn the agent against its user: override its rules, move money, reveal keys or private data, or pose as the user, an admin or support? Green/orange/red with reason codes, judged by TypeSafe's Jev, plus hidden-character tricks and OFAC-sanctioned addresses in the text",
       mimeType: "application/json",
       ...injectionServiceMetadata,
       extensions: { ...injectionBazaarExtension(), ...sellerExtensions },
