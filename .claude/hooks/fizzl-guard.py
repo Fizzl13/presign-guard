@@ -4,7 +4,7 @@ on the model remembering them (the same idea as x402-safe-fetch: the check sits 
 
 It reads the hook's JSON on stdin and answers with a permission decision:
   deny  never allowed, whatever was said in the chat (wallet and agent keys, paying tools, Render and Railway writes,
-        Sentry issue changes);
+        Sentry issue changes, `pkill -f`, a force-push);
   ask   allowed only after Frits approves the prompt himself (the paying workflows index-payment, spot-buy and
         buy-check, npm publish, paid Higgsfield generation);
   (no output) everything else goes on as usual.
@@ -28,6 +28,12 @@ SECRET_USE = re.compile(
 )
 # A Fizzl Agent Wallet agent key pasted into a command.
 AGENT_KEY = re.compile(r"\bawk_[A-Za-z0-9_-]{16,}")
+
+# Processes are killed by PID only: `pkill -f <pattern>` matches whole command lines, this session's own tools
+# included (it happened once, 21 Nov 2026).
+PKILL_F = re.compile(r"\bpkill\b[^;&|\n]*\s(-[A-Za-z]*f[A-Za-z]*|--full)\b")
+# Pushed history is never rewritten: no --force, --force-with-lease, -f (alone or in a cluster) or +refspec.
+FORCE_PUSH = re.compile(r"\bgit\b[^;&|\n]*\bpush\b[^;&|\n]*(\s--force(-with-lease|-if-includes)?\b|\s-[A-Za-z]*f[A-Za-z]*\b|\s\+\S)")
 
 # Workflows that spend real money from the spot-buy wallet: only on Frits's word ("Index", "Doe testkopen").
 PAYING_WORKFLOW = re.compile(r"\b(index-payment|spot-buy|buy-check)\.ya?ml\b")
@@ -57,7 +63,8 @@ RAILWAY_SETUP = re.compile(
 )
 SENTRY_CHANGE = re.compile(r"^mcp__Sentry__(update_|delete_|link_issue|unlink_issue|add_issue_note)")
 SENTRY_CREATE = re.compile(r"^mcp__Sentry__create_")
-PAYING_TOOL = re.compile(r"(pay_x402|x402_pay|x402_buy|safe_buy|paypal_.*pay|coinbase_transfer)", re.I)
+# x402_pay, but not x402_payee_check (x402 Doctor's free payee check never pays).
+PAYING_TOOL = re.compile(r"(pay_x402|x402_pay(?!ee)|x402_buy|safe_buy|paypal_.*pay|coinbase_transfer)", re.I)
 HIGGSFIELD_READ = re.compile(
     r"^mcp__Higgsfield__(get_|list_|show_|models_explore|balance|jobs_wait|transactions|job_display|search_|"
     r"apps_search|apps_describe|gpu_list_|gpu_explore|gpu_my|gpu_job_quote|gpu_job_status|gpu_rental_logs|"
@@ -74,6 +81,10 @@ def decide(tool, inp):
             return "deny", "Fizzl rule: wallet, agent and service keys are never read or used in a session (Frits sets them himself)."
         if AGENT_KEY.search(cmd):
             return "deny", "Fizzl rule: an agent key (awk_...) is never pasted or used in a session."
+        if PKILL_F.search(cmd):
+            return "deny", "Fizzl rule: never `pkill -f`; kill a process by its PID (ps, then kill <pid>)."
+        if FORCE_PUSH.search(cmd):
+            return "deny", "Fizzl rule: no force-push. On a rejected push, fetch and merge (git fetch origin <branch> && git merge --no-edit FETCH_HEAD), then push again."
         if PAYING_WORKFLOW.search(cmd) and DISPATCH.search(cmd):
             return "ask", "This starts a workflow that pays real money (index-payment, spot-buy or buy-check). Only on Frits's own word: approve only if he asked for it now."
         if NPM_PUBLISH.search(cmd):

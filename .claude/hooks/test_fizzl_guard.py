@@ -31,6 +31,19 @@ CASES = [
     ("Bash", {"command": "gh api -X POST repos/Fizzl13/x402-examples/actions/workflows/outreach-draft.yml/dispatches --input p.json"}, None),
     ("Bash", {"command": "cd safe-fetch && npm publish --access public"}, "ask"),
     ("Bash", {"command": "npm test"}, None),
+    # Processes by PID only; no force-push.
+    ("Bash", {"command": "pkill -f 'node server.js'"}, "deny"),
+    ("Bash", {"command": "pkill -9 -f http.server"}, "deny"),
+    ("Bash", {"command": "pkill --full http.server"}, "deny"),
+    ("Bash", {"command": "kill 4242"}, None),
+    ("Bash", {"command": "pkill -x node"}, None),
+    ("Bash", {"command": "git push --force origin main"}, "deny"),
+    ("Bash", {"command": "git push -f origin claude/x"}, "deny"),
+    ("Bash", {"command": "git -c push.negotiate=true push --force-with-lease -u origin claude/x"}, "deny"),
+    ("Bash", {"command": "git push origin +claude/x"}, "deny"),
+    ("Bash", {"command": "git -c push.negotiate=true push -q -u origin claude/x"}, None),
+    ("Bash", {"command": "git push --follow-tags origin main"}, None),
+    ("Bash", {"command": "git fetch -f origin && git push origin main"}, None),
     # MCP.
     ("mcp__Render__list_logs", {}, None),
     ("mcp__Render__get_metrics", {}, None),
@@ -68,6 +81,9 @@ CASES = [
     ("mcp__Higgsfield__balance", {}, None),
     ("mcp__Higgsfield__generate_video", {}, "ask"),
     ("mcp__x402_Doctor__x402_quick_check", {}, None),
+    ("mcp__x402_Doctor__x402_payee_check", {}, None),
+    ("mcp__x402_Doctor__x402_pay", {}, "deny"),
+    ("mcp__x402_Doctor__x402_pay_now", {}, "deny"),
     ("Read", {"file_path": "/etc/hosts"}, None),
 ]
 
