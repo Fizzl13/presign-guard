@@ -11,11 +11,13 @@
 // - Like x402: verified first, settled only after a 2xx answer (a failed diagnosis is
 //   never charged), then `Payment-Receipt` on the response.
 //
-// And, with `tempo`, the `tempo` charge method in "push" mode, the one nearly every MPP agent
-// pays with: the agent sends USDC on Tempo itself (a TIP-20 transferWithMemo whose memo binds
-// the realm and challenge id) and answers with the transaction hash. We read the receipt from
-// a Tempo RPC, so no facilitator. The payment is final before the answer; a failed answer
-// frees the hash, so the same credential can be sent again while the challenge lasts.
+// And, with `tempo`, the `tempo` charge method in "push" and "pull" mode. Push: the agent sends
+// USDC on Tempo itself (a TIP-20 transferWithMemo whose memo binds the realm and challenge id) and
+// answers with the transaction hash. Pull (mppx's default for a local key): the agent signs that
+// same transaction, paying its own Tempo fee, and sends it; we check its one call before we
+// broadcast it (no fee sponsoring). Either way we read the receipt from a Tempo RPC, so no
+// facilitator. The payment is final before the answer; a failed answer frees the hash, so the
+// same credential can be sent again while the challenge lasts.
 //
 // And, with `xrpl`, the `xrpl` charge method of Ripple's xrpl-mpp-sdk in "pull" mode: RLUSD on the XRP Ledger. The
 // agent signs a Payment and sends the blob; it is verified and submitted by the same in-process XRPL facilitator as
@@ -23,7 +25,10 @@
 // the Payment must carry (sha256 of realm, "mpp" and the challenge's reference), so one signed Payment pays one
 // challenge only.
 const crypto = require('crypto');
-const { keccak256, stringToHex, getAddress } = require('viem');
+const { keccak256, stringToHex, getAddress, decodeFunctionData } = require('viem');
+// viem/tempo reads a signed Tempo transaction (type 0x76) for pull mode; loaded when first needed.
+let tempoLib = null;
+const tempoTx = () => (tempoLib ||= require('viem/tempo'));
 
 const METHOD = 'evm';
 const TEMPO = 'tempo';
@@ -57,6 +62,21 @@ function memoBinds(memo, realm, challengeId) {
     && m.slice(12, 32) === fingerprint(realm, 10) && m.slice(52) === fingerprint(challengeId, 7);
 }
 const topicAddress = (topic) => getAddress(`0x${String(topic).slice(-40)}`);
+
+class RpcRefused extends Error {}
+// Broadcasts a signed transaction. A JSON-RPC error is the node refusing it (RpcRefused); anything else is an outage.
+async function rpcSend(rpc, raw) {
+  const res = await fetch(rpc, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_sendRawTransaction', params: [raw] }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!res.ok) throw new Error(`Tempo RPC answered ${res.status}`);
+  const body = await res.json();
+  if (body.error) throw new RpcRefused(String(body.error.message || 'refused').slice(0, 120));
+  return body.result;
+}
 
 async function rpcReceipt(rpc, hash) {
   const res = await fetch(rpc, {
@@ -100,8 +120,8 @@ const quote = (s) => `"${String(s).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"
 class PaymentError extends Error {}
 
 // facilitator: { verify(paymentPayload, requirements), settle(paymentPayload, requirements) } (x402 v2),
-// for the evm method. tempo: { recipient, chainId = 4217, currency, rpc, getReceipt(hash) } turns
-// on the tempo method (getReceipt replaces the RPC call, for tests). xrpl: { recipient, facilitator, network =
+// for the evm method. tempo: { recipient, chainId = 4217, currency, rpc, getReceipt(hash), sendRaw(raw),
+// waitMs } turns on the tempo method (getReceipt and sendRaw replace the RPC calls, for tests). xrpl: { recipient, facilitator, network =
 // "mainnet", issuer } turns on the xrpl method (RLUSD; the facilitator is an x402 XRPL one, src/xrpl-facilitator.js).
 function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = null, xrpl = null, now = () => Date.now(), log = console }) {
   if (!secret) throw new Error('MPP needs a secret');
@@ -118,6 +138,8 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
       recipient: getAddress(tempo.recipient),
       currency: getAddress(tempo.currency || known.currency),
       getReceipt: tempo.getReceipt || ((hash) => rpcReceipt(rpc, hash)),
+      sendRaw: tempo.sendRaw || ((raw) => rpcSend(rpc, raw)),
+      waitMs: tempo.waitMs ?? 15000, // pull mode: how long to wait for the broadcast transaction's receipt
     };
   }
   // xrpl.issuer overrides Ripple's RLUSD issuer (a test issuer on testnet).
@@ -146,11 +168,11 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
       methodDetails: { chainId: BASE_CHAIN_ID, credentialTypes: ['authorization'], decimals: 6 },
       recipient: payTo,
     }) : null,
-    // Push only: the agent broadcasts and sends the hash, so nothing is signed for us to submit.
+    // Push (the agent broadcasts and sends the hash) or pull (it sends the signed transaction and we broadcast it).
     [TEMPO]: tempoCfg ? (amount) => ({
       amount,
       currency: tempoCfg.currency,
-      methodDetails: { chainId: tempoCfg.chainId, supportedModes: ['push'] },
+      methodDetails: { chainId: tempoCfg.chainId, supportedModes: ['push', 'pull'] },
       recipient: tempoCfg.recipient,
     }) : null,
     // reference: a fresh nonce per challenge (the id is an HMAC over the challenge, so it covers it), and the InvoiceID
@@ -219,15 +241,17 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
     if (canonical(request) !== canonical(requestFor[c.method](prices.get(route), request && request.methodDetails && request.methodDetails.reference))) throw new PaymentError('The price changed. Ask again for a fresh 402.');
     if (!(Date.parse(c.expires) > now())) throw new PaymentError('That challenge has expired. Ask again for a fresh 402.');
     if (c.method === TEMPO) {
-      if (p.type !== 'hash') throw new PaymentError('Only a "hash" credential (push mode) is accepted for tempo: send the transfer yourself, then the transaction hash.');
-      if (!/^0x[0-9a-fA-F]{64}$/.test(String(p.hash || ''))) throw new PaymentError('The hash must be a 32-byte transaction hash.');
+      if (p.type !== 'hash' && p.type !== 'transaction') throw new PaymentError('Only a "hash" (push mode) or "transaction" (pull mode) credential is accepted for tempo.');
       let source = null;
       if (cred.source !== undefined) {
         const s = /^did:pkh:eip155:(\d+):(0x[0-9a-fA-F]{40})$/.exec(String(cred.source));
         if (!s || Number(s[1]) !== tempoCfg.chainId) throw new PaymentError(`source must be did:pkh:eip155:${tempoCfg.chainId}:<your address>.`);
         source = getAddress(s[2]);
       }
-      return { method: TEMPO, hash: p.hash.toLowerCase(), source, amount: request.amount, challengeId: c.id, until: Date.parse(c.expires) + 60000 };
+      const paid = { method: TEMPO, source, amount: request.amount, challengeId: c.id, until: Date.parse(c.expires) + 60000 };
+      if (p.type === 'transaction') return { ...paid, ...readTempoTransaction(p.signature, request, c.id, source) };
+      if (!/^0x[0-9a-fA-F]{64}$/.test(String(p.hash || ''))) throw new PaymentError('The hash must be a 32-byte transaction hash.');
+      return { ...paid, hash: p.hash.toLowerCase() };
     }
     if (c.method === XRPL) {
       if (p.type !== 'transaction') throw new PaymentError('Only a "transaction" credential (pull mode) is accepted for xrpl: send the signed Payment blob, we submit it.');
@@ -263,6 +287,50 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
     return { method: METHOD, paymentPayload, requirements: paymentPayload.accepted, facilitator, from, nonce: p.nonce, amount: request.amount, usd: Number(request.amount) / 1e6, network: 'Base' };
   }
 
+  // Pull mode: a signed Tempo transaction whose one call is transferWithMemo(our recipient, the amount, the MPP memo
+  // for this challenge) on the asked currency, on our chain, signed by its sender, with its own fee (we sponsor
+  // none). Checked before we broadcast it, so we never send anything else. Throws PaymentError.
+  function readTempoTransaction(raw, request, challengeId, source) {
+    if (!/^0x7[68][0-9a-fA-F]+$/.test(String(raw || ''))) throw new PaymentError('A "transaction" credential must be a signed Tempo transaction (0x76…).');
+    const { Transaction, Abis } = tempoTx();
+    let tx;
+    try { tx = Transaction.deserialize(raw); } catch { throw new PaymentError("That Tempo transaction can't be read."); }
+    if (!tx.signature || !tx.from) throw new PaymentError('The Tempo transaction must be signed by its sender.');
+    if (tx.feePayerSignature === null || tx.feePayer) throw new PaymentError("Fees aren't sponsored here: sign the transaction with your own fee token.");
+    if (Number(tx.chainId) !== tempoCfg.chainId) throw new PaymentError(`The Tempo transaction is for chain ${tx.chainId}, not ${tempoCfg.chainId}.`);
+    const from = getAddress(tx.from);
+    if (source && source !== from) throw new PaymentError("The credential's source isn't the transaction's sender.");
+    const calls = Array.isArray(tx.calls) ? tx.calls : [];
+    let args = null;
+    if (calls.length === 1 && calls[0].to && getAddress(calls[0].to) === tempoCfg.currency && !BigInt(calls[0].value || 0)) {
+      try {
+        const d = decodeFunctionData({ abi: Abis.tip20, data: calls[0].data });
+        if (d.functionName === 'transferWithMemo') args = d.args;
+      } catch { args = null; }
+    }
+    if (!args || getAddress(args[0]) !== tempoCfg.recipient || String(args[1]) !== request.amount || !memoBinds(args[2], realm, challengeId)) {
+      throw new PaymentError(`The Tempo transaction must hold one call: transferWithMemo of ${request.amount} units of ${tempoCfg.currency} to ${tempoCfg.recipient} with the MPP memo for this challenge.`);
+    }
+    return { raw, hash: keccak256(raw).toLowerCase(), source: from, canonical: false };
+  }
+
+  // Pull mode: broadcasts the checked transaction and waits for its receipt. Sent before (and so refused as
+  // known now), it may already be on chain: then its receipt is enough. Throws PaymentError when Tempo refuses it.
+  async function broadcastTempo(paid) {
+    try {
+      await tempoCfg.sendRaw(paid.raw);
+    } catch (err) {
+      if (!(err instanceof RpcRefused)) throw err;
+      if (!(await tempoCfg.getReceipt(paid.hash))) throw new PaymentError(`Tempo refused the transaction: ${err.message}`);
+      return;
+    }
+    const until = Date.now() + tempoCfg.waitMs;
+    while (!(await tempoCfg.getReceipt(paid.hash))) {
+      if (Date.now() >= until) return; // checkTempo answers "not on Tempo (yet), send the same credential again"
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
   // The Tempo transaction must hold a TransferWithMemo of the asked currency and amount, to our
   // recipient, from the payer, with the MPP memo for this realm and challenge. Throws PaymentError.
   async function checkTempo(paid) {
@@ -285,12 +353,20 @@ function createMppPay({ secret, realm, recipient, routes, facilitator, tempo = n
 
   // Serves a request paid on Tempo: the hash is claimed first, freed again if the answer fails.
   function serveTempo(req, res, next, route, paid) {
+    // Pull mode: the node hashes the canonical envelope, so broadcast and claim that one (serialize is async).
+    if (paid.raw && !paid.canonical) {
+      const { Transaction } = tempoTx();
+      return Promise.resolve().then(() => Transaction.serialize(Transaction.deserialize(paid.raw))).then(
+        (raw) => serveTempo(req, res, next, route, { ...paid, raw, hash: keccak256(raw).toLowerCase(), canonical: true }),
+        () => refuse(req, res, route, "That Tempo transaction can't be read."),
+      );
+    }
     const t = now();
     for (const [hash, until] of usedHashes) if (until < t) usedHashes.delete(hash);
     if (usedHashes.has(paid.hash)) return refuse(req, res, route, 'That transaction has already paid for an answer.');
     usedHashes.set(paid.hash, paid.until);
     const free = () => usedHashes.delete(paid.hash);
-    Promise.resolve().then(() => checkTempo(paid)).then((payer) => {
+    Promise.resolve().then(() => (paid.raw ? broadcastTempo(paid) : null)).then(() => checkTempo(paid)).then((payer) => {
       req.mppPaid = { payer, amount: paid.amount };
       const send = res.send, end = res.end;
       const restore = () => { res.send = send; res.end = end; };
@@ -419,4 +495,4 @@ function addMppOffers(spec, { categories = [], docs = {}, contact = null, includ
 // Skips the x402 paywall for a request already paid over MPP.
 const unlessMppPaid = (paywall) => (req, res, next) => (req.mppPaid ? next() : paywall(req, res, next));
 
-module.exports = { createMppPay, unlessMppPaid, addMppOffers, atomicUsdc, decimalUsd, canonical, memoBinds, BASE_USDC, TEMPO_CHAINS, RLUSD_HEX, XRPL_NETWORKS };
+module.exports = { createMppPay, unlessMppPaid, addMppOffers, atomicUsdc, decimalUsd, canonical, memoBinds, RpcRefused, BASE_USDC, TEMPO_CHAINS, RLUSD_HEX, XRPL_NETWORKS };
