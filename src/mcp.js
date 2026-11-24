@@ -412,7 +412,8 @@ function paidWrapperFactory({ resourceServer, network, payTo, solana, xrpl, algo
     const accepts = await requirementsFor(resourceServer, [
       { scheme: "exact", price, network, payTo },
       ...(tool.solana && solana?.payTo ? [{ scheme: "exact", price, network: solana.network, payTo: solana.payTo }] : []),
-      ...xrplAccept(xrpl, price, `mcp ${tool.name}`),
+      // XRP not over MCP: this wrapper builds the accepts once, and the drops follow the rate (HTTP only).
+      ...xrplAccept(xrpl && { ...xrpl, xrp: false }, price, `mcp ${tool.name}`),
       ...algorandAccept(algorand, price),
       ...stellarAccept(stellar, price),
       // The same networks as the HTTP routes: USD₮0 on X Layer and USDC on Monad.

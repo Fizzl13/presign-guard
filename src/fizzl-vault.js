@@ -18,6 +18,8 @@ export const KEEP_DAYS = 365;
 export const STATUS_URL = 'https://wallet.fizzl.eu/v1/pass/status';
 const MICRO = 1e6;
 const MAX_WALLETS = 50;
+import { createRequire } from 'node:module';
+const { sharedXrpRate } = createRequire(import.meta.url)('./xrp-rate.cjs');
 const RLUSD_HEX = '524C555344000000000000000000000000000000';
 
 // One spelling per wallet (as the Agent Wallet's pass index): EVM addresses in lower case, others as they are.
@@ -35,7 +37,10 @@ function decodeBase64Json(value) {
 export function usdOf(accepted) {
   const amount = accepted && (accepted.amount || accepted.maxAmountRequired);
   if (amount === undefined || amount === null) return null;
-  if (/^xrpl:/.test(String(accepted.network || ''))) return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
+  if (/^xrpl:/.test(String(accepted.network || ''))) {
+    if (accepted.asset === "XRP") return sharedXrpRate().usdOfDrops(amount); // drops at the current rate
+    return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
+  }
   return /^\d+$/.test(String(amount)) ? Number(amount) / (/^stellar:/.test(String(accepted.network || '')) ? 1e7 : 1e6) : null;
 }
 

@@ -96,7 +96,10 @@ function usdOf(accepted) {
   const token = tokenOf(accepted);
   if (token) { const p = Number(token.t.usdPerToken()); return p > 0 ? token.amount * p : null; }
   if (accepted && TOKENS.has(String(accepted.asset))) return null;
-  if (/^xrpl:/.test(String(accepted.network || ''))) return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
+  if (/^xrpl:/.test(String(accepted.network || ''))) {
+    if (accepted.asset === 'XRP') return require('./xrp-rate.cjs').sharedXrpRate().usdOfDrops(amount); // drops, at the rate the price used
+    return accepted.asset === RLUSD_HEX && /^\d+(\.\d+)?$/.test(String(amount)) ? Number(amount) : null;
+  }
   return /^\d+$/.test(String(amount)) ? Number(amount) / (/^stellar:/.test(String(accepted.network || '')) ? 1e7 : 1e6) : null;
 }
 

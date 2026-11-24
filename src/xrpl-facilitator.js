@@ -8,6 +8,8 @@ import { x402Facilitator } from "@x402/core/facilitator";
 import { ExactXrplScheme } from "@x402/xrpl/exact/facilitator";
 import { HTTPFacilitatorClient } from "@x402/core/server";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
+const { sharedXrpRate } = createRequire(import.meta.url)("./xrp-rate.cjs");
 
 export const XRPL_NETWORK = "xrpl:0";
 // The XRPL SourceTag for x402 payments: t54-built payers sign with it, @x402/xrpl payers may.
@@ -91,5 +93,13 @@ export function createXrplFacilitator({ network = XRPL_NETWORK, wsUrl = "wss://x
 }
 
 // One XRPL accept entry: the dollar price in RLUSD, bound to this service and route by its InvoiceID.
-export const xrplAccept = (xrpl, price, route) =>
-  xrpl?.payTo ? [{ scheme: "exact", price, network: xrpl.network, payTo: xrpl.payTo, extra: { invoiceId: `presign-guard.fizzl.eu ${route}`, sourceTag: X402_SOURCE_TAG } }] : [];
+// RLUSD, and next to it native XRP (unless xrpl.xrp is false): the dollar price in drops at the XRP/RLUSD pool's rate on
+// the ledger (xrp-rate.cjs); without a rate the XRP option is left out of the 402 and RLUSD stays.
+export const xrplAccept = (xrpl, price, route) => {
+  if (!xrpl?.payTo) return [];
+  const extra = { invoiceId: `presign-guard.fizzl.eu ${route}`, sourceTag: X402_SOURCE_TAG };
+  return [
+    { scheme: "exact", price, network: xrpl.network, payTo: xrpl.payTo, extra },
+    ...(xrpl.xrp === false ? [] : [{ scheme: "exact", price: sharedXrpRate().price(price), network: xrpl.network, payTo: xrpl.payTo, extra: { ...extra } }]),
+  ];
+};

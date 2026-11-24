@@ -85,7 +85,8 @@ const SOLANA = PAY_TO_SOLANA ? { network: SOLANA_NETWORK, payTo: PAY_TO_SOLANA }
 // XRP Ledger (mainnet only): the same dollar prices in RLUSD to Frits's account (it has the RLUSD trust line),
 // settled in-process (src/xrpl-facilitator.js). XRPL_PAY_TO overrides the account, XRPL_PAY_TO=off turns it off.
 const XRPL_PAY_TO = process.env.XRPL_PAY_TO === "off" ? null : process.env.XRPL_PAY_TO?.trim() || "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw";
-const XRPL = MAINNET && XRPL_PAY_TO ? { network: XRPL_NETWORK, payTo: XRPL_PAY_TO } : null;
+// Native XRP next to RLUSD on the HTTP routes (src/xrp-rate.cjs); XRPL_XRP=off turns it off.
+const XRPL = MAINNET && XRPL_PAY_TO ? { network: XRPL_NETWORK, payTo: XRPL_PAY_TO, xrp: process.env.XRPL_XRP !== "off" } : null;
 // Optional: USDC on Algorand (src/algorand.js), mainnet only, when ALGORAND_PAY_TO is set.
 const ALGORAND = MAINNET ? algorandConfig() : null;
 // Optional: USDC on Stellar (src/stellar.js), mainnet only, when a Stellar facilitator is configured (STELLAR_FACILITATOR_KEY).
