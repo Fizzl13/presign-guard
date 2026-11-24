@@ -1,0 +1,32 @@
+{
+  "name": "presign-guard",
+  "displayName": "presign-guard",
+  "version": "1.0.0",
+  "description": "Before an agent signs a transaction, approval, Permit or x402 payment, buys a token or sends funds: green / orange / red with reason codes, OFAC sanctions screening included. EVM, Solana, XRP Ledger, Algorand, Stellar and NEAR. One skill plus presign-guard's MCP server.",
+  "author": {
+    "name": "Fizzl",
+    "url": "https://fizzl.eu"
+  },
+  "homepage": "https://presign-guard.fizzl.eu",
+  "repository": "https://github.com/Fizzl13/presign-guard",
+  "license": "AGPL-3.0",
+  "privacyPolicyUrl": "https://fizzl.eu/privacy/",
+  "icon": ".claude-plugin/icon.png",
+  "keywords": [
+    "wallet",
+    "signing",
+    "security",
+    "sanctions",
+    "solana",
+    "evm"
+  ],
+  "mcpServers": {
+    "presign-guard": {
+      "type": "http",
+      "url": "https://presign-guard.fizzl.eu/mcp"
+    }
+  },
+  "skills": [
+    "./"
+  ]
+}

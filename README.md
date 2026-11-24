@@ -152,16 +152,16 @@ It follows green / orange / red every time.
 npx skills add Fizzl13/presign-guard
 ```
 
-In Claude Code, the skill also comes as a plugin together with the MCP server below, from the Fizzl marketplace in the x402 Doctor repository:
+In Claude Code and on claude.ai (Plugins → Add → Add marketplace), the skill also comes as a plugin together with the MCP server below, from the Fizzl marketplace in the x402 Doctor repository:
 
 ```
 /plugin marketplace add Fizzl13/x402-doctor
 /plugin install presign-guard@fizzl
 ```
 
-The plugin is this repository's `skills/` folder. Without an MCP client that pays x402, only the free MCP tools work; the skill pays over HTTP with your own x402 client.
+The plugin is this repository's `skills/` folder ([`skills/.claude-plugin/plugin.json`](skills/.claude-plugin/plugin.json)). Without an MCP client that pays x402, only the free MCP tools work; the skill pays over HTTP with your own x402 client.
 
-Every Fizzl skill (x402 Doctor, presign-guard, the Agent Wallet and Ichimoku Signal) is listed in [Fizzl13/fizzl-skills](https://github.com/Fizzl13/fizzl-skills).
+Every Fizzl skill (x402 Doctor, presign-guard, the Agent Wallet, Ichimoku Signal, Fizzl Buy and x402 Forge) is listed in [Fizzl13/fizzl-skills](https://github.com/Fizzl13/fizzl-skills).
 
 ## MCP
 
