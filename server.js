@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
 import { onPublicHost } from "./src/public-host.js";
 import { canonicalHost } from "./src/canonical-host.js";
+import { bazaarAliases, PRESIGN_ALIASES } from "./src/bazaar-aliases.js";
 import { ExactEvmScheme } from "@x402/evm/exact/server";
 import { ExactSvmScheme } from "@x402/svm/exact/server";
 import { HTTPFacilitatorClient } from "@x402/core/server";
@@ -215,6 +216,9 @@ const app = express();
 app.set("trust proxy", trustProxyHops());
 // The Render address sends every request to presign-guard.fizzl.eu (src/canonical-host.js), the health check aside.
 app.use(canonicalHost(PUBLIC_URL));
+// Search-word paths (/v1/sanctions-screening and others, src/bazaar-aliases.js): the same routes, listed in the Bazaar
+// under the words buyers search for.
+app.use(bazaarAliases(PRESIGN_ALIASES));
 app.disable("x-powered-by");
 app.use(securityHeaders);
 // Every HEAD is handled as a GET, so paid routes give their 402 instead of running for free (src/head-guard.js).
