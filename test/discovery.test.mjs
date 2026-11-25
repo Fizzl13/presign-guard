@@ -14,7 +14,7 @@ test("paid routes carry Bazaar metadata and the right prices", () => {
   for (const [key, r] of Object.entries(routes)) {
     assert.equal(r.extensions.bazaar.info.input.method, key.split(" ")[0]);
     assert.ok(r.extensions.bazaar.schema);
-    assert.equal(r.serviceName, "presign-guard");
+    assert.match(r.serviceName, /^presign-guard/);
     // Discovery lists such as GoPlausible's name the seller from this.
     assert.equal(r.extensions["x402-merchant"].info.name, "Fizzl");
     assert.equal(r.extensions["x402-merchant"].info.logo, "https://fizzl.eu/logo-512.png");
@@ -162,9 +162,20 @@ test("Bazaar curation metadata: serviceName, category, iconUrl and tags in /.wel
   assert.equal(w.iconUrl, "https://presign-guard.fizzl.eu/media/icon.png");
   assert.ok(w.tags.includes("sanctions"));
   for (const [route, config] of Object.entries(x402Routes("0x6B0F4651eD42893ab58139938175E4a69f175F25", "eip155:8453", null))) {
-    assert.equal(config.serviceName, "presign-guard", route);
+    assert.match(config.serviceName, /^presign-guard/, route);
     assert.equal(config.iconUrl, "https://presign-guard.fizzl.eu/media/icon.png", route);
     assert.ok(config.tags.length > 0, route);
+  }
+});
+
+test("Bazaar search words: the check, the screen and the approvals carry them in name and tags", () => {
+  const routes = x402Routes("0x6B0F4651eD42893ab58139938175E4a69f175F25", "eip155:8453", null);
+  const want = { "POST /v1/check": "transaction check", "GET /v1/screen": "sanctions screening", "GET /v1/approvals": "token approval check" };
+  for (const [route, words] of Object.entries(want)) {
+    assert.ok(routes[route].serviceName.toLowerCase().includes(words.split(" ")[0]), route);
+    assert.ok(routes[route].serviceName.length <= 32, route); // the x402 schema refuses longer names
+    assert.ok(routes[route].tags.includes(words), route);
+    assert.ok(routes[route].tags.length <= 5, route);
   }
 });
 
