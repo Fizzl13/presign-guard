@@ -574,11 +574,14 @@ export const bazaarExtension = () => declareDiscoveryExtension({
 // Service metadata on every paid route (the x402 Bazaar indexes serviceName, tags and iconUrl).
 export const ICON_URL = "https://presign-guard.fizzl.eu/media/icon.png";
 export const CATEGORY = "security";
-export const serviceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "pre-sign", "approvals", "sanctions", "agents"], iconUrl: ICON_URL };
+// The Bazaar's search matches serviceName and tags first (25 Nov 2026: "transaction check" and "token approval check"
+// did not find presign-guard, named "presign-guard" everywhere). So name and tags carry the words buyers search for,
+// after the brand (at most 32 characters: the x402 schema refuses longer names).
+export const serviceMetadata = { serviceName: "presign-guard Transaction Check", tags: ["transaction check", "pre-sign check", "wallet-security", "approvals", "sanctions"], iconUrl: ICON_URL };
 export const tokenServiceMetadata = { serviceName: "presign-guard", tags: ["token-security", "due-diligence", "solana", "base", "agents"], iconUrl: ICON_URL };
-export const approvalsServiceMetadata = { serviceName: "presign-guard", tags: ["wallet-security", "approvals", "revoke", "agents"], iconUrl: ICON_URL };
+export const approvalsServiceMetadata = { serviceName: "presign-guard Token Approval", tags: ["token approval check", "approvals", "revoke", "wallet-security", "agents"], iconUrl: ICON_URL };
 // At most 5 tags per route: the x402 PaymentRequired schema refuses more (test/x402-schema.test.mjs).
-export const screenServiceMetadata = { serviceName: "presign-guard", tags: ["sanctions", "ofac", "aml", "compliance", "wallet-screening"], iconUrl: ICON_URL };
+export const screenServiceMetadata = { serviceName: "presign-guard Sanctions Screen", tags: ["sanctions screening", "sanctions", "ofac", "aml", "wallet-screening"], iconUrl: ICON_URL };
 export const injectionServiceMetadata = { serviceName: "presign-guard", tags: ["prompt-injection", "ai-security", "agents", "llm-safety", "wallet-security"], iconUrl: ICON_URL };
 
 // @x402/express puts the v2 challenge only in the PAYMENT-REQUIRED header and
