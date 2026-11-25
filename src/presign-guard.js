@@ -14,6 +14,9 @@
 //   { type: "algorand",    transaction | transactions, from? } // base64 msgpack Algorand transaction(s) (src/algorand-tx.js)
 //   { type: "stellar",     transaction, network?, from? }    // base64 XDR Stellar transaction envelope (src/stellar-tx.js)
 //   { type: "near",        transaction | tx | transactions, network?, from? } // NEAR transaction(s) (src/near-tx.js)
+//   { type: "userop",      chainId, userOperation, userOpHash?, entryPoint?, paymentId?, validUntil?, x402? } // an ERC-4337 v0.7
+//                          user operation (src/userop.js; Incentiv's incentiv-userop)
+//   { type: "signed_transaction", signedTransaction, x402? } // a signed EIP-1559 transaction (incentiv-eoa-tx)
 //   { chain_id, request_type, transaction | typed_data, policy_config? } // an OWS PolicyContext (src/ows.js): the
 //                                                    answer also carries the OWS PolicyResult, { allow, reason }
 //   Add lang: "nl" | "en" on /v1/check/explain.
@@ -34,7 +37,7 @@ import { extraEvmAccept } from "./extra-evm.js";
 import { nearAccept } from "./near-pay.js";
 import { refusalExtension } from "./refusal.js";
 import { paymentIdentifierExtension } from "./payment-retry.js";
-import { decodeFunctionData, encodeFunctionData, isAddress, isHex, parseAbi, zeroAddress } from "viem";
+import { decodeFunctionData, encodeFunctionData, isAddress, isHex, parseAbi, recoverTransactionAddress, zeroAddress } from "viem";
 import { screenSanctions, domainAge, hostnameReputation, originHost, walletAge, NEW_DOMAIN_DAYS } from "./pg1.js";
 import { screenOfacLoaded, partySanctionsReasons } from "./ofac.js";
 
@@ -57,6 +60,7 @@ import { parseSolanaRequest, instructionReasons, simulateSolana, solanaSimulatio
 import { parseAlgorandRequest, algorandReasons, simulateAlgorand, algorandSimulationReasons, describeAlgorandTxn, ALGORAND_NETWORKS } from "./algorand-tx.js";
 import { xrplAccept } from "./xrpl-facilitator.js";
 import { algorandAccept } from "./algorand.js";
+import { parseUserOpRequest, parseSignedTxRequest, userOpReasons, userOpParties, UserOpError, USEROP_SCOPE } from "./userop.js";
 import { parseStellarRequest, stellarReasons, simulateStellar, stellarSimulationReasons, describeStellarOp, STELLAR_NETWORKS } from "./stellar-tx.js";
 import { stellarAccept } from "./stellar.js";
 import { parseNearRequest, nearReasons, nearParties, NEAR_NETWORKS } from "./near-tx.js";
@@ -717,7 +721,7 @@ export function parseRequest(body) {
   }
   // Optional: the x402 payment requirements this EIP-3009 payment answers (one entry of the 402's accepts list,
   // as { accepted: {…} } or the entry itself); x402-requirements.js checks the signature pays exactly that.
-  if (body.x402 !== undefined && body.x402 !== null) {
+  if (body.x402 !== undefined && body.x402 !== null && req.kind !== "userop" && req.kind !== "signed_transaction") {
     if (req.kind !== "transfer_authorization") throw new ValidationError("x402 applies to EIP-3009 payment signatures (TransferWithAuthorization)");
     try { req.x402 = parseRequirements(body.x402); } catch (err) { throw new ValidationError(err.message); }
   }
@@ -772,6 +776,15 @@ function parseSubject(body) {
   if (body.type === "algorand") return { kind: "algorand", offchain: false, value: 0n, grants: [], target: null, ...parseAlgorandRequest(body) };
   if (body.type === "stellar") return { kind: "stellar", offchain: false, value: 0n, grants: [], target: null, ...parseStellarRequest(body) };
   if (body.type === "near") return { kind: "near", offchain: false, value: 0n, grants: [], target: null, ...parseNearRequest(body) };
+  // An ERC-4337 user operation or a signed EVM transaction (src/userop.js; Incentiv's x402 schemes): any chain id.
+  if (body.type === "userop" || body.type === "signed_transaction") {
+    try {
+      return { offchain: false, value: 0n, grants: [], target: null, ...(body.type === "userop" ? parseUserOpRequest(body) : parseSignedTxRequest(body)) };
+    } catch (err) {
+      if (err instanceof UserOpError) throw new ValidationError(err.message);
+      throw err;
+    }
+  }
 
   const chainId = Number(body.chainId);
   if (!SUPPORTED_CHAINS.has(chainId)) {
@@ -805,7 +818,7 @@ function parseSubject(body) {
 
   if (body.type === "authorization") return parseAuthorization(body, chainId);
 
-  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "solana", "xrpl", "algorand", "stellar" or "near"');
+  throw new ValidationError('type must be "approval", "transaction", "signature", "authorization", "message", "userop", "signed_transaction", "solana", "xrpl", "algorand", "stellar" or "near"');
 }
 
 // ---------- analysis ----------
@@ -1077,6 +1090,44 @@ async function analyzeNear(req) {
   };
 }
 
+// An ERC-4337 user operation or a signed EVM transaction (src/userop.js): what it calls, pays and lets others spend,
+// and with the x402 requirements whether it pays exactly the quote. Plus the OFAC screen of every party and the site.
+async function analyzeUserOp(req) {
+  const reasons = [];
+  const add = (code, severity, subject, details) => {
+    if (reasons.some((r) => r.code === code && r.subject === subject && JSON.stringify(r.details ?? null) === JSON.stringify(details ?? null))) return;
+    reasons.push({ code, severity, subject, ...(details ? { details } : {}) });
+  };
+  if (req.kind === "signed_transaction" && req.tx.r && req.tx.s) {
+    try { req.signer = (await recoverTransactionAddress({ serializedTransaction: req.raw })).toLowerCase(); } catch { /* unsigned or malformed: no payer */ }
+  }
+  const domain = req.origin ? domainAge(req.origin) : Promise.resolve(undefined);
+  const reputation = req.origin && originReputationOn()
+    ? Promise.all([hostnameReputation(req.origin), goplusPhishing(req.origin), metamaskSiteScan(req.origin)])
+    : Promise.resolve(null);
+  const rules = userOpReasons(req);
+  for (const r of rules.reasons) add(r.code, r.severity, r.subject, r.details);
+  const intent = req.intent
+    ? intentCheck({ intent: req.intent, effects: { chain: rules.subject.chain, account: rules.subject.account, actions: rules.subject.actions } }).catch(() => ({ reasons: [], sources: [] }))
+    : Promise.resolve({ reasons: [], sources: [] });
+  const sanctions = partySanctionsReasons(userOpParties(rules.effects), { exclude: [rules.subject.account].filter(Boolean) });
+  for (const r of sanctions.reasons) add(r.code, r.severity, r.subject, r.details);
+  const site = await addOriginReasons(req.origin, await domain, await reputation, add);
+  const intentAnswer = await intent;
+  for (const r of intentAnswer.reasons) add(r.code, r.severity, r.subject, r.details);
+
+  const verdict = reasons.some((r) => r.severity === "red") ? "red" : reasons.some((r) => r.severity === "orange") ? "orange" : "green";
+  return {
+    version: "2",
+    verdict,
+    reasons,
+    subject: { ...rules.subject, ...(req.origin && { origin: req.origin }) },
+    scope: USEROP_SCOPE,
+    sources: ["rules", ...(sanctions.used ? ["ofac-sdn"] : []), ...(site.pg1Used ? ["pg1"] : []), ...(req.origin ? ["goplus"] : []), ...(site.metamaskUsed ? ["metamask"] : []), ...intentAnswer.sources],
+    checkedAt: new Date().toISOString(),
+  };
+}
+
 // personal_sign / eth_sign. eth_sign is red: it signs a raw hash, so nobody can see what is agreed to. A message
 // that isn't readable text is orange for the same reason. A sign-in message (EIP-4361) for another site than the one
 // asking is red: that is a phishing site relaying a real site's login. The site itself is checked as for any request.
@@ -1255,6 +1306,7 @@ async function analyzeAny(req) {
   if (req.kind === "algorand") return analyzeAlgorand(req);
   if (req.kind === "stellar") return analyzeStellar(req);
   if (req.kind === "near") return analyzeNear(req);
+  if (req.kind === "userop" || req.kind === "signed_transaction") return analyzeUserOp(req);
   const reasons = [];
   const add = (code, severity, subject, details) => {
     const d = details ? JSON.stringify(details) : "";
