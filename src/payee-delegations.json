@@ -40,6 +40,26 @@
   }
  },
  {
+  "network": "xrpl:0",
+  "payTo": "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw",
+  "delegation": {
+   "message": {
+    "chainId": "8453",
+    "registry": "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432",
+    "agentId": "97520",
+    "agentWallet": "0x6b0f4651ed42893ab58139938175e4a69f175f25",
+    "network": "xrpl:0",
+    "payTo": "r9xmBsRr8Ao7jRgjjxreMiAwGiCK2FGwqw",
+    "asset": "XRP",
+    "origin": "https://presign-guard.fizzl.eu",
+    "validAfter": "1795584989",
+    "validUntil": "1827120929",
+    "nonce": "0xc0a03cf98626439a3fdc8951103b301ed3a5e3156bb5eaaa891c2f8f2026dcb7"
+   },
+   "signature": "0x9c8b4d1b4436e8898e6e3d8c34f65dcaaf1c1c06e1fa5951b55de08533d75aba46ea1baf8005fa78005fe263e913e3598d7b062153631c79755ebfd4e80fec321c"
+  }
+ },
+ {
   "network": "algorand:wGHE2Pwdvd7S12BL5FaOP20EGYesN73k",
   "payTo": "LOYVFSQ6ZTS2YWUW4GQ5L6VPP2TPIOXWYDACK53CPOHQQHLDMEMKJDXAX4",
   "delegation": {
