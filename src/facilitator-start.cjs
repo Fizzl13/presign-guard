@@ -69,6 +69,7 @@ function createFacilitatorStart(facilitators, { log = console, askMs = 15 * 1000
       if (refilling) await refilling;
       if (!anyLoaded()) await load();
       if (anyLoaded() && !supports(config.network, config.scheme)) return [];
+      if (config.price == null) return []; // a price function with no price yet (XRP before the first rate)
       return build(config, ...rest);
     };
     const ready = load();
