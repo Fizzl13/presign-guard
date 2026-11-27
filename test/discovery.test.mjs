@@ -243,19 +243,20 @@ test("every route's 402 header names the receipt in one line (the full schema is
   assert.ok(receipt.properties.input_sha256, "openapi.json keeps the full receipt schema");
 });
 
-test("payee delegations in the registration file: signed by the agent wallet for agent #97520 on this origin, at most 365 days", async () => {
+test("payee delegations in the registration file: ERC-8478 version 2, signed by the agent wallet for agent #97520 on this origin, at most 90 days", async () => {
   const { recoverTypedDataAddress } = await import("viem");
   const payees = agentRegistration("https://presign-guard.fizzl.eu").services.find((x) => x.name === "x402").payees;
-  assert.deepEqual(payees.map((p) => p.network.split(":")[0]), ["solana", "xrpl", "xrpl", "algorand", "stellar", "solana", "near"]); // the second Solana one is for $AFUEL, the second XRPL one for XRP (RLUSD first)
-  const types = { PayeeDelegation: [["chainId", "uint256"], ["registry", "address"], ["agentId", "uint256"], ["agentWallet", "address"], ["network", "string"], ["payTo", "string"], ["asset", "string"], ["origin", "string"], ["validAfter", "uint64"], ["validUntil", "uint64"], ["nonce", "bytes32"]].map(([name, type]) => ({ name, type })) };
+  assert.deepEqual(payees.map((p) => p.network.split(":")[0]), ["solana", "xrpl", "xrpl", "algorand", "stellar", "near"]); // the second XRPL one for XRP (RLUSD first); $AFUEL is signed again when its option is back in the 402
+  const types = { PayeeDelegation: [["chainId", "uint256"], ["registry", "address"], ["agentId", "uint256"], ["agentWallet", "address"], ["walletSetAt", "uint64"], ["network", "string"], ["payTo", "string"], ["asset", "string"], ["origin", "string"], ["validAfter", "uint64"], ["validUntil", "uint64"], ["nonce", "bytes32"]].map(([name, type]) => ({ name, type })) };
   for (const p of payees) {
     const m = p.delegation.message;
     assert.deepEqual([m.network, m.payTo, m.agentId, m.origin], [p.network, p.payTo, "97520", "https://presign-guard.fizzl.eu"]);
-    assert.ok(BigInt(m.validUntil) - BigInt(m.validAfter) <= 31536000n);
+    assert.ok(BigInt(m.validUntil) - BigInt(m.validAfter) <= 7776000n);
+    assert.equal(m.walletSetAt, "53301028", "the block agent #97520's wallet was last set");
     const signer = await recoverTypedDataAddress({
-      domain: { name: "x402 Payee Delegation", version: "1", chainId: Number(m.chainId), verifyingContract: m.registry },
+      domain: { name: "x402 Payee Delegation", version: "2", chainId: Number(m.chainId), verifyingContract: m.registry },
       types, primaryType: "PayeeDelegation",
-      message: { ...m, chainId: BigInt(m.chainId), agentId: BigInt(m.agentId), validAfter: BigInt(m.validAfter), validUntil: BigInt(m.validUntil) },
+      message: { ...m, chainId: BigInt(m.chainId), agentId: BigInt(m.agentId), walletSetAt: BigInt(m.walletSetAt), validAfter: BigInt(m.validAfter), validUntil: BigInt(m.validUntil) },
       signature: p.delegation.signature,
     });
     assert.equal(signer.toLowerCase(), m.agentWallet.toLowerCase(), p.network);
